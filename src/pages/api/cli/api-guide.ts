@@ -31,8 +31,15 @@ DELETE /api/cli/tabs/<tabId>?workspaceId=WS
 
 POST /api/cli/tabs/<tabId>/send?workspaceId=WS
   Body: { "content": "..." }
-  Send text (bracketed paste) to the tab.
+  Submit text using the shared Browser/CLI agent-input semantics.
+  Single-line input is literal text; multiline input uses bracketed paste.
+  Both wait briefly and send Enter once.
   Response: { "status": "sent" }
+
+POST /api/cli/tabs/<tabId>/interrupt?workspaceId=WS
+  Send the shared ESC ESC interrupt sequence to the foreground agent.
+  Agent state is updated only by provider hooks/runtime snapshots.
+  Response: { "status": "interrupted" }
 
 GET /api/cli/tabs/<tabId>/status?workspaceId=WS
   Agent runtime fields come from live StatusManager state. If no matching live entry exists,

@@ -13,6 +13,7 @@ import MessageHistoryPicker from '@/components/features/workspace/message-histor
 import { isImageFile, uploadImage } from '@/lib/upload-image-client';
 import { uploadFile } from '@/lib/upload-file-client';
 import { countImageRefs, waitForImageAttachments } from '@/lib/image-attach-detector';
+import { interruptTabFromBrowser, submitTabInputFromBrowser } from '@/lib/tab-input-client';
 import type { TCliState } from '@/types/timeline';
 
 const DEFAULT_MAX_ROWS = 5;
@@ -82,7 +83,14 @@ const WebInputBar = ({
   const { entries, isLoading, isError, fetchHistory, addHistory, deleteHistory } =
     useMessageHistory({ wsId });
   const isMobileDevice = useIsMobileDevice();
-  const submitDelayMs = 250;
+  const submitInput = useCallback(async (content: string) => {
+    if (!wsId || !tabId) throw new Error('Workspace and tab are required');
+    await submitTabInputFromBrowser(wsId, tabId, content);
+  }, [wsId, tabId]);
+  const interruptInput = useCallback(async () => {
+    if (!wsId || !tabId) throw new Error('Workspace and tab are required');
+    await interruptTabFromBrowser(wsId, tabId);
+  }, [wsId, tabId]);
   const handleMessageSent = useCallback(
     (message: string) => {
       addHistory(message);
@@ -92,14 +100,14 @@ const WebInputBar = ({
   );
   const { value, setValue, mode, canSend, send, interrupt, textareaRef, focusInput } = useWebInput(
     cliState,
-    sendStdin,
     terminalWsConnected,
     {
       tabId,
       onRestartSession,
       onMessageSent: handleMessageSent,
       disabledMessage: isCodex ? t('codexInactiveMessage') : t('inputDisabledPlaceholder'),
-      submitDelayMs,
+      submitInput,
+      interruptInput,
     },
   );
 
@@ -171,7 +179,7 @@ const WebInputBar = ({
     if (!hasAttach) {
       onSend?.();
       if (agentSessionId) registerPushTarget(agentSessionId);
-      send();
+      await send();
       return;
     }
 
@@ -244,18 +252,18 @@ const WebInputBar = ({
 
       if (hasText) {
         const payload = ` ${text}`;
-        sendStdin(`\x1b[200~${payload}\x1b[201~`);
-        setTimeout(() => sendStdin('\r'), submitDelayMs);
+        await submitInput(payload);
       } else {
         sendStdin('\r');
       }
     } catch (err) {
       if (pendingId) onRemovePendingMessage?.(pendingId);
-      throw err;
+      if (hasText) setValue((current) => current || text);
+      toast.error(err instanceof Error ? err.message : t('inputDisabledPlaceholder'));
     } finally {
       setIsDispatching(false);
     }
-  }, [canSend, isDispatching, value, attachments, send, sendStdin, setValue, onSend, agentSessionId, sessionName, tabId, addHistory, onAddPendingMessage, onRemovePendingMessage, t, submitDelayMs, isCodex]);
+  }, [canSend, isDispatching, value, attachments, send, sendStdin, submitInput, setValue, onSend, agentSessionId, sessionName, tabId, addHistory, onAddPendingMessage, onRemovePendingMessage, t, isCodex]);
 
   const handleKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.nativeEvent.isComposing || e.keyCode === 229) return;

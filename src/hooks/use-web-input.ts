@@ -41,11 +41,11 @@ const clearDraft = (tabId: string) => {
 
 interface IUseWebInputReturn {
   value: string;
-  setValue: (v: string) => void;
+  setValue: React.Dispatch<React.SetStateAction<string>>;
   mode: TWebInputMode;
   canSend: boolean;
-  send: () => void;
-  interrupt: () => void;
+  send: () => Promise<boolean>;
+  interrupt: () => Promise<void>;
   textareaRef: React.RefObject<HTMLTextAreaElement | null>;
   focusInput: () => void;
 }
@@ -55,14 +55,14 @@ interface IUseWebInputOptions {
   onRestartSession?: () => void;
   onMessageSent?: (message: string) => void;
   disabledMessage?: string;
-  submitDelayMs?: number;
+  submitInput: (content: string) => Promise<void>;
+  interruptInput: () => Promise<void>;
 }
 
 const useWebInput = (
   cliState: TCliState,
-  sendStdin: (data: string) => void,
   terminalWsConnected: boolean,
-  options?: IUseWebInputOptions,
+  options: IUseWebInputOptions,
 ): IUseWebInputReturn => {
   const tabId = options?.tabId;
   const [value, setValue] = useState(() => (tabId ? loadDraft(tabId) : ''));
@@ -75,7 +75,9 @@ const useWebInput = (
 
   const onRestartSession = options?.onRestartSession;
   const onMessageSent = options?.onMessageSent;
-  const submitDelayMs = options?.submitDelayMs ?? 250;
+  const disabledMessage = options.disabledMessage;
+  const submitInput = options.submitInput;
+  const interruptInput = options.interruptInput;
 
   const draftTimerRef = useRef<ReturnType<typeof setTimeout>>(null);
   useEffect(() => {
@@ -87,48 +89,55 @@ const useWebInput = (
     };
   }, [tabId, value]);
 
-  const send = useCallback(() => {
+  const send = useCallback(async (): Promise<boolean> => {
     if (mode === 'disabled') {
-      toast.error(options?.disabledMessage ?? t('terminal', 'inputDisabledPlaceholder'));
-      return;
+      toast.error(disabledMessage ?? t('terminal', 'inputDisabledPlaceholder'));
+      return false;
     }
 
     if (!terminalWsConnected) {
       toast.error(t('connection', 'terminalDisconnected'));
-      return;
+      return false;
     }
 
-    if (value.trim() === '') return;
+    if (value.trim() === '') return false;
 
     if (RESTART_COMMANDS.has(value.trim().toLowerCase())) {
       onRestartSession?.();
       setValue('');
       if (tabId) clearDraft(tabId);
-      return;
+      return true;
     }
 
-    if (value.includes('\n')) {
-      sendStdin(`\x1b[200~${value}\x1b[201~`);
-    } else {
-      sendStdin(value);
-    }
-    setTimeout(() => sendStdin('\r'), submitDelayMs);
-
-    if (!value.trim().startsWith('/')) {
-      onMessageSent?.(value.trim());
-    }
-
+    const message = value;
     setValue('');
     if (tabId) clearDraft(tabId);
-  }, [mode, value, sendStdin, terminalWsConnected, onRestartSession, onMessageSent, tabId, options?.disabledMessage, submitDelayMs]);
 
-  const interrupt = useCallback(() => {
+    try {
+      await submitInput(message);
+    } catch (error) {
+      setValue((current) => current || message);
+      toast.error(error instanceof Error ? error.message : t('terminal', 'inputDisabledPlaceholder'));
+      return false;
+    }
+
+    if (!message.trim().startsWith('/')) {
+      onMessageSent?.(message.trim());
+    }
+    return true;
+  }, [mode, value, terminalWsConnected, onRestartSession, onMessageSent, tabId, disabledMessage, submitInput]);
+
+  const interrupt = useCallback(async () => {
     if (!terminalWsConnected) {
       toast.error(t('connection', 'terminalDisconnected'));
       return;
     }
-    sendStdin('\x1b\x1b');
-  }, [sendStdin, terminalWsConnected]);
+    try {
+      await interruptInput();
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : t('terminal', 'inputDisabledPlaceholder'));
+    }
+  }, [interruptInput, terminalWsConnected]);
 
   const focusInput = useCallback(() => {
     const el = textareaRef.current;

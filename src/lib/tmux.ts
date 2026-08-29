@@ -1,4 +1,4 @@
-import { execFile as execFileCb } from 'child_process';
+import { execFile as execFileCb, spawn } from 'child_process';
 import fs from 'fs/promises';
 import { promisify } from 'util';
 import path from 'path';
@@ -410,6 +410,59 @@ export const sendRawKeys = async (
   await execFile(
     'tmux',
     ['-L', TMUX_SOCKET, 'send-keys', '-t', sessionName, keys],
+    { timeout: CMD_TIMEOUT },
+  );
+};
+
+/** Write bytes literally to the foreground pane without submitting them. */
+export const sendLiteralText = async (
+  sessionName: string,
+  text: string,
+): Promise<void> => {
+  await exitCopyMode(sessionName);
+  const bufferName = `pmux-input-${nanoid()}`;
+  await new Promise<void>((resolve, reject) => {
+    const child = spawn(
+      'tmux',
+      ['-L', TMUX_SOCKET, 'load-buffer', '-b', bufferName, '-'],
+      { stdio: ['pipe', 'ignore', 'pipe'], timeout: CMD_TIMEOUT },
+    );
+    let stderr = '';
+    child.stderr.on('data', (chunk) => {
+      stderr += String(chunk);
+    });
+    child.once('error', reject);
+    child.once('close', (code) => {
+      if (code === 0) resolve();
+      else reject(new Error(stderr.trim() || `tmux load-buffer exited with code ${code}`));
+    });
+    child.stdin.end(text);
+  });
+  try {
+    await execFile(
+      'tmux',
+      ['-L', TMUX_SOCKET, 'paste-buffer', '-d', '-r', '-b', bufferName, '-t', sessionName],
+      { timeout: CMD_TIMEOUT },
+    );
+  } catch (error) {
+    await execFile(
+      'tmux',
+      ['-L', TMUX_SOCKET, 'delete-buffer', '-b', bufferName],
+      { timeout: CMD_TIMEOUT },
+    ).catch(() => {});
+    throw error;
+  }
+};
+
+/** Send named tmux keys as discrete foreground input events. */
+export const sendKeySequence = async (
+  sessionName: string,
+  keys: string[],
+): Promise<void> => {
+  await exitCopyMode(sessionName);
+  await execFile(
+    'tmux',
+    ['-L', TMUX_SOCKET, 'send-keys', '-t', sessionName, ...keys],
     { timeout: CMD_TIMEOUT },
   );
 };
