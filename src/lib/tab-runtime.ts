@@ -3,6 +3,7 @@ import { getLayout, addTabToPane, removeTabFromPane, updateTabAgentSessionId } f
 import { findPane, getFirstPaneId } from '@/lib/layout-tree';
 import { createLogger } from '@/lib/logger';
 import { getStatusManager } from '@/lib/status-manager';
+import { findTab, type ITabLocation } from '@/lib/tab-location';
 import { sendKeys } from '@/lib/tmux';
 import { getWorkspaceById } from '@/lib/workspace-store';
 import type { IAgentProvider } from '@/lib/providers';
@@ -53,6 +54,22 @@ export interface ICreateTabRuntimeResult {
   provider: IAgentProvider | null;
 }
 
+export interface ICloseTabRuntimeOptions {
+  workspaceId: string;
+  tabId: string;
+  paneId?: string;
+}
+
+export interface ICloseTabRuntimeDependencies {
+  findTab: typeof findTab;
+  removeTabFromPane: typeof removeTabFromPane;
+}
+
+const defaultCloseDependencies: ICloseTabRuntimeDependencies = {
+  findTab,
+  removeTabFromPane,
+};
+
 interface IStatusRuntime {
   registerTab(tabId: string, entry: ITabStatusEntry): void;
   markAgentLaunch(tabId: string, options?: { resetAgentSession?: boolean }): void;
@@ -79,6 +96,27 @@ const defaultDependencies: ITabRuntimeDependencies = {
   updateTabAgentSessionId,
   getStatusManager,
   sendKeys,
+};
+
+export const closeTabRuntime = async (
+  options: ICloseTabRuntimeOptions,
+  dependencies: ICloseTabRuntimeDependencies = defaultCloseDependencies,
+): Promise<ITabLocation> => {
+  const found = await dependencies.findTab(options.workspaceId, options.tabId);
+  if (!found || (options.paneId && found.paneId !== options.paneId)) {
+    throw new TabRuntimeError(404, { error: 'Tab not found' });
+  }
+
+  const removed = await dependencies.removeTabFromPane(
+    found.workspaceId,
+    found.paneId,
+    found.tab.id,
+  );
+  if (!removed) {
+    throw new TabRuntimeError(404, { error: 'Tab not found' });
+  }
+
+  return found;
 };
 
 const resolvePanelType = (value: unknown): TPanelType => {
