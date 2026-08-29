@@ -351,13 +351,7 @@ export const removeTabFromPane = async (
   if (!tabInfo) return false;
 
   if (tabInfo.panelType !== 'web-browser') {
-    try {
-      await killSession(tabInfo.sessionName);
-    } catch (error) {
-      // Layout cleanup must still proceed. This is especially important when
-      // rolling back a create whose tmux session failed during launch.
-      log.error({ err: error, sessionName: tabInfo.sessionName }, 'failed to kill tab session before layout removal');
-    }
+    await killSession(tabInfo.sessionName);
   }
 
   return withLock(async () => {

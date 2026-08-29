@@ -145,9 +145,31 @@ describe('createTabRuntime', () => {
     await expect(createTabRuntime({ workspaceId: workspace.id, panelType: 'claude-code' }, dependencies))
       .rejects.toThrow('send failed');
 
-    expect(events).toEqual(['create', 'register', 'send', 'status-remove', 'layout-remove']);
+    expect(events).toEqual(['create', 'register', 'send', 'layout-remove', 'status-remove']);
     expect(statusManager.markAgentLaunch).not.toHaveBeenCalled();
     expect(getPersistedTab()).toBeNull();
+  });
+
+  it('preserves the create error and runtime metadata when rollback cleanup fails', async () => {
+    const events: string[] = [];
+    const provider = makeProvider('codex-cli');
+    const { dependencies, statusManager, getPersistedTab } = makeDependencies(provider, events);
+    const createError = new Error('send failed');
+    vi.mocked(dependencies.sendKeys).mockImplementationOnce(async () => {
+      events.push('send');
+      throw createError;
+    });
+    vi.mocked(dependencies.removeTabFromPane).mockImplementationOnce(async () => {
+      events.push('layout-remove');
+      throw new Error('kill failed');
+    });
+
+    await expect(createTabRuntime({ workspaceId: workspace.id, panelType: 'codex-cli' }, dependencies))
+      .rejects.toBe(createError);
+
+    expect(events).toEqual(['create', 'register', 'send', 'layout-remove']);
+    expect(statusManager.removeTab).not.toHaveBeenCalled();
+    expect(getPersistedTab()).toMatchObject({ id: 'tab-1' });
   });
 
   it('passes the previous active tab into the atomic launch rollback', async () => {

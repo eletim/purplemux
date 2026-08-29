@@ -140,7 +140,6 @@ const rollbackCreatedTab = async (
   statusManager: IStatusRuntime,
   deps: ITabRuntimeDependencies,
 ) => {
-  statusManager.removeTab(tab.id);
   try {
     const removed = await deps.removeTabFromPane(
       workspaceId,
@@ -150,7 +149,9 @@ const rollbackCreatedTab = async (
     );
     if (!removed) {
       log.error({ workspaceId, paneId, tabId: tab.id }, 'create rollback could not find persisted tab');
+      return;
     }
+    statusManager.removeTab(tab.id);
   } catch (cleanupError) {
     log.error(
       { err: cleanupError, workspaceId, paneId, tabId: tab.id, tmuxSession: tab.sessionName },
