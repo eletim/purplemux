@@ -151,9 +151,37 @@ describe('removeTabFromPane close semantics', () => {
     expect(removeStatus).toHaveBeenCalledWith('tab-a');
   });
 
-  it('cleans layout and status even when tmux cleanup reports a dead or failed session', async () => {
+  it('preserves layout, status, and active state when tmux cleanup fails', async () => {
     statusTabs.add('tab-a');
-    mocks.killSession.mockRejectedValue(new Error('session already gone'));
+    statusTabs.add('tab-b');
+    const killError = new Error('process still alive');
+    mocks.killSession.mockRejectedValue(killError);
+    await writeLayout(workspaceId, {
+      root: pane('pane-1', ['tab-a', 'tab-b'], 'tab-a'),
+      activePaneId: 'pane-1',
+      updatedAt: '2026-08-30T00:00:00.000Z',
+    });
+
+    await expect(removeTabFromPane(workspaceId, 'pane-1', 'tab-a')).rejects.toBe(killError);
+
+    const stored = await readLayoutFile(resolveLayoutFile(workspaceId));
+    expect(stored).toMatchObject({
+      root: {
+        type: 'pane',
+        id: 'pane-1',
+        activeTabId: 'tab-a',
+        tabs: [{ id: 'tab-a', order: 0 }, { id: 'tab-b', order: 1 }],
+      },
+      activePaneId: 'pane-1',
+    });
+    expect(statusTabs).toEqual(new Set(['tab-a', 'tab-b']));
+    expect(reconcileWorkspaceTabs).not.toHaveBeenCalled();
+    expect(removeStatus).not.toHaveBeenCalled();
+  });
+
+  it('cleans layout and status when killSession reports an already-dead session as success', async () => {
+    statusTabs.add('tab-a');
+    mocks.killSession.mockResolvedValueOnce(undefined);
     await writeLayout(workspaceId, {
       root: pane('pane-1', ['tab-a']),
       activePaneId: 'pane-1',
@@ -165,5 +193,6 @@ describe('removeTabFromPane close semantics', () => {
     const stored = await readLayoutFile(resolveLayoutFile(workspaceId));
     expect(stored?.root).toMatchObject({ tabs: [], activeTabId: null });
     expect(removeStatus).toHaveBeenCalledOnce();
+    expect(removeStatus).toHaveBeenCalledWith('tab-a');
   });
 });

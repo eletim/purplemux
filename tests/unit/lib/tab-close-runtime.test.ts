@@ -65,4 +65,14 @@ describe('closeTabRuntime', () => {
     await expect(closeTabRuntime({ workspaceId: 'ws-1', tabId: 'tab-1' }, deps))
       .rejects.toMatchObject({ status: 404, body: { error: 'Tab not found' } });
   });
+
+  it('propagates runtime cleanup failures to the close caller', async () => {
+    const cleanupError = new Error('process still alive');
+    const deps = dependencies({
+      removeTabFromPane: vi.fn().mockRejectedValue(cleanupError),
+    });
+
+    await expect(closeTabRuntime({ workspaceId: 'ws-1', tabId: 'tab-1' }, deps))
+      .rejects.toBe(cleanupError);
+  });
 });
