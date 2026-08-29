@@ -1,6 +1,7 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { verifyCliToken } from '@/lib/cli-token';
-import { readTabAgentResult } from '@/lib/tab-agent-result';
+import { findTab } from '@/lib/cli-utils';
+import { capturePaneContent, hasSession } from '@/lib/tmux';
 
 const handler = async (req: NextApiRequest, res: NextApiResponse) => {
   if (req.method !== 'GET') {
@@ -17,9 +18,14 @@ const handler = async (req: NextApiRequest, res: NextApiResponse) => {
     return res.status(400).json({ error: 'workspaceId is required' });
   }
 
-  const result = await readTabAgentResult(workspaceId, tabId);
-  if (!result) return res.status(404).json({ error: 'Tab not found' });
-  return res.status(200).json(result);
+  const found = await findTab(workspaceId, tabId);
+  if (!found) return res.status(404).json({ error: 'Tab not found' });
+
+  const alive = await hasSession(found.tab.sessionName);
+  if (!alive) return res.status(409).json({ error: 'Tab session is not running' });
+
+  const content = await capturePaneContent(found.tab.sessionName);
+  return res.status(200).json({ content });
 };
 
 export default handler;

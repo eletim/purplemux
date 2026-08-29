@@ -30,7 +30,8 @@ purplemux tab create -w ${ws.id} [-n NAME] [-t TYPE]  # create a tab (type: term
 purplemux tab send -w ${ws.id} TAB_ID CONTENT...      # send input to a tab
 purplemux tab interrupt -w ${ws.id} TAB_ID            # interrupt the foreground agent
 purplemux tab status -w ${ws.id} TAB_ID               # tab status
-purplemux tab result -w ${ws.id} TAB_ID               # capture current pane content
+purplemux tab result -w ${ws.id} TAB_ID               # read structured agent result
+purplemux tab capture -w ${ws.id} TAB_ID              # capture current pane content
 purplemux tab close -w ${ws.id} TAB_ID                # close a tab
 \`\`\`
 

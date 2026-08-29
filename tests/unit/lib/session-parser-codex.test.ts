@@ -15,6 +15,43 @@ const codexUserLine = (idx: number) => JSON.stringify({
 });
 
 describe('parseCodexContent', () => {
+  it('uses task_complete.last_agent_message for current Codex final responses', () => {
+    const lines = [
+      codexUserLine(1),
+      JSON.stringify({
+        timestamp: '2026-05-02T07:37:02.000Z',
+        type: 'event_msg',
+        payload: { type: 'task_complete', last_agent_message: 'RESULT_OK' },
+      }),
+    ];
+
+    const entries = parseCodexContent(lines.join('\n') + '\n');
+
+    expect(entries).toHaveLength(3);
+    expect(entries[1]).toMatchObject({ type: 'assistant-message', markdown: 'RESULT_OK' });
+    expect(entries[2]).toMatchObject({ type: 'turn-end' });
+  });
+
+  it('does not duplicate legacy agent_message text at task_complete', () => {
+    const lines = [
+      JSON.stringify({
+        timestamp: '2026-05-02T07:37:01.000Z',
+        type: 'event_msg',
+        payload: { type: 'agent_message', message: 'RESULT_OK' },
+      }),
+      JSON.stringify({
+        timestamp: '2026-05-02T07:37:02.000Z',
+        type: 'event_msg',
+        payload: { type: 'task_complete', last_agent_message: 'RESULT_OK' },
+      }),
+    ];
+
+    const entries = parseCodexContent(lines.join('\n') + '\n');
+
+    expect(entries.filter((entry) => entry.type === 'assistant-message')).toHaveLength(1);
+    expect(entries.at(-1)).toMatchObject({ type: 'turn-end' });
+  });
+
   it('maps Codex local_images under uploads to served image URLs', () => {
     const imagePath = path.join(UPLOADS_DIR, 'ws-1', 'tab-1', 'image.png');
     const line = {
