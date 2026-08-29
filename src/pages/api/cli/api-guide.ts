@@ -35,7 +35,12 @@ POST /api/cli/tabs/<tabId>/send?workspaceId=WS
   Response: { "status": "sent" }
 
 GET /api/cli/tabs/<tabId>/status?workspaceId=WS
-  Response: { "tabId", "workspaceId", "alive", "command", "cliState", "agentProviderId", "agentSessionId", "claudeSessionId" }
+  Agent runtime fields come from live StatusManager state. If no matching live entry exists,
+  persisted layout state is used as a recovery fallback. Tmux fields are lifecycle metadata only.
+  Response: { "tabId", "workspaceId", "panelType", "alive", "command", "currentCommand",
+              "cliState", "agentProviderId", "agentSessionId", "claudeSessionId",
+              "currentAction"?, "lastAssistantMessage"?, "lastUserMessage"?, "lastEvent"?,
+              "eventSeq"?, "busySince"?, "readyForReviewAt"?, "permissionRequest"? }
 
 GET /api/cli/tabs/<tabId>/result?workspaceId=WS
   Capture the current pane content.
