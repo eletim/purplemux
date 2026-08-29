@@ -334,27 +334,8 @@ export const removeTabFromPane = async (
   paneId: string,
   tabId: string,
   restoreActiveTabId?: string | null,
-): Promise<boolean> => {
-  const tabInfo = await withLock(async () => {
-    const filePath = resolveLayoutFile(wsId);
-    const layout = await readLayoutFile(filePath);
-    if (!layout) return null;
-
-    const pane = collectPanes(layout.root).find((p) => p.id === paneId);
-    if (!pane) return null;
-
-    const tab = pane.tabs.find((t) => t.id === tabId);
-    if (!tab) return null;
-    return { sessionName: tab.sessionName, panelType: tab.panelType };
-  });
-
-  if (!tabInfo) return false;
-
-  if (tabInfo.panelType !== 'web-browser') {
-    await killSession(tabInfo.sessionName);
-  }
-
-  return withLock(async () => {
+): Promise<boolean> =>
+  withLock(async () => {
     const filePath = resolveLayoutFile(wsId);
     const layout = await readLayoutFile(filePath);
     if (!layout) return false;
@@ -362,8 +343,14 @@ export const removeTabFromPane = async (
     const pane = collectPanes(layout.root).find((p) => p.id === paneId);
     if (!pane) return false;
 
-    const idx = pane.tabs.findIndex((t) => t.id === tabId);
-    if (idx === -1) return false;
+    const tab = pane.tabs.find((t) => t.id === tabId);
+    if (!tab) return false;
+
+    if (tab.panelType !== 'web-browser') {
+      await killSession(tab.sessionName);
+    }
+
+    const idx = pane.tabs.indexOf(tab);
 
     pane.tabs.splice(idx, 1);
 
@@ -385,7 +372,6 @@ export const removeTabFromPane = async (
 
     return true;
   });
-};
 
 export const renameTabInPane = async (wsId: string, paneId: string, tabId: string, name: string): Promise<ITab | null> =>
   withLock(async () => {
