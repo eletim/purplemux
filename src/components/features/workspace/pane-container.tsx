@@ -697,11 +697,6 @@ const PaneContainer = memo(({ paneId, paneNumber }: IPaneContainerProps) => {
   const handleDeleteTab = useCallback(
     async (tabId: string) => {
       if (closingTabIdRef.current) return;
-      const isLastTab = tabs.length === 1;
-      if (isLastTab && paneCount > 1) {
-        closePane(paneId);
-        return;
-      }
       closingTabIdRef.current = tabId;
       try {
         await deleteTabInPane(paneId, tabId);
@@ -709,7 +704,7 @@ const PaneContainer = memo(({ paneId, paneNumber }: IPaneContainerProps) => {
         closingTabIdRef.current = null;
       }
     },
-    [paneId, tabs, paneCount, deleteTabInPane, closePane],
+    [paneId, deleteTabInPane],
   );
 
   const handleRestartTab = useCallback(

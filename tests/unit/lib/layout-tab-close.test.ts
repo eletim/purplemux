@@ -25,6 +25,7 @@ vi.mock('@/lib/sync-server', () => ({ broadcastSync: mocks.broadcastSync }));
 
 import {
   clearLayoutCache,
+  closePaneInLayout,
   readLayoutFile,
   removeTabFromPane,
   resolveLayoutFile,
@@ -194,5 +195,39 @@ describe('removeTabFromPane close semantics', () => {
     expect(stored?.root).toMatchObject({ tabs: [], activeTabId: null });
     expect(removeStatus).toHaveBeenCalledOnce();
     expect(removeStatus).toHaveBeenCalledWith('tab-a');
+  });
+
+  it('preserves a pane and its status entries when pane runtime cleanup fails', async () => {
+    statusTabs.add('tab-a');
+    statusTabs.add('tab-b');
+    const killError = new Error('process still alive');
+    mocks.killSession.mockRejectedValueOnce(killError);
+    await writeLayout(workspaceId, {
+      root: {
+        type: 'split',
+        orientation: 'horizontal',
+        ratio: 50,
+        children: [pane('pane-left', ['tab-a']), pane('pane-right', ['tab-b'])],
+      },
+      activePaneId: 'pane-left',
+      updatedAt: '2026-08-30T00:00:00.000Z',
+    });
+
+    await expect(closePaneInLayout(workspaceId, 'pane-left')).rejects.toBe(killError);
+
+    const stored = await readLayoutFile(resolveLayoutFile(workspaceId));
+    expect(stored).toMatchObject({
+      root: {
+        type: 'split',
+        children: [
+          { type: 'pane', id: 'pane-left', tabs: [{ id: 'tab-a' }] },
+          { type: 'pane', id: 'pane-right', tabs: [{ id: 'tab-b' }] },
+        ],
+      },
+      activePaneId: 'pane-left',
+    });
+    expect(statusTabs).toEqual(new Set(['tab-a', 'tab-b']));
+    expect(reconcileWorkspaceTabs).not.toHaveBeenCalled();
+    expect(removeStatus).not.toHaveBeenCalled();
   });
 });

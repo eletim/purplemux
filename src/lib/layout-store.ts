@@ -690,9 +690,7 @@ export const splitPaneInLayout = async (
 };
 
 export const closePaneInLayout = async (wsId: string, paneId: string): Promise<ILayoutData | null> => {
-  let sessions: string[] = [];
-
-  const result = await withLock(async () => {
+  return withLock(async () => {
     const filePath = resolveLayoutFile(wsId);
     const layout = await readLayoutFile(filePath);
     if (!layout) return null;
@@ -701,7 +699,11 @@ export const closePaneInLayout = async (wsId: string, paneId: string): Promise<I
     if (!pane) return null;
     if (collectPanes(layout.root).length <= 1) return null;
 
-    sessions = pane.tabs.filter((t) => t.panelType !== 'web-browser').map((t) => t.sessionName);
+    const sessions = pane.tabs.filter((t) => t.panelType !== 'web-browser').map((t) => t.sessionName);
+    for (const session of sessions) {
+      await killSession(session);
+    }
+
     const wasEqualized = isEqualized(layout.root);
     removePaneWithFocus(layout, paneId);
     if (wasEqualized) {
@@ -712,10 +714,6 @@ export const closePaneInLayout = async (wsId: string, paneId: string): Promise<I
     syncWorkspaceDirectories(wsId, layout.root);
     return layout;
   });
-
-  await Promise.all(sessions.map((s) => killSession(s).catch(() => {})));
-
-  return result;
 };
 
 export const reorderTabsInPane = async (

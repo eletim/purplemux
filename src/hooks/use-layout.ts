@@ -488,6 +488,10 @@ const useLayoutStore = create<ILayoutState>((set, get) => ({
     clearInputDraft(tabId);
     useTabStore.getState().cancelTab(tabId);
 
+    const { layout: currentLayout, paneCount } = get();
+    const currentPane = currentLayout ? findPane(currentLayout.root, paneId) : null;
+    const removesPane = currentPane?.tabs.length === 1 && paneCount > 1;
+
     applyPaneUpdate(set, get, paneId, (pane) => {
       const sorted = [...pane.tabs].sort((a, b) => a.order - b.order);
       const idx = sorted.findIndex((t) => t.id === tabId);
@@ -504,7 +508,9 @@ const useLayoutStore = create<ILayoutState>((set, get) => ({
     const { workspaceId } = get();
     try {
       const res = await fetch(wsQuery(`/api/layout/pane/${paneId}/tabs/${tabId}`, workspaceId), { method: 'DELETE' });
-      if (!res.ok && res.status !== 404) {
+      if (res.ok && removesPane) {
+        await get().fetchLayout(undefined, false);
+      } else if (!res.ok && res.status !== 404) {
         toast.error(t('terminal', 'tabDeleteError'));
         await get().fetchLayout();
       }

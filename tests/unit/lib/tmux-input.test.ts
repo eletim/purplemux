@@ -31,6 +31,9 @@ vi.mock('child_process', () => ({ execFile: mocks.execFile, spawn: mocks.spawn }
 
 import { killSession, sendLiteralText } from '@/lib/tmux';
 
+const missingSessionError = () => Object.assign(new Error('missing'), { code: 1 });
+const processGroupGoneError = () => Object.assign(new Error('gone'), { code: 'ESRCH' });
+
 describe('tmux input transport', () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -65,7 +68,7 @@ describe('tmux input transport', () => {
     let sessionAlive = true;
     mocks.execFile.mockImplementation((_file, args, _options, callback) => {
       if (args.includes('has-session')) {
-        callback(sessionAlive ? null : new Error('missing'), '', '');
+        callback(sessionAlive ? null : missingSessionError(), '', '');
       } else if (args.includes('display-message')) {
         callback(null, '4321\n', '');
       } else if (args.includes('kill-session')) {
@@ -75,7 +78,10 @@ describe('tmux input transport', () => {
         callback(null, '', '');
       }
     });
-    const processKill = vi.spyOn(process, 'kill').mockImplementation(() => true);
+    const processKill = vi.spyOn(process, 'kill').mockImplementation((_pid, signal) => {
+      if (signal === 0) throw processGroupGoneError();
+      return true;
+    });
 
     await killSession('tmux-1');
 
@@ -94,7 +100,7 @@ describe('tmux input transport', () => {
     let killAttempts = 0;
     mocks.execFile.mockImplementation((_file, args, _options, callback) => {
       if (args.includes('has-session')) {
-        callback(killAttempts >= 2 ? new Error('missing') : null, '', '');
+        callback(killAttempts >= 2 ? missingSessionError() : null, '', '');
       } else if (args.includes('display-message')) {
         callback(null, '4321\n', '');
       } else if (args.includes('kill-session')) {
@@ -104,7 +110,10 @@ describe('tmux input transport', () => {
         callback(null, '', '');
       }
     });
-    const processKill = vi.spyOn(process, 'kill').mockImplementation(() => true);
+    const processKill = vi.spyOn(process, 'kill').mockImplementation((_pid, signal) => {
+      if (signal === 0) throw processGroupGoneError();
+      return true;
+    });
 
     const close = killSession('tmux-1');
     await vi.runAllTimersAsync();
