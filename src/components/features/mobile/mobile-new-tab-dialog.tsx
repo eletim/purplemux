@@ -15,7 +15,7 @@ import type { TPanelType } from '@/types/terminal';
 interface IMobileNewTabDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  onCreateTab: (panelType?: TPanelType, options?: { command?: string; resumeSessionId?: string }) => Promise<void>;
+  onCreateTab: (panelType?: TPanelType) => Promise<void>;
 }
 
 const MobileNewTabDialog = ({ open, onOpenChange, onCreateTab }: IMobileNewTabDialogProps) => {
@@ -24,8 +24,8 @@ const MobileNewTabDialog = ({ open, onOpenChange, onCreateTab }: IMobileNewTabDi
   const [creatingKey, setCreatingKey] = useState<string | null>(null);
 
   const MENU_ITEMS = [
-    { key: 'claude', type: 'claude-code' as const, icon: <ClaudeCodeIcon className="h-5 w-5" />, label: tt('claudeNewConversation'), startCommand: 'claude-new' as const },
-    { key: 'codex', type: 'codex-cli' as const, icon: <OpenAIIcon className="h-5 w-5" />, label: tt('codexNewConversation'), startCommand: 'codex-new' as const },
+    { key: 'claude', type: 'claude-code' as const, icon: <ClaudeCodeIcon className="h-5 w-5" />, label: tt('claudeNewConversation') },
+    { key: 'codex', type: 'codex-cli' as const, icon: <OpenAIIcon className="h-5 w-5" />, label: tt('codexNewConversation') },
     { key: 'agent-sessions', type: 'agent-sessions' as const, icon: <History className="h-5 w-5 text-muted-foreground" />, label: tt('sessionList') },
     { key: 'terminal', type: 'terminal' as const, icon: <Terminal className="h-5 w-5 text-muted-foreground" />, label: 'Terminal' },
   ] as const;
@@ -37,19 +37,7 @@ const MobileNewTabDialog = ({ open, onOpenChange, onCreateTab }: IMobileNewTabDi
     onOpenChange(false);
   };
 
-  const handleStartNew = async (item: Extract<(typeof MENU_ITEMS)[number], { startCommand: 'claude-new' | 'codex-new' }>) => {
-    const key = `${item.key}-new`;
-    setCreatingKey(key);
-    await onCreateTab(item.type, { command: item.startCommand });
-    setCreatingKey(null);
-    onOpenChange(false);
-  };
-
   const handleSelect = async (item: (typeof MENU_ITEMS)[number]) => {
-    if ('startCommand' in item) {
-      await handleStartNew(item);
-      return;
-    }
     await handleOpenList(item);
   };
 
@@ -71,7 +59,7 @@ const MobileNewTabDialog = ({ open, onOpenChange, onCreateTab }: IMobileNewTabDi
                 onClick={() => handleSelect(item)}
               >
                 <span className="flex h-5 w-5 items-center justify-center">
-                  {creatingKey === `${item.key}-new` ? <Spinner className="h-4 w-4" /> : item.icon}
+                  {creatingKey === item.key ? <Spinner className="h-4 w-4" /> : item.icon}
                 </span>
                 <span className="line-clamp-2 max-w-full px-1 text-center text-xs leading-tight">
                   {item.label}

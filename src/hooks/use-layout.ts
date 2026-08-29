@@ -98,7 +98,7 @@ interface ILayoutState {
   focusPane: (paneId: string) => void;
   updateRatio: (path: number[], ratio: number) => void;
   moveTab: (tabId: string, fromPaneId: string, toPaneId: string, toIndex: number) => void;
-  createTabInPane: (paneId: string, panelType?: TPanelType, command?: string, resumeSessionId?: string) => Promise<ITab | null>;
+  createTabInPane: (paneId: string, panelType?: TPanelType, resumeSessionId?: string) => Promise<ITab | null>;
   deleteTabInPane: (paneId: string, tabId: string) => Promise<void>;
   restartTabInPane: (paneId: string, tabId: string, command?: string) => Promise<boolean>;
   switchTabInPane: (paneId: string, tabId: string) => void;
@@ -443,7 +443,7 @@ const useLayoutStore = create<ILayoutState>((set, get) => ({
     }).catch(() => get().fetchLayout(undefined, false));
   },
 
-  createTabInPane: async (paneId, explicitPanelType?, command?, resumeSessionId?) => {
+  createTabInPane: async (paneId, explicitPanelType?, resumeSessionId?) => {
     const { layout, workspaceId } = get();
     try {
       let panelType: TPanelType | undefined = explicitPanelType;
@@ -461,12 +461,12 @@ const useLayoutStore = create<ILayoutState>((set, get) => ({
       const res = await fetch(wsQuery(`/api/layout/pane/${paneId}/tabs`, workspaceId), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ cwd, panelType, command, resumeSessionId }),
+        body: JSON.stringify({ cwd, panelType, resumeSessionId }),
       });
       if (!res.ok) throw new Error();
       const newTab: ITab = await res.json();
 
-      if (command || resumeSessionId) {
+      if (panelType === 'codex-cli' || panelType === 'claude-code' || resumeSessionId) {
         useTabStore.getState().initTab(newTab.id, { panelType, sessionView: 'check' });
       }
 

@@ -1,17 +1,14 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { verifyCliToken } from '@/lib/cli-token';
-import { getLayout, addTabToPane } from '@/lib/layout-store';
+import { getLayout } from '@/lib/layout-store';
 import { collectPanes } from '@/lib/layout-tree';
 import { getWorkspaceById, getWorkspaces } from '@/lib/workspace-store';
-import { resolveFirstPaneId } from '@/lib/cli-utils';
 import { getProviderByPanelType } from '@/lib/providers';
-import { checkAgentAvailabilityForPanelType, toAgentAvailabilityError } from '@/lib/agent-availability';
+import { createTabRuntime, TabRuntimeError, VALID_PANEL_TYPES } from '@/lib/tab-runtime';
 import { createLogger } from '@/lib/logger';
 import type { TPanelType } from '@/types/terminal';
 
 const log = createLogger('api:cli:tabs');
-
-const VALID_PANEL_TYPES: TPanelType[] = ['terminal', 'claude-code', 'codex-cli', 'agent-sessions', 'web-browser', 'diff'];
 
 const handler = async (req: NextApiRequest, res: NextApiResponse) => {
   if (!verifyCliToken(req)) {
@@ -67,10 +64,6 @@ const handler = async (req: NextApiRequest, res: NextApiResponse) => {
     if (!ws) {
       return res.status(404).json({ error: 'Workspace not found' });
     }
-    const paneId = await resolveFirstPaneId(workspaceId);
-    if (!paneId) {
-      return res.status(500).json({ error: 'No pane available in workspace' });
-    }
     if (panelType !== undefined && !VALID_PANEL_TYPES.includes(panelType as TPanelType)) {
       return res.status(400).json({
         error: 'Invalid panelType',
@@ -78,14 +71,14 @@ const handler = async (req: NextApiRequest, res: NextApiResponse) => {
       });
     }
     const resolvedType: TPanelType = panelType ? (panelType as TPanelType) : 'terminal';
-    const availability = await checkAgentAvailabilityForPanelType(resolvedType);
-    if (!availability.ok) {
-      return res.status(availability.status).json(toAgentAvailabilityError(availability));
-    }
 
     try {
-      const tab = await addTabToPane(workspaceId, paneId, name, ws.directories[0], resolvedType);
-      if (!tab) return res.status(500).json({ error: 'Failed to create tab' });
+      const { tab, paneId, provider } = await createTabRuntime({
+        workspaceId,
+        name,
+        cwd: ws.directories[0],
+        panelType: resolvedType,
+      });
       return res.status(201).json({
         tabId: tab.id,
         workspaceId,
@@ -93,10 +86,13 @@ const handler = async (req: NextApiRequest, res: NextApiResponse) => {
         sessionName: tab.sessionName,
         name: tab.name,
         panelType: tab.panelType,
-        agentProviderId: null,
-        agentSessionId: null,
+        agentProviderId: provider?.id ?? null,
+        agentSessionId: provider?.readSessionId(tab) ?? null,
       });
     } catch (err) {
+      if (err instanceof TabRuntimeError) {
+        return res.status(err.status).json(err.body);
+      }
       const msg = err instanceof Error ? err.message : 'unknown error';
       log.error(`create tab failed: ${msg}`);
       return res.status(500).json({ error: msg });
