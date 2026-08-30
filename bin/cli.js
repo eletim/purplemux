@@ -119,6 +119,19 @@ const cmdTabSend = async (args) => {
   out(body);
 };
 
+const cmdTabInterrupt = async (args) => {
+  requireEnv();
+  const rest = stripFlags(args, ['--workspace', '-w']);
+  const tabId = rest[0];
+  if (!tabId) die('tab ID is required');
+  const wsId = resolveWsForTab(args);
+  const { body } = await api(
+    'POST',
+    `/api/cli/tabs/${tabId}/interrupt?workspaceId=${encodeURIComponent(wsId)}`,
+  );
+  out(body);
+};
+
 const cmdTabStatus = async (args) => {
   requireEnv();
   const rest = stripFlags(args, ['--workspace', '-w']);
@@ -266,6 +279,7 @@ Commands:
   tab list [-w WS]                         List tabs (optionally scoped to workspace)
   tab create -w WS [-n NAME] [-t TYPE]     Create a tab in workspace (type: terminal | claude-code | codex-cli | agent-sessions | web-browser | diff)
   tab send -w WS TAB_ID CONTENT...         Send input to a tab
+  tab interrupt -w WS TAB_ID               Interrupt the foreground agent
   tab status -w WS TAB_ID                  Tab status
   tab result -w WS TAB_ID                  Capture tab pane content
   tab close -w WS TAB_ID                   Close a tab
@@ -300,6 +314,7 @@ const main = async () => {
         case 'list': return cmdTabList(rest);
         case 'create': return cmdTabCreate(rest);
         case 'send': return cmdTabSend(rest);
+        case 'interrupt': return cmdTabInterrupt(rest);
         case 'status': return cmdTabStatus(rest);
         case 'result': return cmdTabResult(rest);
         case 'close': return cmdTabClose(rest);
