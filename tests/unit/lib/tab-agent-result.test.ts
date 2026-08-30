@@ -11,6 +11,7 @@ import { codexProvider } from '@/lib/providers/codex';
 import { claudeProvider } from '@/lib/providers/claude';
 import type { IAgentProvider } from '@/lib/providers';
 import type { ITab, TPanelType } from '@/types/terminal';
+import type { IClientTabStatusEntry } from '@/types/status';
 
 const tempDirs: string[] = [];
 
@@ -69,6 +70,8 @@ const makeDependencies = (
   overrides: Partial<ITabAgentResultDependencies> = {},
 ): ITabAgentResultDependencies => ({
   findTab: vi.fn(async () => ({ workspaceId: 'ws-1', paneId: 'pane-1', tab })),
+  getLiveStatus: vi.fn(() => null),
+  getProvider: vi.fn((providerId) => provider?.id === providerId ? provider : null),
   getProviderByPanelType: vi.fn(() => provider),
   getSessionPanePid: vi.fn(async () => null),
   existsSync: vi.fn(() => true),
@@ -78,7 +81,105 @@ const makeDependencies = (
   ...overrides,
 });
 
+const liveStatus = (
+  overrides: Partial<IClientTabStatusEntry> = {},
+): IClientTabStatusEntry => ({
+  cliState: 'ready-for-review',
+  workspaceId: 'ws-1',
+  tabName: 'Agent',
+  panelType: 'codex-cli',
+  agentProviderId: 'codex',
+  agentSessionId: 'session-live',
+  ...overrides,
+});
+
 describe('readTabAgentResult', () => {
+  it('prefers a matching live StatusManager identity while persisted metadata is null', async () => {
+    const jsonlPath = await makeJsonl([
+      codexLine('agent_message', '2026-08-29T00:00:00.000Z', { message: 'LIVE_OK' }),
+      codexLine('task_complete', '2026-08-29T00:00:01.000Z'),
+    ]);
+    const tab = makeTab('codex-cli', codexProvider, null, null);
+    const dependencies = makeDependencies(tab, codexProvider, {
+      getLiveStatus: vi.fn(() => liveStatus()),
+      resolveProviderJsonlPath: vi.fn(async (_provider, _sessionName, sessionId) =>
+        sessionId === 'session-live' ? jsonlPath : null),
+    });
+
+    const result = await readTabAgentResult('ws-1', 'tab-1', dependencies);
+
+    expect(result).toMatchObject({
+      agentProviderId: 'codex',
+      agentSessionId: 'session-live',
+      status: 'completed',
+      text: 'LIVE_OK',
+    });
+    expect(dependencies.getSessionPanePid).not.toHaveBeenCalled();
+  });
+
+  it('prefers the live session when live and persisted identities differ', async () => {
+    const liveJsonlPath = await makeJsonl([
+      codexLine('agent_message', '2026-08-29T00:01:00.000Z', { message: 'NEW_OK' }),
+      codexLine('task_complete', '2026-08-29T00:01:01.000Z'),
+    ]);
+    const staleJsonlPath = await makeJsonl([], 'rollout-old-session.jsonl');
+    const tab = makeTab('codex-cli', codexProvider, 'old-session', staleJsonlPath);
+    const dependencies = makeDependencies(tab, codexProvider, {
+      getLiveStatus: vi.fn(() => liveStatus()),
+      resolveProviderJsonlPath: vi.fn(async (_provider, _sessionName, sessionId) =>
+        sessionId === 'session-live' ? liveJsonlPath : null),
+    });
+
+    const result = await readTabAgentResult('ws-1', 'tab-1', dependencies);
+
+    expect(result).toMatchObject({
+      agentSessionId: 'session-live',
+      status: 'completed',
+      text: 'NEW_OK',
+    });
+  });
+
+  it.each([
+    ['workspace mismatch', liveStatus({ workspaceId: 'ws-other' })],
+    ['panel type mismatch', liveStatus({ panelType: 'claude-code' })],
+    ['provider mismatch', liveStatus({ agentProviderId: 'claude' })],
+  ])('ignores a live entry with %s and uses persisted recovery metadata', async (_label, status) => {
+    const jsonlPath = await makeJsonl([
+      codexLine('agent_message', '2026-08-29T00:02:00.000Z', { message: 'PERSISTED_OK' }),
+      codexLine('task_complete', '2026-08-29T00:02:01.000Z'),
+    ]);
+    const tab = makeTab('codex-cli', codexProvider, 'session-persisted', jsonlPath);
+    const dependencies = makeDependencies(tab, codexProvider, {
+      getLiveStatus: vi.fn(() => status),
+      getProvider: vi.fn((providerId) => providerId === 'codex' ? codexProvider : claudeProvider),
+    });
+
+    const result = await readTabAgentResult('ws-1', 'tab-1', dependencies);
+
+    expect(result).toMatchObject({
+      agentProviderId: 'codex',
+      agentSessionId: 'session-persisted',
+      status: 'completed',
+      text: 'PERSISTED_OK',
+    });
+  });
+
+  it('does not recover a stale persisted session when a matching live entry has no session ID', async () => {
+    const tab = makeTab('codex-cli', codexProvider, 'session-persisted', null);
+    const dependencies = makeDependencies(tab, codexProvider, {
+      getLiveStatus: vi.fn(() => liveStatus({ agentSessionId: null })),
+    });
+
+    const result = await readTabAgentResult('ws-1', 'tab-1', dependencies);
+
+    expect(result).toMatchObject({
+      agentProviderId: 'codex',
+      agentSessionId: null,
+      status: 'not-ready',
+      reason: 'agent-session-id-unavailable',
+    });
+  });
+
   it('returns the latest completed Codex response through the Codex timeline parser', async () => {
     const jsonlPath = await makeJsonl([
       codexLine('agent_message', '2026-08-29T01:00:00.000Z', { message: 'older' }),

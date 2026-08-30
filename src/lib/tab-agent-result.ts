@@ -1,13 +1,15 @@
 import { existsSync } from 'fs';
 import { findTab, type ITabLocation } from '@/lib/tab-location';
-import { getProviderByPanelType, type IAgentProvider } from '@/lib/providers';
+import { getProvider, getProviderByPanelType, type IAgentProvider } from '@/lib/providers';
 import { getSessionPanePid } from '@/lib/tmux';
 import { isAllowedJsonlPath } from '@/lib/path-validation';
+import { getStatusManager } from '@/lib/status-manager';
 import {
   readProviderTimelineUntil,
   resolveProviderJsonlPath,
 } from '@/lib/provider-timeline-reader';
 import type { ITimelineAssistantMessage, ITimelineEntry } from '@/types/timeline';
+import type { IClientTabStatusEntry } from '@/types/status';
 
 const MAX_RESULT_TIMELINE_ENTRIES = 512;
 
@@ -43,6 +45,8 @@ export interface ITabAgentResult {
 
 export interface ITabAgentResultDependencies {
   findTab: typeof findTab;
+  getLiveStatus: (tabId: string) => IClientTabStatusEntry | null;
+  getProvider: typeof getProvider;
   getProviderByPanelType: typeof getProviderByPanelType;
   getSessionPanePid: typeof getSessionPanePid;
   existsSync: typeof existsSync;
@@ -53,6 +57,8 @@ export interface ITabAgentResultDependencies {
 
 const defaultDependencies: ITabAgentResultDependencies = {
   findTab,
+  getLiveStatus: (tabId) => getStatusManager().getForClient(tabId),
+  getProvider,
   getProviderByPanelType,
   getSessionPanePid,
   existsSync,
@@ -159,23 +165,37 @@ export const readTabAgentResult = async (
   const found = await dependencies.findTab(workspaceId, tabId);
   if (!found) return null;
 
-  const provider = dependencies.getProviderByPanelType(found.tab.panelType);
-  if (!provider) {
+  const panelType = found.tab.panelType ?? 'terminal';
+  const persistedProvider = dependencies.getProviderByPanelType(panelType);
+  if (!persistedProvider) {
     return unavailableResult(found, null, 'not-applicable', 'non-agent-tab');
   }
 
-  let agentSessionId = provider.readSessionId(found.tab);
+  const liveStatus = dependencies.getLiveStatus(tabId);
+  const liveProvider = liveStatus?.agentProviderId
+    ? dependencies.getProvider(liveStatus.agentProviderId)
+    : null;
+  const hasMatchingLiveIdentity = liveStatus?.workspaceId === workspaceId
+    && (liveStatus.panelType ?? 'terminal') === panelType
+    && liveProvider?.panelType === panelType;
+  const provider = hasMatchingLiveIdentity ? liveProvider : persistedProvider;
+
+  let agentSessionId = hasMatchingLiveIdentity
+    ? liveStatus.agentSessionId ?? null
+    : provider.readSessionId(found.tab);
   let jsonlPath = provider.readJsonlPath(found.tab);
 
-  const panePid = await dependencies.getSessionPanePid(found.tab.sessionName);
-  if (panePid) {
-    const detected = await provider.detectActiveSession(panePid);
-    if (detected.status === 'running') {
-      agentSessionId = detected.sessionId;
-      jsonlPath = detected.jsonlPath;
-    } else if (await provider.isAgentRunning(panePid)) {
-      agentSessionId = null;
-      jsonlPath = null;
+  if (!hasMatchingLiveIdentity) {
+    const panePid = await dependencies.getSessionPanePid(found.tab.sessionName);
+    if (panePid) {
+      const detected = await provider.detectActiveSession(panePid);
+      if (detected.status === 'running') {
+        agentSessionId = detected.sessionId;
+        jsonlPath = detected.jsonlPath;
+      } else if (await provider.isAgentRunning(panePid)) {
+        agentSessionId = null;
+        jsonlPath = null;
+      }
     }
   }
 
@@ -183,7 +203,17 @@ export const readTabAgentResult = async (
   if (agentSessionId && jsonlSessionId && agentSessionId !== jsonlSessionId) {
     jsonlPath = null;
   }
-  agentSessionId = agentSessionId ?? jsonlSessionId;
+  if (!hasMatchingLiveIdentity) {
+    agentSessionId = agentSessionId ?? jsonlSessionId;
+  } else if (!agentSessionId) {
+    // A matching live entry is authoritative even while persistence is catching up
+    // or still contains metadata from an earlier runtime.
+    jsonlPath = null;
+  } else if (jsonlSessionId !== agentSessionId) {
+    // Persisted JSONL is usable with live identity only when the provider can
+    // prove that the path belongs to that same session.
+    jsonlPath = null;
+  }
   if (!agentSessionId) {
     return unavailableResult(found, provider, 'not-ready', 'agent-session-id-unavailable');
   }
