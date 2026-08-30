@@ -3,10 +3,9 @@ import { WebSocket } from 'ws';
 import { watch, type FSWatcher } from 'fs';
 import { existsSync, mkdirSync } from 'fs';
 import { type ISessionWatcher } from '@/lib/providers/types';
-import { readTailEntries, parseIncremental, parseJsonlContent } from './session-parser';
-import { CodexParser, createCodexParser, parseCodexContent, readTailCodexEntries } from './session-parser-codex';
+import { parseIncremental, parseJsonlContent } from './session-parser';
+import { CodexParser, createCodexParser, parseCodexContent } from './session-parser-codex';
 import { CODEX_PROVIDER_ID } from '@/lib/providers/codex';
-import { findCodexSessionById } from '@/lib/providers/codex/session-detection';
 import { isCodexJsonlPath } from './path-validation';
 import { open as fsOpen } from 'fs/promises';
 import { createReadStream } from 'fs';
@@ -29,6 +28,7 @@ import type { TTimelineServerMessage, IInitMeta, ITimelineEntry, ISessionStats }
 import path from 'path';
 import { isAllowedJsonlPath } from './path-validation';
 import { createLogger } from '@/lib/logger';
+import { readProviderTimelineTail, resolveProviderJsonlPath } from '@/lib/provider-timeline-reader';
 
 const log = createLogger('timeline');
 
@@ -194,24 +194,6 @@ const readBoundedEntries = async (
   } finally {
     await handle.close();
   }
-};
-
-const readInitForCodex = async (
-  parser: CodexParser,
-  isNewWatcher: boolean,
-  maxEntries: number,
-): Promise<{
-  entries: ITimelineEntry[];
-  fileSize: number;
-  startByteOffset: number;
-  hasMore: boolean;
-  errorCount: number;
-  summary?: string;
-  customTitle?: string;
-}> => {
-  return isNewWatcher
-    ? parser.parseTail(maxEntries)
-    : readTailCodexEntries(parser.path, maxEntries);
 };
 
 const processFileChange = async (fw: IFileWatcher) => {
@@ -425,9 +407,12 @@ const subscribeToFile = async (
 
   fw.connections.add(ws);
 
-  const result = fw.codexParser
-    ? await readInitForCodex(fw.codexParser, isNewWatcher, MAX_INIT_ENTRIES)
-    : await readTailEntries(jsonlPath, MAX_INIT_ENTRIES);
+  const result = await readProviderTimelineTail(
+    provider,
+    jsonlPath,
+    MAX_INIT_ENTRIES,
+    isNewWatcher ? fw.codexParser : null,
+  );
 
   if (result.errorCount > 0) {
     sendJson(ws, {
@@ -619,22 +604,6 @@ const cleanup = (conn: ITimelineConnection) => {
   }
 };
 
-const resolveJsonlPath = async (
-  tmuxSession: string,
-  sessionId: string,
-  provider: IAgentProvider,
-): Promise<string | null> => {
-  if (provider.id === CODEX_PROVIDER_ID) {
-    return (await findCodexSessionById(sessionId))?.jsonlPath ?? null;
-  }
-
-  const cwd = await getSessionCwd(tmuxSession);
-  if (!cwd) return null;
-  const projectDir = cwdToProjectPath(cwd);
-  const jsonlPath = path.join(projectDir, `${sessionId}.jsonl`);
-  return existsSync(jsonlPath) ? jsonlPath : null;
-};
-
 const handleResumeMessage = async (
   ws: WebSocket,
   conn: ITimelineConnection,
@@ -661,7 +630,7 @@ const handleResumeMessage = async (
 
     await updateTabAgentSessionId(conn.sessionName, conn.provider, sessionId).catch(() => {});
 
-    const jsonlPath = await resolveJsonlPath(tmuxSession, sessionId, conn.provider);
+    const jsonlPath = await resolveProviderJsonlPath(conn.provider, tmuxSession, sessionId);
 
     sendJson(ws, {
       type: 'timeline:resume-started',
@@ -829,7 +798,7 @@ export const handleTimelineConnection = async (ws: WebSocket, request: IncomingM
     if (sessionInfo.sessionId) {
       await updateTabAgentSessionId(conn.sessionName, provider, sessionInfo.sessionId).catch(() => {});
     }
-    const jsonlPath = await resolveJsonlPath(sessionName, effectiveSessionId, provider);
+    const jsonlPath = await resolveProviderJsonlPath(provider, sessionName, effectiveSessionId);
     if (jsonlPath) {
       conn.currentJsonlPath = jsonlPath;
       await subscribeAndUpdateSummary(ws, jsonlPath, effectiveSessionId, conn.sessionName, provider);

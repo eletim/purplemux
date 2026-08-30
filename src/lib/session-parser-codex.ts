@@ -224,12 +224,14 @@ interface ICodexParseState {
   inFlight: Map<string, TInFlightEntry>;
   staleWarnings: Set<string>;
   suppressedCallIds: Set<string>;
+  lastAssistantText: string | null;
 }
 
 const createState = (): ICodexParseState => ({
   inFlight: new Map(),
   staleWarnings: new Set(),
   suppressedCallIds: new Set(),
+  lastAssistantText: null,
 });
 
 const SUPPRESSED_FUNCTION_NAMES = new Set(['exec_command', 'shell', 'bash', 'write_stdin']);
@@ -526,7 +528,12 @@ const processEventMsg = (
   }
 
   switch (type) {
+    case 'task_started':
+    case 'TurnStarted':
+      state.lastAssistantText = null;
+      return [];
     case 'user_message': {
+      state.lastAssistantText = null;
       const text = safeString(payload.message);
       if (!text) return [];
       const imagesRaw = Array.isArray(payload.images) ? payload.images : [];
@@ -555,16 +562,29 @@ const processEventMsg = (
         timestamp,
         markdown: message,
       };
+      state.lastAssistantText = message;
       return [entry];
     }
     case 'task_complete':
     case 'TurnComplete': {
+      const lastAgentMessage = safeString(payload.last_agent_message);
+      const entries: ITimelineEntry[] = [];
+      if (lastAgentMessage && lastAgentMessage !== state.lastAssistantText) {
+        entries.push({
+          id: nanoid(),
+          type: 'assistant-message',
+          timestamp,
+          markdown: lastAgentMessage,
+        } satisfies ITimelineAssistantMessage);
+      }
+      state.lastAssistantText = lastAgentMessage || state.lastAssistantText;
       const turn: ITimelineTurnEnd = {
         id: nanoid(),
         type: 'turn-end',
         timestamp,
       };
-      return [turn];
+      entries.push(turn);
+      return entries;
     }
     case 'turn_aborted':
     case 'TurnAborted': {

@@ -50,7 +50,17 @@ GET /api/cli/tabs/<tabId>/status?workspaceId=WS
               "eventSeq"?, "busySince"?, "readyForReviewAt"?, "permissionRequest"? }
 
 GET /api/cli/tabs/<tabId>/result?workspaceId=WS
-  Capture the current pane content.
+  Read the latest completed assistant response from the provider JSONL timeline.
+  This never falls back to terminal pane capture and does not infer agent state.
+  Response: { "tabId", "workspaceId", "panelType", "agentProviderId", "agentSessionId",
+              "status": "completed" | "not-ready" | "interrupted" | "not-applicable" | "unavailable",
+              "reason", "text", "completed", "timestamp", "completionTimestamp", "interrupted" }
+  If a newer turn was interrupted, the previous completed response remains available with
+  "status": "completed" and "interrupted": true. An interrupted first turn has no text and
+  returns "status": "interrupted".
+
+GET /api/cli/tabs/<tabId>/capture?workspaceId=WS
+  Capture the current terminal pane content. This is a screen snapshot, not an agent result.
   Response: { "content": "..." }
 
 ## Web-browser tabs

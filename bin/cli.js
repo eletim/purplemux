@@ -158,6 +158,19 @@ const cmdTabResult = async (args) => {
   out(body);
 };
 
+const cmdTabCapture = async (args) => {
+  requireEnv();
+  const rest = stripFlags(args, ['--workspace', '-w']);
+  const tabId = rest[0];
+  if (!tabId) die('tab ID is required');
+  const wsId = resolveWsForTab(args);
+  const { body } = await api(
+    'GET',
+    `/api/cli/tabs/${tabId}/capture?workspaceId=${encodeURIComponent(wsId)}`,
+  );
+  out(body);
+};
+
 const cmdTabClose = async (args) => {
   requireEnv();
   const rest = stripFlags(args, ['--workspace', '-w']);
@@ -281,7 +294,8 @@ Commands:
   tab send -w WS TAB_ID CONTENT...         Send input to a tab
   tab interrupt -w WS TAB_ID               Interrupt the foreground agent
   tab status -w WS TAB_ID                  Tab status
-  tab result -w WS TAB_ID                  Capture tab pane content
+  tab result -w WS TAB_ID                  Read the latest completed structured agent response
+  tab capture -w WS TAB_ID                 Capture the current terminal pane content
   tab close -w WS TAB_ID                   Close a tab
   tab browser url -w WS TAB_ID             Current URL + title of a web-browser tab
   tab browser screenshot -w WS TAB_ID      Capture tab screenshot (PNG). Use -o FILE to save, --full for full page
@@ -317,6 +331,7 @@ const main = async () => {
         case 'interrupt': return cmdTabInterrupt(rest);
         case 'status': return cmdTabStatus(rest);
         case 'result': return cmdTabResult(rest);
+        case 'capture': return cmdTabCapture(rest);
         case 'close': return cmdTabClose(rest);
         case 'browser': return cmdTabBrowser(rest);
         default: die(`unknown tab command: ${sub || '(none)'}. Run 'purplemux help' for usage.`);
