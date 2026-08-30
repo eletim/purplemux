@@ -75,6 +75,67 @@ const cmdWorkspaces = async () => {
   out(body);
 };
 
+const isWorkspace = (value) =>
+  value
+  && typeof value === 'object'
+  && typeof value.id === 'string'
+  && value.id.startsWith('ws-')
+  && typeof value.name === 'string'
+  && Array.isArray(value.directories)
+  && value.directories.every((directory) => typeof directory === 'string');
+
+const workspaceCreateOutcomeUnknown = (reason) => {
+  die(`workspace creation outcome unknown; do not retry automatically (${reason})`);
+};
+
+const createWorkspace = async (data) => {
+  let resp;
+  try {
+    resp = await fetch(`${BASE}/api/cli/workspaces`, {
+      method: 'POST',
+      headers: { 'X-Pmux-Token': TOKEN, 'Content-Type': 'application/json' },
+      body: JSON.stringify(data),
+    });
+  } catch {
+    workspaceCreateOutcomeUnknown('transport failure');
+  }
+
+  let body = null;
+  if (resp.headers.get('content-type')?.includes('json')) {
+    try {
+      body = await resp.json();
+    } catch {
+      workspaceCreateOutcomeUnknown('invalid JSON response');
+    }
+  }
+
+  if (!resp.ok) {
+    const message = body?.error || `HTTP ${resp.status}`;
+    if (resp.status >= 500) {
+      workspaceCreateOutcomeUnknown(`server error: ${message}`);
+    }
+    die(message);
+  }
+  if (!isWorkspace(body)) {
+    workspaceCreateOutcomeUnknown('invalid workspace response');
+  }
+  return body;
+};
+
+const cmdWorkspaceCreate = async (args) => {
+  requireEnv();
+  const cwd = flagValue(args, '--cwd');
+  const name = flagValue(args, '--name');
+  if (!cwd) die('--cwd is required');
+  if (!path.isAbsolute(cwd)) die('--cwd must be an absolute path');
+
+  const body = await createWorkspace({
+    cwd,
+    ...(name ? { name } : {}),
+  });
+  out(body);
+};
+
 const cmdTabList = async (args) => {
   requireEnv();
   const wsId = flagValue(args, '--workspace') || flagValue(args, '-w');
@@ -289,6 +350,8 @@ Usage: purplemux <command> [args...]
 
 Commands:
   workspaces                               List workspaces
+  workspace create --cwd PATH [--name NAME]
+                                           Create a workspace and print its JSON
   tab list [-w WS]                         List tabs (optionally scoped to workspace)
   tab create -w WS [-n NAME] [-t TYPE]     Create a tab in workspace (type: terminal | claude-code | codex-cli | agent-sessions | web-browser | diff)
   tab send -w WS TAB_ID CONTENT...         Send input to a tab
@@ -321,6 +384,10 @@ const main = async () => {
   const rest = args.slice(2);
 
   switch (cmd) {
+    case 'workspace':
+      if (sub === 'create') return cmdWorkspaceCreate(rest);
+      die(`unknown workspace command: ${sub || '(none)'}. Run 'purplemux help' for usage.`);
+      break;
     case 'workspaces':
       return cmdWorkspaces();
     case 'tab':

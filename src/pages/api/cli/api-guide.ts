@@ -10,6 +10,14 @@ All endpoints require header \`x-pmux-token: <PMUX_TOKEN>\`.
 GET /api/cli/workspaces
   Response: { "workspaces": [{ "id": "...", "name": "...", "directories": [...] }] }
 
+POST /api/cli/workspaces
+  Body: { "cwd": "/absolute/path", "name"?: "..." }
+  Creates a new workspace through the shared Browser/CLI workspace runtime.
+  This mutation is not idempotent and clients must not retry it automatically after an unknown outcome.
+  Transport failures, invalid success responses, and server errors may mean creation committed;
+  the CLI reports "outcome unknown; do not retry automatically" for these cases.
+  Response: { "id": "ws-...", "name": "Workspace N", "directories": ["/absolute/path"] }
+
 ## Tabs
 
 GET /api/cli/tabs?workspaceId=WS
