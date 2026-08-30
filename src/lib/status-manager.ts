@@ -46,6 +46,30 @@ const entryAgentFields = (
     ?? null,
 });
 
+const toClientStatusEntry = (entry: ITabStatusEntry): IClientTabStatusEntry => ({
+  cliState: entry.cliState,
+  workspaceId: entry.workspaceId,
+  tabName: entry.tabName,
+  currentProcess: entry.currentProcess,
+  paneTitle: entry.paneTitle,
+  panelType: entry.panelType,
+  terminalStatus: entry.terminalStatus,
+  listeningPorts: entry.listeningPorts,
+  agentProviderId: entry.agentProviderId,
+  agentSummary: entry.agentSummary,
+  lastUserMessage: entry.lastUserMessage,
+  lastAssistantMessage: entry.lastAssistantMessage,
+  currentAction: entry.currentAction,
+  readyForReviewAt: entry.readyForReviewAt,
+  busySince: entry.busySince,
+  dismissedAt: entry.dismissedAt,
+  agentSessionId: entry.agentSessionId,
+  compactingSince: entry.compactingSince,
+  permissionRequest: entry.permissionRequest,
+  lastEvent: entry.lastEvent,
+  eventSeq: entry.eventSeq,
+});
+
 // Notification hook의 notification_type 중 권한 요청류만 needs-input으로 전환.
 // idle_prompt(응답 후 60s idle 알람), computer_use_*, elicitation_*, auth_success 등은 상태 변경 없이 무시한다.
 const INPUT_REQUESTING_NOTIFICATION_TYPES = new Set(['permission_prompt', 'worker_permission_prompt']);
@@ -449,31 +473,14 @@ class StatusManager {
   getAllForClient(): Record<string, IClientTabStatusEntry> {
     const result: Record<string, IClientTabStatusEntry> = {};
     for (const [tabId, entry] of this.tabs) {
-      result[tabId] = {
-        cliState: entry.cliState,
-        workspaceId: entry.workspaceId,
-        tabName: entry.tabName,
-        currentProcess: entry.currentProcess,
-        paneTitle: entry.paneTitle,
-        panelType: entry.panelType,
-        terminalStatus: entry.terminalStatus,
-        listeningPorts: entry.listeningPorts,
-        agentProviderId: entry.agentProviderId,
-        agentSummary: entry.agentSummary,
-        lastUserMessage: entry.lastUserMessage,
-        lastAssistantMessage: entry.lastAssistantMessage,
-        currentAction: entry.currentAction,
-        readyForReviewAt: entry.readyForReviewAt,
-        busySince: entry.busySince,
-        dismissedAt: entry.dismissedAt,
-        agentSessionId: entry.agentSessionId,
-        compactingSince: entry.compactingSince,
-        permissionRequest: entry.permissionRequest,
-        lastEvent: entry.lastEvent,
-        eventSeq: entry.eventSeq,
-      };
+      result[tabId] = toClientStatusEntry(entry);
     }
     return result;
+  }
+
+  getForClient(tabId: string): IClientTabStatusEntry | null {
+    const entry = this.tabs.get(tabId);
+    return entry ? toClientStatusEntry(entry) : null;
   }
 
   private applyCliState(tabId: string, entry: ITabStatusEntry, newState: TCliState, opts: { silent?: boolean } = {}): void {
@@ -876,6 +883,19 @@ class StatusManager {
     this.broadcastUpdate(tabId, entry);
   }
 
+  syncAgentSessionId(tmuxSession: string, providerId: string, sessionId: string | null): void {
+    const tabId = this.findTabIdBySession(tmuxSession);
+    if (!tabId) return;
+    const entry = this.tabs.get(tabId);
+    if (!entry) return;
+    const expectedProvider = getProviderByPanelType(entry.panelType);
+    if (expectedProvider?.id !== providerId) return;
+    if (entry.agentProviderId === providerId && entry.agentSessionId === sessionId) return;
+    entry.agentProviderId = providerId;
+    entry.agentSessionId = sessionId;
+    this.broadcastUpdate(tabId, entry);
+  }
+
   private handleTabWorkStateEvent(tabId: string, event: TAgentWorkStateEvent): void {
     const entry = this.tabs.get(tabId);
     if (!entry) return;
@@ -1223,6 +1243,9 @@ export const getStatusManager = (): StatusManager => {
     setLayoutReconciler({
       reconcileWorkspaceTabs: (wsId, validTabIds) => manager.reconcileWorkspaceTabs(wsId, validTabIds),
       removeWorkspaceTabs: (wsId) => manager.removeWorkspaceTabs(wsId),
+      syncAgentSessionId: (sessionName, providerId, sessionId) => {
+        manager.syncAgentSessionId(sessionName, providerId, sessionId);
+      },
     });
   }
   return g.__ptStatusManager;

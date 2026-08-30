@@ -28,6 +28,7 @@ const BASE_DIR = path.join(os.homedir(), '.purplemux');
 interface ILayoutReconciler {
   reconcileWorkspaceTabs: (wsId: string, validTabIds: readonly string[]) => void;
   removeWorkspaceTabs: (wsId: string) => void;
+  syncAgentSessionId: (sessionName: string, providerId: string, sessionId: string | null) => void;
 }
 
 const g = globalThis as unknown as {
@@ -488,16 +489,18 @@ const mutateTab = async (
   });
 };
 
-export const updateTabAgentSessionId = (
+export const updateTabAgentSessionId = async (
   sessionName: string,
   provider: IAgentProvider,
   sessionId: string | null,
-): Promise<void> =>
-  mutateTab(sessionName, (tab) => {
+): Promise<void> => {
+  await mutateTab(sessionName, (tab) => {
     if (tab.agentState?.providerId === provider.id && provider.readSessionId(tab) === sessionId) return false;
     provider.writeSessionId(tab, sessionId);
     return true;
   });
+  g.__ptLayoutReconciler?.syncAgentSessionId(sessionName, provider.id, sessionId);
+};
 
 export const updateTabAgentSummary = (
   sessionName: string,
@@ -510,7 +513,7 @@ export const updateTabAgentSummary = (
     return true;
   });
 
-export const updateTabAgentState = (
+export const updateTabAgentState = async (
   sessionName: string,
   provider: IAgentProvider,
   state: {
@@ -519,8 +522,8 @@ export const updateTabAgentState = (
     summary?: string | null;
     lastUserMessage?: string | null;
   },
-): Promise<void> =>
-  mutateTab(sessionName, (tab) => {
+): Promise<void> => {
+  await mutateTab(sessionName, (tab) => {
     let changed = false;
     if (state.sessionId !== undefined && provider.readSessionId(tab) !== state.sessionId) {
       provider.writeSessionId(tab, state.sessionId);
@@ -540,6 +543,10 @@ export const updateTabAgentState = (
     }
     return changed;
   });
+  if (state.sessionId !== undefined) {
+    g.__ptLayoutReconciler?.syncAgentSessionId(sessionName, provider.id, state.sessionId);
+  }
+};
 
 export const updateTabClaudeSessionId = (
   sessionName: string,
