@@ -84,6 +84,44 @@ const isWorkspace = (value) =>
   && Array.isArray(value.directories)
   && value.directories.every((directory) => typeof directory === 'string');
 
+const workspaceCreateOutcomeUnknown = (reason) => {
+  die(`workspace creation outcome unknown; do not retry automatically (${reason})`);
+};
+
+const createWorkspace = async (data) => {
+  let resp;
+  try {
+    resp = await fetch(`${BASE}/api/cli/workspaces`, {
+      method: 'POST',
+      headers: { 'X-Pmux-Token': TOKEN, 'Content-Type': 'application/json' },
+      body: JSON.stringify(data),
+    });
+  } catch {
+    workspaceCreateOutcomeUnknown('transport failure');
+  }
+
+  let body = null;
+  if (resp.headers.get('content-type')?.includes('json')) {
+    try {
+      body = await resp.json();
+    } catch {
+      workspaceCreateOutcomeUnknown('invalid JSON response');
+    }
+  }
+
+  if (!resp.ok) {
+    const message = body?.error || `HTTP ${resp.status}`;
+    if (resp.status >= 500) {
+      workspaceCreateOutcomeUnknown(`server error: ${message}`);
+    }
+    die(message);
+  }
+  if (!isWorkspace(body)) {
+    workspaceCreateOutcomeUnknown('invalid workspace response');
+  }
+  return body;
+};
+
 const cmdWorkspaceCreate = async (args) => {
   requireEnv();
   const cwd = flagValue(args, '--cwd');
@@ -91,11 +129,10 @@ const cmdWorkspaceCreate = async (args) => {
   if (!cwd) die('--cwd is required');
   if (!path.isAbsolute(cwd)) die('--cwd must be an absolute path');
 
-  const { body } = await api('POST', '/api/cli/workspaces', {
+  const body = await createWorkspace({
     cwd,
     ...(name ? { name } : {}),
   });
-  if (!isWorkspace(body)) die('Invalid workspace response');
   out(body);
 };
 

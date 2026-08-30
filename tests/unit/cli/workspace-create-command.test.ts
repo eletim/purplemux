@@ -18,6 +18,7 @@ interface IRequest {
 const startServer = async (
   status: number,
   body: unknown,
+  options: { raw?: boolean; dropConnection?: boolean } = {},
 ): Promise<{ port: number; requests: IRequest[] }> => {
   const requests: IRequest[] = [];
   const server = createServer((req, res) => {
@@ -30,8 +31,12 @@ const startServer = async (
         token: req.headers['x-pmux-token'] as string | undefined,
         body: raw ? JSON.parse(raw) : undefined,
       });
+      if (options.dropConnection) {
+        req.socket.destroy();
+        return;
+      }
       res.writeHead(status, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify(body));
+      res.end(options.raw ? String(body) : JSON.stringify(body));
     });
   });
   servers.push(server);
@@ -123,7 +128,47 @@ describe('purplemux workspace create command', () => {
     )).rejects.toMatchObject({
       code: 1,
       stdout: '',
-      stderr: 'error: Invalid workspace response\n',
+      stderr: 'error: workspace creation outcome unknown; do not retry automatically (invalid workspace response)\n',
+    });
+  });
+
+  it('classifies invalid JSON after dispatch as an unknown outcome', async () => {
+    const { port } = await startServer(201, '{invalid', { raw: true });
+    await expect(execFileAsync(
+      process.execPath,
+      [cliPath, 'workspace', 'create', '--cwd', '/absolute/cwd'],
+      { env: envFor(port) },
+    )).rejects.toMatchObject({
+      code: 1,
+      stdout: '',
+      stderr: 'error: workspace creation outcome unknown; do not retry automatically (invalid JSON response)\n',
+    });
+  });
+
+  it('classifies a dropped connection after dispatch as an unknown outcome without retrying', async () => {
+    const { port, requests } = await startServer(200, null, { dropConnection: true });
+    await expect(execFileAsync(
+      process.execPath,
+      [cliPath, 'workspace', 'create', '--cwd', '/absolute/cwd'],
+      { env: envFor(port) },
+    )).rejects.toMatchObject({
+      code: 1,
+      stdout: '',
+      stderr: 'error: workspace creation outcome unknown; do not retry automatically (transport failure)\n',
+    });
+    expect(requests).toHaveLength(1);
+  });
+
+  it('classifies server errors as an unknown mutation outcome', async () => {
+    const { port } = await startServer(500, { error: 'tmux failed' });
+    await expect(execFileAsync(
+      process.execPath,
+      [cliPath, 'workspace', 'create', '--cwd', '/absolute/cwd'],
+      { env: envFor(port) },
+    )).rejects.toMatchObject({
+      code: 1,
+      stdout: '',
+      stderr: 'error: workspace creation outcome unknown; do not retry automatically (server error: tmux failed)\n',
     });
   });
 
