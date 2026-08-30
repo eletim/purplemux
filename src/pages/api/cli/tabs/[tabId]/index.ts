@@ -1,8 +1,11 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { verifyCliToken } from '@/lib/cli-token';
 import { findTab } from '@/lib/cli-utils';
-import { removeTabFromPane } from '@/lib/layout-store';
 import { getProviderByPanelType } from '@/lib/providers';
+import { closeTabRuntime, TabRuntimeError } from '@/lib/tab-runtime';
+import { createLogger } from '@/lib/logger';
+
+const log = createLogger('cli');
 
 const handler = async (req: NextApiRequest, res: NextApiResponse) => {
   if (!verifyCliToken(req)) {
@@ -32,10 +35,16 @@ const handler = async (req: NextApiRequest, res: NextApiResponse) => {
   }
 
   if (req.method === 'DELETE') {
-    const found = await findTab(workspaceId, tabId);
-    if (!found) return res.status(404).json({ error: 'Tab not found' });
-    const ok = await removeTabFromPane(workspaceId, found.paneId, tabId);
-    return res.status(200).json({ ok });
+    try {
+      await closeTabRuntime({ workspaceId, tabId });
+      return res.status(200).json({ ok: true });
+    } catch (err) {
+      if (err instanceof TabRuntimeError) {
+        return res.status(err.status).json(err.body);
+      }
+      log.error(`CLI tab close failed: ${err instanceof Error ? err.message : err}`);
+      return res.status(500).json({ error: 'Failed to close tab' });
+    }
   }
 
   res.setHeader('Allow', 'GET, DELETE');

@@ -1,9 +1,9 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
-import { removeTabFromPane, restartTabSession, patchTab } from '@/lib/layout-store';
+import { restartTabSession, patchTab } from '@/lib/layout-store';
 import { getActiveWorkspaceId } from '@/lib/workspace-store';
-import { getStatusManager } from '@/lib/status-manager';
 import { createLogger } from '@/lib/logger';
 import type { ITab } from '@/types/terminal';
+import { closeTabRuntime, TabRuntimeError } from '@/lib/tab-runtime';
 
 const log = createLogger('layout');
 
@@ -17,12 +17,16 @@ const handler = async (req: NextApiRequest, res: NextApiResponse) => {
   const tabId = req.query.tabId as string;
 
   if (req.method === 'DELETE') {
-    const found = await removeTabFromPane(wsId, paneId, tabId);
-    if (!found) {
-      return res.status(404).json({ error: 'Tab not found' });
+    try {
+      await closeTabRuntime({ workspaceId: wsId, paneId, tabId });
+      return res.status(204).end();
+    } catch (err) {
+      if (err instanceof TabRuntimeError) {
+        return res.status(err.status).json(err.body);
+      }
+      log.error(`tab close failed: ${err instanceof Error ? err.message : err}`);
+      return res.status(500).json({ error: 'Failed to close tab' });
     }
-    getStatusManager().removeTab(tabId);
-    return res.status(204).end();
   }
 
   if (req.method === 'POST') {
