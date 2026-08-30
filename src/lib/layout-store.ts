@@ -288,7 +288,7 @@ export const deletePane = async (
   }
 };
 
-export const addTabToPane = async (wsId: string, paneId: string, name?: string, cwd?: string, panelType?: string, command?: string): Promise<ITab | null> =>
+export const addTabToPane = async (wsId: string, paneId: string, name?: string, cwd?: string, panelType?: string): Promise<ITab | null> =>
   withLock(async () => {
     const filePath = resolveLayoutFile(wsId);
     const layout = await readLayoutFile(filePath);
@@ -300,48 +300,42 @@ export const addTabToPane = async (wsId: string, paneId: string, name?: string, 
     const isWebBrowser = panelType === 'web-browser';
     const tabId = generateTabId();
     const sessionName = workspaceSessionName(wsId, paneId, tabId);
-    if (!isWebBrowser) {
-      await createSession(sessionName, 80, 24, cwd);
-      if (command) {
-        await sendKeys(sessionName, command);
+    let sessionCreated = false;
+    try {
+      if (!isWebBrowser) {
+        await createSession(sessionName, 80, 24, cwd);
+        sessionCreated = true;
       }
+
+      const nextOrder = pane.tabs.length > 0 ? Math.max(...pane.tabs.map((t) => t.order)) + 1 : 0;
+      const defaultName = defaultTabNameForPanelType(panelType as ITab['panelType']);
+      const tabName = name?.trim() || defaultName;
+      const tab: ITab = { id: tabId, sessionName, name: tabName, order: nextOrder, ...(cwd ? { cwd } : {}), ...(panelType ? { panelType: panelType as ITab['panelType'] } : {}) };
+
+      pane.tabs.push(tab);
+      pane.activeTabId = tabId;
+      layout.updatedAt = new Date().toISOString();
+      await writeLayoutFile(layout, filePath);
+      syncWorkspaceDirectories(wsId,layout.root);
+
+      return tab;
+    } catch (error) {
+      if (sessionCreated) {
+        await killSession(sessionName).catch((cleanupError) => {
+          log.error({ err: cleanupError, sessionName }, 'failed to clean up tab session after create error');
+        });
+      }
+      throw error;
     }
-
-    const nextOrder = pane.tabs.length > 0 ? Math.max(...pane.tabs.map((t) => t.order)) + 1 : 0;
-    const defaultName = defaultTabNameForPanelType(panelType as ITab['panelType']);
-    const tabName = name?.trim() || defaultName;
-    const tab: ITab = { id: tabId, sessionName, name: tabName, order: nextOrder, ...(cwd ? { cwd } : {}), ...(panelType ? { panelType: panelType as ITab['panelType'] } : {}) };
-
-    pane.tabs.push(tab);
-    pane.activeTabId = tabId;
-    layout.updatedAt = new Date().toISOString();
-    await writeLayoutFile(layout, filePath);
-    syncWorkspaceDirectories(wsId,layout.root);
-
-    return tab;
   });
 
-export const removeTabFromPane = async (wsId: string, paneId: string, tabId: string): Promise<boolean> => {
-  const tabInfo = await withLock(async () => {
-    const filePath = resolveLayoutFile(wsId);
-    const layout = await readLayoutFile(filePath);
-    if (!layout) return null;
-
-    const pane = collectPanes(layout.root).find((p) => p.id === paneId);
-    if (!pane) return null;
-
-    const tab = pane.tabs.find((t) => t.id === tabId);
-    if (!tab) return null;
-    return { sessionName: tab.sessionName, panelType: tab.panelType };
-  });
-
-  if (!tabInfo) return false;
-
-  if (tabInfo.panelType !== 'web-browser') {
-    await killSession(tabInfo.sessionName);
-  }
-
-  return withLock(async () => {
+export const removeTabFromPane = async (
+  wsId: string,
+  paneId: string,
+  tabId: string,
+  restoreActiveTabId?: string | null,
+): Promise<boolean> =>
+  withLock(async () => {
     const filePath = resolveLayoutFile(wsId);
     const layout = await readLayoutFile(filePath);
     if (!layout) return false;
@@ -349,13 +343,22 @@ export const removeTabFromPane = async (wsId: string, paneId: string, tabId: str
     const pane = collectPanes(layout.root).find((p) => p.id === paneId);
     if (!pane) return false;
 
-    const idx = pane.tabs.findIndex((t) => t.id === tabId);
-    if (idx === -1) return false;
+    const tab = pane.tabs.find((t) => t.id === tabId);
+    if (!tab) return false;
+
+    if (tab.panelType !== 'web-browser') {
+      await killSession(tab.sessionName);
+    }
+
+    const idx = pane.tabs.indexOf(tab);
 
     pane.tabs.splice(idx, 1);
 
     if (pane.activeTabId === tabId) {
-      pane.activeTabId = pane.tabs[0]?.id ?? null;
+      const restoreTab = restoreActiveTabId
+        ? pane.tabs.find((tab) => tab.id === restoreActiveTabId)
+        : null;
+      pane.activeTabId = restoreTab?.id ?? pane.tabs[0]?.id ?? null;
     }
 
     if (pane.tabs.length === 0 && collectPanes(layout.root).length > 1) {
@@ -369,7 +372,6 @@ export const removeTabFromPane = async (wsId: string, paneId: string, tabId: str
 
     return true;
   });
-};
 
 export const renameTabInPane = async (wsId: string, paneId: string, tabId: string, name: string): Promise<ITab | null> =>
   withLock(async () => {
@@ -492,7 +494,7 @@ export const updateTabAgentSessionId = (
   sessionId: string | null,
 ): Promise<void> =>
   mutateTab(sessionName, (tab) => {
-    if (provider.readSessionId(tab) === sessionId) return false;
+    if (tab.agentState?.providerId === provider.id && provider.readSessionId(tab) === sessionId) return false;
     provider.writeSessionId(tab, sessionId);
     return true;
   });

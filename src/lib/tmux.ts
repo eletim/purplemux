@@ -66,11 +66,59 @@ export const createSession = async (
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
+interface IExecFileError extends Error {
+  code?: string | number;
+}
+
+const isMissingTmuxTargetError = (error: unknown): boolean =>
+  typeof error === 'object'
+  && error !== null
+  && (error as IExecFileError).code === 1;
+
+const hasSessionStrict = async (name: string): Promise<boolean> => {
+  try {
+    await execFile(
+      'tmux',
+      ['-L', TMUX_SOCKET, 'has-session', '-t', name],
+      { timeout: CMD_TIMEOUT },
+    );
+    return true;
+  } catch (error) {
+    if (isMissingTmuxTargetError(error)) return false;
+    throw error;
+  }
+};
+
+const getSessionPanePidStrict = async (sessionName: string): Promise<number | null> => {
+  try {
+    const { stdout } = await execFile(
+      'tmux',
+      ['-L', TMUX_SOCKET, 'display-message', '-p', '-t', sessionName, '#{pane_pid}'],
+      { timeout: CMD_TIMEOUT },
+    );
+    const pid = parseInt(stdout.trim(), 10);
+    return Number.isNaN(pid) ? null : pid;
+  } catch (error) {
+    if (isMissingTmuxTargetError(error)) return null;
+    throw error;
+  }
+};
+
+const hasProcessGroup = (panePid: number): boolean => {
+  try {
+    process.kill(-panePid, 0);
+    return true;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ESRCH') return false;
+    throw error;
+  }
+};
+
 export const killSession = async (name: string): Promise<void> => {
-  if (!(await hasSession(name))) return;
+  if (!(await hasSessionStrict(name))) return;
 
   log.debug(`killSession start: ${name}`);
-  const panePid = await getSessionPanePid(name);
+  const panePid = await getSessionPanePidStrict(name);
   if (panePid) {
     try {
       log.debug(`SIGTERM → process group ${panePid}: ${name}`);
@@ -91,7 +139,7 @@ export const killSession = async (name: string): Promise<void> => {
   }
 
   for (let i = 0; i < 5; i++) {
-    if (!(await hasSession(name))) {
+    if (!(await hasSessionStrict(name)) && (!panePid || !hasProcessGroup(panePid))) {
       log.debug(`killSession done (SIGTERM): ${name}`);
       return;
     }
@@ -119,14 +167,14 @@ export const killSession = async (name: string): Promise<void> => {
   }
 
   for (let i = 0; i < 3; i++) {
-    if (!(await hasSession(name))) {
+    if (!(await hasSessionStrict(name)) && (!panePid || !hasProcessGroup(panePid))) {
       log.debug(`killSession done (SIGKILL): ${name}`);
       return;
     }
     await sleep(200);
   }
 
-  log.warn(`tmux session still alive after kill: ${name}`);
+  throw new Error(`Failed to terminate tmux session and process group: ${name}`);
 };
 
 export const resolveExistingDir = async (preferred?: string): Promise<string> => {
@@ -148,12 +196,7 @@ export const resolveExistingDir = async (preferred?: string): Promise<string> =>
 
 export const hasSession = async (name: string): Promise<boolean> => {
   try {
-    await execFile(
-      'tmux',
-      ['-L', TMUX_SOCKET, 'has-session', '-t', name],
-      { timeout: CMD_TIMEOUT },
-    );
-    return true;
+    return await hasSessionStrict(name);
   } catch {
     return false;
   }

@@ -7,11 +7,13 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 export const isValidSessionId = (id: unknown): id is string =>
   typeof id === 'string' && UUID_RE.test(id);
 
+const shellSingleQuote = (value: string): string => `'${value.replace(/'/g, `'\\''`)}'`;
+
 export const buildClaudeFlags = async (workspaceId?: string): Promise<string> => {
   const skipPerms = await getDangerouslySkipPermissions();
-  const parts = [`--settings ${HOOK_SETTINGS_PATH}`];
+  const parts = [`--settings ${shellSingleQuote(HOOK_SETTINGS_PATH)}`];
   if (workspaceId) {
-    parts.push(`--append-system-prompt-file ${getClaudePromptPath(workspaceId)}`);
+    parts.push(`--append-system-prompt-file ${shellSingleQuote(getClaudePromptPath(workspaceId))}`);
   }
   if (skipPerms) parts.push('--dangerously-skip-permissions');
   return parts.join(' ');

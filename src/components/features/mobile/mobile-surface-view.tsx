@@ -82,7 +82,7 @@ interface IMobileSurfaceViewProps {
   tabs: ITab[];
   activeTabId: string | null;
   panelType: TPanelType;
-  onCreateTab: (paneId: string, panelType?: TPanelType, command?: string) => Promise<ITab | null>;
+  onCreateTab: (paneId: string, panelType?: TPanelType, resumeSessionId?: string) => Promise<ITab | null>;
   onDeleteTab: (paneId: string, tabId: string) => Promise<void>;
   onSwitchTab: (paneId: string, tabId: string) => void;
   onRemoveTabLocally: (paneId: string, tabId: string) => void;
