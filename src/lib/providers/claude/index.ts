@@ -17,6 +17,10 @@ import type { IAgentProvider } from '@/lib/providers/types';
 import type { ITab, IAgentState } from '@/types/terminal';
 
 export const CLAUDE_PROVIDER_ID = 'claude';
+const CLAUDE_DISABLE_AUTOUPDATER_ENV = 'DISABLE_AUTOUPDATER=1';
+
+const withLaunchEnvironment = (command: string): string =>
+  `${CLAUDE_DISABLE_AUTOUPDATER_ENV} ${command}`;
 
 type TAgentField = 'sessionId' | 'jsonlPath' | 'summary';
 
@@ -82,11 +86,11 @@ export const claudeProvider: IAgentProvider = {
   isAgentRunning: (panePid, childPids) => isClaudeRunning(panePid, childPids),
   watchSessions: (panePid, onChange, options) => watchSessionsDir(panePid, onChange, options),
 
-  buildResumeCommand: (sessionId, { workspaceId }) =>
-    buildClaudeResumeCommand(sessionId, workspaceId),
+  buildResumeCommand: async (sessionId, { workspaceId }) =>
+    withLaunchEnvironment(await buildClaudeResumeCommand(sessionId, workspaceId)),
   buildLaunchCommand: async ({ workspaceId }) => {
     const flags = await buildClaudeFlags(workspaceId);
-    return `claude ${flags}`;
+    return withLaunchEnvironment(`claude ${flags}`);
   },
 
   readSessionId: (tab) => readField(tab, 'sessionId'),
