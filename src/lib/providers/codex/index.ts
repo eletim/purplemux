@@ -21,6 +21,7 @@ const log = createLogger('codex-provider');
 export const CODEX_PROVIDER_ID = 'codex';
 const PURPLEMUX_DIR = path.join(os.homedir(), '.purplemux');
 const CODEX_LAUNCHER_SCRIPT = path.join(PURPLEMUX_DIR, 'codex-launcher.js');
+const CODEX_DISABLE_UPDATE_ARGS = ['-c', 'check_for_update_on_startup=false'];
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -203,6 +204,7 @@ export const buildCodexRuntimeArgs = async (workspaceId: string | undefined, res
 
   const parts: string[] = [];
   if (resumeSessionId) parts.push('resume', resumeSessionId);
+  parts.push(...CODEX_DISABLE_UPDATE_ARGS);
   parts.push(...hookArgs);
   parts.push(...devInstrArgs);
   if (skipPerms) parts.push('--yolo');
