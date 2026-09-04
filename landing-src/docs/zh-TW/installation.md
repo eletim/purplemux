@@ -51,6 +51,7 @@ pnpm 與 yarn 同樣可用（`pnpm add -g purplemux` / `yarn global add purplemu
 git clone https://github.com/subicura/purplemux.git
 cd purplemux
 pnpm install
+pnpm build
 pnpm start
 ```
 
@@ -114,7 +115,7 @@ systemctl --user enable --now purplemux
 | npx | 自動（每次執行都是最新版） |
 | 全域 npm | `npm update -g purplemux` |
 | macOS App | 自動（啟動時更新） |
-| 從原始碼 | `git pull && pnpm install && pnpm start` |
+| 從原始碼 | `git pull && pnpm install && pnpm build && pnpm start` |
 
 ## 解除安裝
 

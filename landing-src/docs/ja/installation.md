@@ -51,6 +51,7 @@ pnpm や yarn でも同様に動作します (`pnpm add -g purplemux` / `yarn gl
 git clone https://github.com/subicura/purplemux.git
 cd purplemux
 pnpm install
+pnpm build
 pnpm start
 ```
 
@@ -114,7 +115,7 @@ systemctl --user enable --now purplemux
 | npx | 自動 (毎回最新) |
 | グローバル npm | `npm update -g purplemux` |
 | macOS アプリ | 自動 (起動時に更新) |
-| ソースから | `git pull && pnpm install && pnpm start` |
+| ソースから | `git pull && pnpm install && pnpm build && pnpm start` |
 
 ## アンインストール
 

@@ -135,6 +135,7 @@ purplemux tab create -w WS -t agent-sessions
 git clone https://github.com/subicura/purplemux.git
 cd purplemux
 pnpm install
+pnpm build
 pnpm start
 ```
 
