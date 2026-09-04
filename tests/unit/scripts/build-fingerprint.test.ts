@@ -30,11 +30,13 @@ describe('source production-build fingerprint', () => {
   it('gates pnpm start and records freshness only after the production build steps', async () => {
     const packageJson = JSON.parse(await fs.readFile(path.join(process.cwd(), 'package.json'), 'utf8'));
     expect(packageJson.scripts.start).toMatch(/^node scripts\/build-fingerprint\.js check && /);
+    expect(packageJson.scripts.build).toMatch(/^node scripts\/build-fingerprint\.js begin && /);
     expect(packageJson.scripts.build).toMatch(/tsup && node scripts\/build-fingerprint\.js write$/);
   });
 
   it('accepts an unchanged standalone build', async () => {
     const root = await makeFixture();
+    await execFileAsync(process.execPath, [script, 'begin', root]);
     await execFileAsync(process.execPath, [script, 'write', root]);
     await expect(execFileAsync(process.execPath, [script, 'check', root])).resolves.toMatchObject({
       stdout: '', stderr: '',
@@ -43,6 +45,7 @@ describe('source production-build fingerprint', () => {
 
   it('rejects the real regression class when API source changes but standalone remains old', async () => {
     const root = await makeFixture();
+    await execFileAsync(process.execPath, [script, 'begin', root]);
     await execFileAsync(process.execPath, [script, 'write', root]);
     await fs.writeFile(
       path.join(root, 'src', 'pages', 'api', 'example.ts'),
@@ -65,8 +68,61 @@ describe('source production-build fingerprint', () => {
     });
   });
 
+  it('does not certify artifacts when source changes during the build', async () => {
+    const root = await makeFixture();
+    await execFileAsync(process.execPath, [script, 'begin', root]);
+    await fs.writeFile(
+      path.join(root, 'src', 'pages', 'api', 'example.ts'),
+      'export default () => "changed-during-build";\n',
+    );
+    await expect(execFileAsync(process.execPath, [script, 'write', root])).rejects.toMatchObject({
+      code: 1,
+      stderr: expect.stringContaining('changed while the production build was running'),
+    });
+    await expect(fs.access(path.join(root, '.next', 'standalone', '.purplemux-build.json'))).rejects.toThrow();
+  });
+
+  it('tracks the exact Git identity embedded by the Next build', async () => {
+    const root = await makeFixture();
+    await execFileAsync('git', ['init'], { cwd: root });
+    await execFileAsync('git', ['config', 'user.email', 'test@example.com'], { cwd: root });
+    await execFileAsync('git', ['config', 'user.name', 'Test'], { cwd: root });
+    await execFileAsync('git', ['add', '.'], { cwd: root });
+    await execFileAsync('git', ['commit', '-m', 'initial'], { cwd: root });
+    await execFileAsync(process.execPath, [script, 'begin', root]);
+    await execFileAsync(process.execPath, [script, 'write', root]);
+    await execFileAsync('git', ['commit', '--allow-empty', '-m', 'new identity'], { cwd: root });
+
+    await expect(execFileAsync(process.execPath, [script, 'check', root])).rejects.toMatchObject({
+      code: 1,
+      stderr: expect.stringContaining('source or production configuration changed after the last build'),
+    });
+  });
+
+  it('makes the real pnpm start script exit before its server command for stale source', async () => {
+    const root = await makeFixture();
+    const startedPath = path.join(root, 'server-started');
+    await fs.writeFile(path.join(root, 'package.json'), JSON.stringify({
+      name: 'fingerprint-start-fixture',
+      private: true,
+      scripts: {
+        start: `node ${JSON.stringify(script)} check . && node -e ${JSON.stringify(`require('fs').writeFileSync(${JSON.stringify(startedPath)}, 'started')`)}`,
+      },
+    }));
+    await execFileAsync(process.execPath, [script, 'begin', root]);
+    await execFileAsync(process.execPath, [script, 'write', root]);
+    await fs.writeFile(
+      path.join(root, 'src', 'pages', 'api', 'example.ts'),
+      'export default () => "stale";\n',
+    );
+
+    await expect(execFileAsync('pnpm', ['start'], { cwd: root })).rejects.toMatchObject({ code: 1 });
+    await expect(fs.access(startedPath)).rejects.toThrow();
+  });
+
   it('tracks public assets, messages, environment, and build configuration inputs', async () => {
     const root = await makeFixture();
+    await execFileAsync(process.execPath, [script, 'begin', root]);
     await execFileAsync(process.execPath, [script, 'write', root]);
     await fs.mkdir(path.join(root, 'public'), { recursive: true });
     await fs.writeFile(path.join(root, 'public', 'new-asset.txt'), 'new');
