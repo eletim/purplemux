@@ -2,7 +2,7 @@ import fs from 'fs/promises';
 import path from 'path';
 import os from 'os';
 import { nanoid } from 'nanoid';
-import { createSession, hasSession, killSession, resolveExistingDir, sendKeys, workspaceSessionName } from '@/lib/tmux';
+import { createSession, hasSession, killSession, listSessionsForSafetyCheck, resolveExistingDir, sendKeys, workspaceSessionName } from '@/lib/tmux';
 import { broadcastSync } from '@/lib/sync-server';
 import { createLogger } from '@/lib/logger';
 import {
@@ -58,6 +58,37 @@ const withLock = async <T>(fn: () => Promise<T>): Promise<T> => {
     release!();
   }
 };
+
+export interface IEmptyWorkspaceLayoutResult {
+  empty: boolean;
+  tabCount: number;
+  sessionCount: number;
+}
+
+/**
+ * Hold the layout mutation lock from the emptiness check through the caller's
+ * metadata commit. This prevents a tab from being registered between those
+ * two operations.
+ */
+export const removeWorkspaceLayoutIfEmpty = async (
+  wsId: string,
+  commit: () => Promise<void>,
+): Promise<IEmptyWorkspaceLayoutResult> =>
+  withLock(async () => {
+    const layout = await readLayoutFile(resolveLayoutFile(wsId));
+    const tabCount = layout ? collectAllTabs(layout.root).length : 0;
+    const sessionPrefix = `pt-${wsId}-pane-`;
+    const sessionCount = (await listSessionsForSafetyCheck())
+      .filter((name) => name.startsWith(sessionPrefix)).length;
+
+    if (tabCount > 0 || sessionCount > 0) {
+      return { empty: false, tabCount, sessionCount };
+    }
+
+    await commit();
+    await removeLayoutFile(wsId);
+    return { empty: true, tabCount: 0, sessionCount: 0 };
+  });
 
 export const generatePaneId = (): string => `pane-${nanoid(6)}`;
 export const generateTabId = (): string => `tab-${nanoid(6)}`;
@@ -252,6 +283,14 @@ export const getLayout = async (wsId: string, defaultCwd?: string): Promise<ILay
     const filePath = resolveLayoutFile(wsId);
     const existing = await readLayoutFile(filePath);
     if (existing) return existing;
+
+    // A tab request can have read workspace metadata immediately before an
+    // empty-workspace deletion commits. Re-check while holding the layout
+    // mutation lock so that stale requests cannot recreate deleted state.
+    const { getWorkspaceById } = await import('@/lib/workspace-store');
+    if (!(await getWorkspaceById(wsId))) {
+      throw new Error('Workspace not found');
+    }
 
     const { pane, tab } = createDefaultPaneNode(wsId, defaultCwd);
     await createSession(tab.sessionName, 80, 24, defaultCwd);

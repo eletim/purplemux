@@ -49,6 +49,8 @@ All subcommands require a running server. They read the port from `~/.purplemux/
 | Command | Purpose |
 |---|---|
 | `purplemux workspaces` | List workspaces |
+| `purplemux workspace create --cwd PATH [--name NAME]` | Create a workspace |
+| `purplemux workspace delete -w WS --if-empty` | Conditionally delete an empty workspace |
 | `purplemux tab list [-w WS]` | List tabs (optionally scoped to a workspace) |
 | `purplemux tab create -w WS [-n NAME] [-t TYPE]` | Create a new tab |
 | `purplemux tab send -w WS TAB_ID CONTENT...` | Send input to a tab |
@@ -60,6 +62,12 @@ All subcommands require a running server. They read the port from `~/.purplemux/
 | `purplemux help` | Show usage |
 
 Output is JSON unless noted. `--workspace` and `-w` are interchangeable.
+
+### Safe workspace deletion
+
+`purplemux workspace delete -w WS --if-empty` asks the server to check and delete the workspace in one atomic operation. It never closes tabs or kills sessions: close those first. The JSON `status` is `deleted` for a new deletion, `absent` when the desired final state already held, or `not-empty` when the workspace was left unchanged. `not-empty` exits with status 2.
+
+If a transport failure or server error makes the mutation outcome uncertain, reconcile with `purplemux workspaces`. Direct HTTP clients can use `GET /api/cli/workspaces/<workspaceId>` for an exact `present` or `absent` result. Do not inspect `~/.purplemux` files or tmux state as an external lifecycle contract.
 
 ### `tab create` panel types
 

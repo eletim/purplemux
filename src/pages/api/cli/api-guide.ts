@@ -18,6 +18,24 @@ POST /api/cli/workspaces
   the CLI reports "outcome unknown; do not retry automatically" for these cases.
   Response: { "id": "ws-...", "name": "Workspace N", "directories": ["/absolute/path"] }
 
+GET /api/cli/workspaces/<workspaceId>
+  Read authoritative workspace state for mutation reconciliation.
+  Response when present: { "workspaceId": "ws-...", "state": "present", "workspace": { ... } }
+  Response when absent:  { "workspaceId": "ws-...", "state": "absent", "workspace": null }
+
+DELETE /api/cli/workspaces/<workspaceId>?ifEmpty=true
+  Atomically deletes the exact workspace only when it has no registered tabs or tmux sessions.
+  The required ifEmpty=true guard prevents unconditional public deletion.
+  Newly deleted (HTTP 200):
+    { "workspaceId": "ws-...", "status": "deleted", "deleted": true }
+  Already absent (HTTP 200; desired final state already holds):
+    { "workspaceId": "ws-...", "status": "absent", "deleted": false }
+  Non-empty (HTTP 409; no state is changed):
+    { "workspaceId": "ws-...", "status": "not-empty", "deleted": false,
+      "tabCount": 1, "sessionCount": 1 }
+  If a response is lost or a 5xx result leaves the mutation outcome uncertain, use the GET
+  endpoint above (or GET /api/cli/workspaces) to reconcile from authoritative server state.
+
 ## Tabs
 
 GET /api/cli/tabs?workspaceId=WS
