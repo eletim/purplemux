@@ -278,6 +278,20 @@ export const crossCheckLayout = async (
   return changed;
 };
 
+export const crossCheckWorkspaceLayout = async (
+  wsId: string,
+  tmuxSessions: string[],
+  defaultCwd?: string,
+): Promise<boolean> =>
+  withLock(async () => {
+    const filePath = resolveLayoutFile(wsId);
+    const layout = await readLayoutFile(filePath);
+    if (!layout) return false;
+    const changed = await crossCheckLayout(layout, tmuxSessions, wsId, defaultCwd);
+    if (changed) await writeLayoutFile(layout, filePath);
+    return changed;
+  });
+
 export interface ICreateLayoutOptions {
   panelType?: TPanelType;
 }
@@ -484,6 +498,31 @@ export const restartTabSession = async (wsId: string, paneId: string, tabId: str
       await writeLayoutFile(layout, filePath);
     }
     return true;
+  });
+
+export type TEnsureRegisteredTabSessionResult = 'created' | 'existing' | 'missing';
+
+/** Recreate a session only while its exact workspace/tab registration is
+ * protected from conditional workspace deletion and tab removal.
+ */
+export const ensureRegisteredTabSession = async (
+  wsId: string,
+  tabId: string,
+  sessionName: string,
+): Promise<TEnsureRegisteredTabSessionResult> =>
+  withLock(async () => {
+    const { getWorkspaceById } = await import('@/lib/workspace-store');
+    if (!(await getWorkspaceById(wsId))) return 'missing';
+
+    const layout = await readLayoutFile(resolveLayoutFile(wsId));
+    const registered = layout
+      ? collectAllTabs(layout.root).some((tab) => tab.id === tabId && tab.sessionName === sessionName)
+      : false;
+    if (!registered) return 'missing';
+    if (await hasSession(sessionName)) return 'existing';
+
+    await createSession(sessionName, 80, 24);
+    return 'created';
   });
 
 export const reconcileTabCwd = async (sessionName: string): Promise<void> =>
@@ -704,25 +743,25 @@ export const splitPaneInLayout = async (
   orientation: 'horizontal' | 'vertical',
   cwd?: string,
   panelType?: string,
-): Promise<ILayoutData | null> => {
-  const isWebBrowser = panelType === 'web-browser';
-  const paneId = generatePaneId();
-  const tabId = generateTabId();
-  const sessionName = workspaceSessionName(wsId, paneId, tabId);
-
-  if (!isWebBrowser) {
-    await createSession(sessionName, 80, 24, cwd);
-  }
-
-  const defaultName = defaultTabNameForPanelType(panelType as ITab['panelType']);
-  const tab: ITab = { id: tabId, sessionName, name: defaultName, order: 0, ...(cwd ? { cwd } : {}) };
-  if (panelType) tab.panelType = panelType as ITab['panelType'];
-
-  const newPane: IPaneNode = { type: 'pane', id: paneId, tabs: [tab], activeTabId: tabId };
-
-  const result = await mutate(wsId, (layout) => {
+): Promise<ILayoutData | null> =>
+  withLock(async () => {
+    const filePath = resolveLayoutFile(wsId);
+    const layout = await readLayoutFile(filePath);
+    if (!layout) return null;
     const existing = findPane(layout.root, sourcePaneId);
     if (!existing) return null;
+
+    const isWebBrowser = panelType === 'web-browser';
+    const paneId = generatePaneId();
+    const tabId = generateTabId();
+    const sessionName = workspaceSessionName(wsId, paneId, tabId);
+    if (!isWebBrowser) await createSession(sessionName, 80, 24, cwd);
+
+    const defaultName = defaultTabNameForPanelType(panelType as ITab['panelType']);
+    const tab: ITab = { id: tabId, sessionName, name: defaultName, order: 0, ...(cwd ? { cwd } : {}) };
+    if (panelType) tab.panelType = panelType as ITab['panelType'];
+    const newPane: IPaneNode = { type: 'pane', id: paneId, tabs: [tab], activeTabId: tabId };
+
     const wasEqualized = isEqualized(layout.root);
     if (cwd) {
       const activeTab = existing.tabs.find((t) => t.id === existing.activeTabId);
@@ -739,15 +778,16 @@ export const splitPaneInLayout = async (
       layout.root = equalizeNode(layout.root);
     }
     layout.activePaneId = paneId;
+    layout.updatedAt = new Date().toISOString();
+    try {
+      await writeLayoutFile(layout, filePath);
+    } catch (error) {
+      if (!isWebBrowser) await killSession(sessionName).catch(() => {});
+      throw error;
+    }
+    syncWorkspaceDirectories(wsId, layout.root);
     return layout;
   });
-
-  if (!result && !isWebBrowser) {
-    await killSession(sessionName).catch(() => {});
-  }
-
-  return result;
-};
 
 export const closePaneInLayout = async (wsId: string, paneId: string): Promise<ILayoutData | null> => {
   return withLock(async () => {

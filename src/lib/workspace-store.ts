@@ -11,7 +11,7 @@ import {
   resolveLayoutDir,
   resolveLayoutFile,
   removeLayoutFile,
-  crossCheckLayout,
+  crossCheckWorkspaceLayout,
   collectAllTabs,
   createDefaultLayout,
   removeWorkspaceLayoutIfEmpty,
@@ -260,10 +260,7 @@ export const initWorkspaceStore = async (): Promise<void> => {
     );
 
     try {
-      const changed = await crossCheckLayout(layout, relevantTmuxSessions, ws.id, ws.directories[0]);
-      if (changed) {
-        await writeLayoutFile(layout, layoutFile);
-      }
+      await crossCheckWorkspaceLayout(ws.id, relevantTmuxSessions, ws.directories[0]);
     } catch (err) {
       log.error(`Workspace '${ws.name}': tmux consistency check failed: ${err instanceof Error ? err.message : err}`);
     }

@@ -144,6 +144,34 @@ describe('deleteWorkspaceIfEmpty', () => {
     expect(mocks.createSession).not.toHaveBeenCalled();
   });
 
+  it('prevents a captured auto-resume target from recreating a session after deletion', async () => {
+    await seed(emptyLayout);
+    let enterSafetyCheck!: () => void;
+    let releaseSafetyCheck!: () => void;
+    const entered = new Promise<void>((resolve) => { enterSafetyCheck = resolve; });
+    const release = new Promise<void>((resolve) => { releaseSafetyCheck = resolve; });
+    mocks.listSessionsForSafetyCheck.mockImplementationOnce(async () => {
+      enterSafetyCheck();
+      await release;
+      return [];
+    });
+
+    const { deleteWorkspaceIfEmpty } = await import('@/lib/workspace-store');
+    const { ensureRegisteredTabSession } = await import('@/lib/layout-store');
+    const deletion = deleteWorkspaceIfEmpty('ws-target');
+    await entered;
+    const staleResume = ensureRegisteredTabSession(
+      'ws-target',
+      'tab-captured-before-close',
+      'pt-ws-target-pane-old-tab-captured-before-close',
+    );
+    releaseSafetyCheck();
+
+    await expect(deletion).resolves.toMatchObject({ status: 'deleted' });
+    await expect(staleResume).resolves.toBe('missing');
+    expect(mocks.createSession).not.toHaveBeenCalled();
+  });
+
   it('returns an idempotent absent result without touching another workspace', async () => {
     const base = await seed(emptyLayout);
     const { deleteWorkspaceIfEmpty } = await import('@/lib/workspace-store');
