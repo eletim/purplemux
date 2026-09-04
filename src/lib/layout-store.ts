@@ -2,7 +2,7 @@ import fs from 'fs/promises';
 import path from 'path';
 import os from 'os';
 import { nanoid } from 'nanoid';
-import { createSession, hasSession, killSession, resolveExistingDir, sendKeys, workspaceSessionName } from '@/lib/tmux';
+import { createSession, hasSession, killSession, listSessionsForSafetyCheck, resolveExistingDir, sendKeys, workspaceSessionName } from '@/lib/tmux';
 import { broadcastSync } from '@/lib/sync-server';
 import { createLogger } from '@/lib/logger';
 import {
@@ -58,6 +58,52 @@ const withLock = async <T>(fn: () => Promise<T>): Promise<T> => {
     release!();
   }
 };
+
+export interface IEmptyWorkspaceLayoutResult {
+  empty: boolean;
+  tabCount: number;
+  sessionCount: number;
+}
+
+const readLayoutForSafetyCheck = async (wsId: string): Promise<ILayoutData> => {
+  const filePath = resolveLayoutFile(wsId);
+  let raw: string;
+  try {
+    raw = await fs.readFile(filePath, 'utf-8');
+  } catch {
+    throw new Error(`Cannot verify workspace '${wsId}' is empty: layout state is unavailable`);
+  }
+  try {
+    return JSON.parse(raw) as ILayoutData;
+  } catch {
+    throw new Error(`Cannot verify workspace '${wsId}' is empty: layout state is invalid`);
+  }
+};
+
+/**
+ * Hold the layout mutation lock from the emptiness check through the caller's
+ * metadata commit. This prevents a tab from being registered between those
+ * two operations.
+ */
+export const removeWorkspaceLayoutIfEmpty = async (
+  wsId: string,
+  commit: () => Promise<void>,
+): Promise<IEmptyWorkspaceLayoutResult> =>
+  withLock(async () => {
+    const layout = await readLayoutForSafetyCheck(wsId);
+    const tabCount = collectAllTabs(layout.root).length;
+    const sessionPrefix = `pt-${wsId}-pane-`;
+    const sessionCount = (await listSessionsForSafetyCheck())
+      .filter((name) => name.startsWith(sessionPrefix)).length;
+
+    if (tabCount > 0 || sessionCount > 0) {
+      return { empty: false, tabCount, sessionCount };
+    }
+
+    await commit();
+    await removeLayoutFile(wsId);
+    return { empty: true, tabCount: 0, sessionCount: 0 };
+  });
 
 export const generatePaneId = (): string => `pane-${nanoid(6)}`;
 export const generateTabId = (): string => `tab-${nanoid(6)}`;
@@ -232,6 +278,20 @@ export const crossCheckLayout = async (
   return changed;
 };
 
+export const crossCheckWorkspaceLayout = async (
+  wsId: string,
+  tmuxSessions: string[],
+  defaultCwd?: string,
+): Promise<boolean> =>
+  withLock(async () => {
+    const filePath = resolveLayoutFile(wsId);
+    const layout = await readLayoutFile(filePath);
+    if (!layout) return false;
+    const changed = await crossCheckLayout(layout, tmuxSessions, wsId, defaultCwd);
+    if (changed) await writeLayoutFile(layout, filePath);
+    return changed;
+  });
+
 export interface ICreateLayoutOptions {
   panelType?: TPanelType;
 }
@@ -253,6 +313,14 @@ export const getLayout = async (wsId: string, defaultCwd?: string): Promise<ILay
     const existing = await readLayoutFile(filePath);
     if (existing) return existing;
 
+    // A tab request can have read workspace metadata immediately before an
+    // empty-workspace deletion commits. Re-check while holding the layout
+    // mutation lock so that stale requests cannot recreate deleted state.
+    const { getWorkspaceById } = await import('@/lib/workspace-store');
+    if (!(await getWorkspaceById(wsId))) {
+      throw new Error('Workspace not found');
+    }
+
     const { pane, tab } = createDefaultPaneNode(wsId, defaultCwd);
     await createSession(tab.sessionName, 80, 24, defaultCwd);
 
@@ -265,16 +333,22 @@ export const getLayout = async (wsId: string, defaultCwd?: string): Promise<ILay
     return layout;
   });
 
-export const createPane = async (wsId: string, cwd?: string): Promise<{ paneId: string; tab: ITab }> => {
-  const paneId = generatePaneId();
-  const tabId = generateTabId();
-  const sessionName = workspaceSessionName(wsId, paneId, tabId);
+export const createPane = async (wsId: string, cwd?: string): Promise<{ paneId: string; tab: ITab }> =>
+  withLock(async () => {
+    const { getWorkspaceById } = await import('@/lib/workspace-store');
+    if (!(await getWorkspaceById(wsId))) {
+      throw new Error('Workspace not found');
+    }
 
-  await createSession(sessionName, 80, 24, cwd);
+    const paneId = generatePaneId();
+    const tabId = generateTabId();
+    const sessionName = workspaceSessionName(wsId, paneId, tabId);
 
-  const tab: ITab = { id: tabId, sessionName, name: '', order: 0, ...(cwd ? { cwd } : {}) };
-  return { paneId, tab };
-};
+    await createSession(sessionName, 80, 24, cwd);
+
+    const tab: ITab = { id: tabId, sessionName, name: '', order: 0, ...(cwd ? { cwd } : {}) };
+    return { paneId, tab };
+  });
 
 export const deletePane = async (
   paneId: string,
@@ -424,6 +498,31 @@ export const restartTabSession = async (wsId: string, paneId: string, tabId: str
       await writeLayoutFile(layout, filePath);
     }
     return true;
+  });
+
+export type TEnsureRegisteredTabSessionResult = 'created' | 'existing' | 'missing';
+
+/** Recreate a session only while its exact workspace/tab registration is
+ * protected from conditional workspace deletion and tab removal.
+ */
+export const ensureRegisteredTabSession = async (
+  wsId: string,
+  tabId: string,
+  sessionName: string,
+): Promise<TEnsureRegisteredTabSessionResult> =>
+  withLock(async () => {
+    const { getWorkspaceById } = await import('@/lib/workspace-store');
+    if (!(await getWorkspaceById(wsId))) return 'missing';
+
+    const layout = await readLayoutFile(resolveLayoutFile(wsId));
+    const registered = layout
+      ? collectAllTabs(layout.root).some((tab) => tab.id === tabId && tab.sessionName === sessionName)
+      : false;
+    if (!registered) return 'missing';
+    if (await hasSession(sessionName)) return 'existing';
+
+    await createSession(sessionName, 80, 24);
+    return 'created';
   });
 
 export const reconcileTabCwd = async (sessionName: string): Promise<void> =>
@@ -644,25 +743,25 @@ export const splitPaneInLayout = async (
   orientation: 'horizontal' | 'vertical',
   cwd?: string,
   panelType?: string,
-): Promise<ILayoutData | null> => {
-  const isWebBrowser = panelType === 'web-browser';
-  const paneId = generatePaneId();
-  const tabId = generateTabId();
-  const sessionName = workspaceSessionName(wsId, paneId, tabId);
-
-  if (!isWebBrowser) {
-    await createSession(sessionName, 80, 24, cwd);
-  }
-
-  const defaultName = defaultTabNameForPanelType(panelType as ITab['panelType']);
-  const tab: ITab = { id: tabId, sessionName, name: defaultName, order: 0, ...(cwd ? { cwd } : {}) };
-  if (panelType) tab.panelType = panelType as ITab['panelType'];
-
-  const newPane: IPaneNode = { type: 'pane', id: paneId, tabs: [tab], activeTabId: tabId };
-
-  const result = await mutate(wsId, (layout) => {
+): Promise<ILayoutData | null> =>
+  withLock(async () => {
+    const filePath = resolveLayoutFile(wsId);
+    const layout = await readLayoutFile(filePath);
+    if (!layout) return null;
     const existing = findPane(layout.root, sourcePaneId);
     if (!existing) return null;
+
+    const isWebBrowser = panelType === 'web-browser';
+    const paneId = generatePaneId();
+    const tabId = generateTabId();
+    const sessionName = workspaceSessionName(wsId, paneId, tabId);
+    if (!isWebBrowser) await createSession(sessionName, 80, 24, cwd);
+
+    const defaultName = defaultTabNameForPanelType(panelType as ITab['panelType']);
+    const tab: ITab = { id: tabId, sessionName, name: defaultName, order: 0, ...(cwd ? { cwd } : {}) };
+    if (panelType) tab.panelType = panelType as ITab['panelType'];
+    const newPane: IPaneNode = { type: 'pane', id: paneId, tabs: [tab], activeTabId: tabId };
+
     const wasEqualized = isEqualized(layout.root);
     if (cwd) {
       const activeTab = existing.tabs.find((t) => t.id === existing.activeTabId);
@@ -679,15 +778,16 @@ export const splitPaneInLayout = async (
       layout.root = equalizeNode(layout.root);
     }
     layout.activePaneId = paneId;
+    layout.updatedAt = new Date().toISOString();
+    try {
+      await writeLayoutFile(layout, filePath);
+    } catch (error) {
+      if (!isWebBrowser) await killSession(sessionName).catch(() => {});
+      throw error;
+    }
+    syncWorkspaceDirectories(wsId, layout.root);
     return layout;
   });
-
-  if (!result && !isWebBrowser) {
-    await killSession(sessionName).catch(() => {});
-  }
-
-  return result;
-};
 
 export const closePaneInLayout = async (wsId: string, paneId: string): Promise<ILayoutData | null> => {
   return withLock(async () => {

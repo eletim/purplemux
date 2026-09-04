@@ -128,6 +128,7 @@ purplemux
 purplemux workspace create --cwd /absolute/project/path --name "my workspace"
 purplemux tab create -w WS -t codex-cli -n "fix auth"
 purplemux tab create -w WS -t agent-sessions
+purplemux workspace delete -w WS --if-empty
 ```
 
 ### Run from source

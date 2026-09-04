@@ -136,6 +136,52 @@ const cmdWorkspaceCreate = async (args) => {
   out(body);
 };
 
+const isWorkspaceDeleteResult = (body, workspaceId) =>
+  body
+  && typeof body === 'object'
+  && body.workspaceId === workspaceId
+  && body.deleted === (body.status === 'deleted')
+  && ['deleted', 'absent', 'not-empty'].includes(body.status);
+
+const workspaceDeleteOutcomeUnknown = (workspaceId, reason) => {
+  die(`workspace deletion outcome unknown for ${workspaceId}; reconcile with 'purplemux workspaces' (${reason})`);
+};
+
+const cmdWorkspaceDelete = async (args) => {
+  requireEnv();
+  const workspaceId = flagValue(args, '--workspace') || flagValue(args, '-w');
+  if (!workspaceId) die('--workspace is required');
+  if (!args.includes('--if-empty')) die('--if-empty is required');
+
+  let resp;
+  try {
+    resp = await fetch(
+      `${BASE}/api/cli/workspaces/${encodeURIComponent(workspaceId)}?ifEmpty=true`,
+      { method: 'DELETE', headers: { 'X-Pmux-Token': TOKEN } },
+    );
+  } catch {
+    workspaceDeleteOutcomeUnknown(workspaceId, 'transport failure');
+  }
+
+  let body;
+  try {
+    body = await resp.json();
+  } catch {
+    workspaceDeleteOutcomeUnknown(workspaceId, 'invalid JSON response');
+  }
+
+  if ((resp.ok || resp.status === 409) && isWorkspaceDeleteResult(body, workspaceId)) {
+    out(body);
+    if (body.status === 'not-empty') process.exitCode = 2;
+    return;
+  }
+
+  if (resp.status >= 500) {
+    workspaceDeleteOutcomeUnknown(workspaceId, `server error: ${body?.error || `HTTP ${resp.status}`}`);
+  }
+  die(body?.error || `HTTP ${resp.status}`);
+};
+
 const cmdTabList = async (args) => {
   requireEnv();
   const wsId = flagValue(args, '--workspace') || flagValue(args, '-w');
@@ -352,6 +398,7 @@ Commands:
   workspaces                               List workspaces
   workspace create --cwd PATH [--name NAME]
                                            Create a workspace and print its JSON
+  workspace delete -w WS --if-empty        Delete an empty workspace and print its JSON result
   tab list [-w WS]                         List tabs (optionally scoped to workspace)
   tab create -w WS [-n NAME] [-t TYPE]     Create a tab in workspace (type: terminal | claude-code | codex-cli | agent-sessions | web-browser | diff)
   tab send -w WS TAB_ID CONTENT...         Send input to a tab
@@ -386,6 +433,7 @@ const main = async () => {
   switch (cmd) {
     case 'workspace':
       if (sub === 'create') return cmdWorkspaceCreate(rest);
+      if (sub === 'delete') return cmdWorkspaceDelete(rest);
       die(`unknown workspace command: ${sub || '(none)'}. Run 'purplemux help' for usage.`);
       break;
     case 'workspaces':

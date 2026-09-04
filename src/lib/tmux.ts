@@ -34,6 +34,28 @@ export const listSessions = async (): Promise<string[]> => {
   }
 };
 
+export const listSessionsForSafetyCheck = async (): Promise<string[]> => {
+  try {
+    const { stdout } = await execFile(
+      'tmux',
+      ['-L', TMUX_SOCKET, 'ls', '-F', '#{session_name}'],
+      { timeout: CMD_TIMEOUT },
+    );
+    return stdout
+      .trim()
+      .split('\n')
+      .map((line) => line.trim())
+      .filter((name) => name.startsWith('pt-'));
+  } catch (error) {
+    const failure = error as IExecFileError & { stderr?: string };
+    const stderr = typeof failure.stderr === 'string' ? failure.stderr.toLowerCase() : '';
+    if (failure.code === 1 && (stderr.includes('no server running') || stderr.includes('no sessions'))) {
+      return [];
+    }
+    throw error;
+  }
+};
+
 export const createSession = async (
   name: string,
   cols: number,
