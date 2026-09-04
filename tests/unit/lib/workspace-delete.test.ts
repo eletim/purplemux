@@ -3,11 +3,16 @@ import os from 'os';
 import path from 'path';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
-const mocks = vi.hoisted(() => ({ sessions: [] as string[] }));
+const mocks = vi.hoisted(() => ({
+  sessions: [] as string[],
+  listSessionsForSafetyCheck: vi.fn<() => Promise<string[]>>(),
+  createSession: vi.fn(async () => undefined),
+}));
 
 vi.mock('@/lib/tmux', async (importOriginal) => ({
   ...await importOriginal<typeof import('@/lib/tmux')>(),
-  listSessionsForSafetyCheck: vi.fn(async () => mocks.sessions),
+  listSessionsForSafetyCheck: mocks.listSessionsForSafetyCheck,
+  createSession: mocks.createSession,
 }));
 vi.mock('@/lib/sync-server', () => ({ broadcastSync: vi.fn() }));
 
@@ -37,7 +42,20 @@ afterAll(async () => {
 });
 
 beforeEach(async () => {
+  const globals = globalThis as unknown as {
+    __purplemuxWorkspaceLock: Promise<void>;
+    __purplemuxWorkspacesContentCache?: string;
+    __ptLayoutLock: Promise<void>;
+    __ptLayoutContentCache: Map<string, string>;
+  };
+  globals.__purplemuxWorkspaceLock = Promise.resolve();
+  globals.__purplemuxWorkspacesContentCache = undefined;
+  globals.__ptLayoutLock = Promise.resolve();
+  globals.__ptLayoutContentCache = new Map();
   mocks.sessions = [];
+  mocks.listSessionsForSafetyCheck.mockReset();
+  mocks.listSessionsForSafetyCheck.mockImplementation(async () => mocks.sessions);
+  mocks.createSession.mockClear();
   await fs.rm(path.join(tempHome, '.purplemux'), { recursive: true, force: true });
 });
 
@@ -90,6 +108,40 @@ describe('deleteWorkspaceIfEmpty', () => {
     expect(result).toMatchObject({ status: 'not-empty', sessionCount: 1 });
     const stored = JSON.parse(await fs.readFile(path.join(base, 'workspaces.json'), 'utf8'));
     expect(stored.workspaces).toHaveLength(2);
+  });
+
+  it('fails closed without changing state when layout state is corrupt', async () => {
+    const base = await seed(emptyLayout);
+    await fs.writeFile(path.join(base, 'workspaces', 'ws-target', 'layout.json'), '{invalid');
+    const before = await fs.readFile(path.join(base, 'workspaces.json'), 'utf8');
+    const { deleteWorkspaceIfEmpty } = await import('@/lib/workspace-store');
+    await expect(deleteWorkspaceIfEmpty('ws-target')).rejects.toThrow('layout state is invalid');
+    expect(await fs.readFile(path.join(base, 'workspaces.json'), 'utf8')).toBe(before);
+    await expect(fs.access(path.join(base, 'workspaces', 'ws-target'))).resolves.toBeUndefined();
+  });
+
+  it('serializes concurrent pane creation and rejects it after deletion commits', async () => {
+    await seed(emptyLayout);
+    let enterSafetyCheck!: () => void;
+    let releaseSafetyCheck!: () => void;
+    const entered = new Promise<void>((resolve) => { enterSafetyCheck = resolve; });
+    const release = new Promise<void>((resolve) => { releaseSafetyCheck = resolve; });
+    mocks.listSessionsForSafetyCheck.mockImplementationOnce(async () => {
+      enterSafetyCheck();
+      await release;
+      return [];
+    });
+
+    const { deleteWorkspaceIfEmpty } = await import('@/lib/workspace-store');
+    const { createPane } = await import('@/lib/layout-store');
+    const deletion = deleteWorkspaceIfEmpty('ws-target');
+    await entered;
+    const paneCreation = createPane('ws-target');
+    releaseSafetyCheck();
+
+    await expect(deletion).resolves.toMatchObject({ status: 'deleted' });
+    await expect(paneCreation).rejects.toThrow('Workspace not found');
+    expect(mocks.createSession).not.toHaveBeenCalled();
   });
 
   it('returns an idempotent absent result without touching another workspace', async () => {

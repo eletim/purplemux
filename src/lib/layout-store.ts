@@ -65,6 +65,21 @@ export interface IEmptyWorkspaceLayoutResult {
   sessionCount: number;
 }
 
+const readLayoutForSafetyCheck = async (wsId: string): Promise<ILayoutData> => {
+  const filePath = resolveLayoutFile(wsId);
+  let raw: string;
+  try {
+    raw = await fs.readFile(filePath, 'utf-8');
+  } catch {
+    throw new Error(`Cannot verify workspace '${wsId}' is empty: layout state is unavailable`);
+  }
+  try {
+    return JSON.parse(raw) as ILayoutData;
+  } catch {
+    throw new Error(`Cannot verify workspace '${wsId}' is empty: layout state is invalid`);
+  }
+};
+
 /**
  * Hold the layout mutation lock from the emptiness check through the caller's
  * metadata commit. This prevents a tab from being registered between those
@@ -75,8 +90,8 @@ export const removeWorkspaceLayoutIfEmpty = async (
   commit: () => Promise<void>,
 ): Promise<IEmptyWorkspaceLayoutResult> =>
   withLock(async () => {
-    const layout = await readLayoutFile(resolveLayoutFile(wsId));
-    const tabCount = layout ? collectAllTabs(layout.root).length : 0;
+    const layout = await readLayoutForSafetyCheck(wsId);
+    const tabCount = collectAllTabs(layout.root).length;
     const sessionPrefix = `pt-${wsId}-pane-`;
     const sessionCount = (await listSessionsForSafetyCheck())
       .filter((name) => name.startsWith(sessionPrefix)).length;
@@ -304,16 +319,22 @@ export const getLayout = async (wsId: string, defaultCwd?: string): Promise<ILay
     return layout;
   });
 
-export const createPane = async (wsId: string, cwd?: string): Promise<{ paneId: string; tab: ITab }> => {
-  const paneId = generatePaneId();
-  const tabId = generateTabId();
-  const sessionName = workspaceSessionName(wsId, paneId, tabId);
+export const createPane = async (wsId: string, cwd?: string): Promise<{ paneId: string; tab: ITab }> =>
+  withLock(async () => {
+    const { getWorkspaceById } = await import('@/lib/workspace-store');
+    if (!(await getWorkspaceById(wsId))) {
+      throw new Error('Workspace not found');
+    }
 
-  await createSession(sessionName, 80, 24, cwd);
+    const paneId = generatePaneId();
+    const tabId = generateTabId();
+    const sessionName = workspaceSessionName(wsId, paneId, tabId);
 
-  const tab: ITab = { id: tabId, sessionName, name: '', order: 0, ...(cwd ? { cwd } : {}) };
-  return { paneId, tab };
-};
+    await createSession(sessionName, 80, 24, cwd);
+
+    const tab: ITab = { id: tabId, sessionName, name: '', order: 0, ...(cwd ? { cwd } : {}) };
+    return { paneId, tab };
+  });
 
 export const deletePane = async (
   paneId: string,
