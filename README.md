@@ -137,8 +137,11 @@ purplemux workspace delete -w WS --if-empty
 git clone https://github.com/subicura/purplemux.git
 cd purplemux
 pnpm install
+pnpm build
 pnpm start
 ```
+
+`pnpm start` serves the production standalone build and refuses to launch if it is missing or stale. After pulling or editing source, run `pnpm build` first. Use `pnpm dev` for source-backed development with hot reload.
 
 Development mode:
 

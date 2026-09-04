@@ -51,8 +51,11 @@ The app bundles Node, tmux, and the purplemux server, and adds:
 git clone https://github.com/subicura/purplemux.git
 cd purplemux
 pnpm install
+pnpm build
 pnpm start
 ```
+
+`pnpm start` serves the production standalone build. It checks that the build matches the current source and exits with instructions to run `pnpm build` when the artifact is missing or stale. For source-backed development with hot reload, use `pnpm dev` instead.
 
 For development (hot reload):
 
@@ -114,7 +117,7 @@ systemctl --user enable --now purplemux
 | npx | automatic (latest each run) |
 | Global npm | `npm update -g purplemux` |
 | macOS app | automatic (app updates on launch) |
-| From source | `git pull && pnpm install && pnpm start` |
+| From source | `git pull && pnpm install && pnpm build && pnpm start` |
 
 ## Uninstall
 
