@@ -22,7 +22,9 @@ import('update-notifier')
 
 const cmd = process.argv[2];
 
-if (cmd && CLI_COMMANDS.has(cmd)) {
+if (cmd === '--version' || cmd === '-v') {
+  process.stdout.write(`${require('../package.json').version}\n`);
+} else if (cmd && CLI_COMMANDS.has(cmd)) {
   require('./cli.js');
 } else if (!cmd || cmd === 'start') {
   process.env.NODE_ENV = process.env.NODE_ENV || 'production';

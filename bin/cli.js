@@ -393,6 +393,7 @@ const usage = () => {
   process.stdout.write(`purplemux CLI
 
 Usage: purplemux <command> [args...]
+       purplemux --version
 
 Commands:
   workspaces                               List workspaces

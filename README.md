@@ -136,12 +136,12 @@ purplemux workspace delete -w WS --if-empty
 ```bash
 git clone https://github.com/subicura/purplemux.git
 cd purplemux
-pnpm install
-pnpm build
-pnpm start
+bash start.sh
 ```
 
-`pnpm start` serves the production standalone build and refuses to launch if it is missing or stale. After pulling or editing source, run `pnpm build` first. Use `pnpm dev` for source-backed development with hot reload.
+`start.sh` installs or updates the `purplemux` CLI from this checkout, builds only when the production artifact is missing or stale, and then starts PurpleMux. It does not download the published npm package.
+
+For manual startup, run `pnpm install`, `pnpm build`, and `pnpm start`. `pnpm start` refuses to launch if the standalone build is missing or stale. Use `pnpm dev` for source-backed development with hot reload.
 
 Development mode:
 
