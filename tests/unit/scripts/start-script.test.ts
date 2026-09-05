@@ -24,11 +24,13 @@ const runStartScript = ({
 }: RunOptions = {}) => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'purplemux-start-test-'));
   temporaryDirectories.push(directory);
-  const binDirectory = path.join(directory, 'bin');
+  const toolBinDirectory = path.join(directory, 'tool-bin');
+  const globalBinDirectory = path.join(directory, 'bin');
   const logPath = path.join(directory, 'commands.log');
-  fs.mkdirSync(binDirectory);
+  fs.mkdirSync(toolBinDirectory);
+  fs.mkdirSync(globalBinDirectory);
 
-  writeExecutable(path.join(binDirectory, 'node'), `#!/usr/bin/env bash
+  writeExecutable(path.join(toolBinDirectory, 'node'), `#!/usr/bin/env bash
 set -euo pipefail
 if [[ \"\${1:-}\" == \"-p\" ]]; then
   printf '%s\\n' '0.4.6'
@@ -39,7 +41,7 @@ else
 fi
 `);
 
-  writeExecutable(path.join(binDirectory, 'pnpm'), `#!/usr/bin/env bash
+  writeExecutable(path.join(toolBinDirectory, 'pnpm'), `#!/usr/bin/env bash
 set -euo pipefail
 printf 'pnpm' >> \"$COMMAND_LOG\"
 printf ' %q' \"$@\" >> \"$COMMAND_LOG\"
@@ -47,17 +49,19 @@ printf '\\n' >> \"$COMMAND_LOG\"
 if [[ \"\${FAIL_COMMAND:-}\" == \"\${1:-}\" ]]; then
   exit 1
 fi
-if [[ \"\${1:-}\" == \"add\" && \"\${2:-}\" == \"--global\" ]]; then
-  cat > \"$STUB_BIN/purplemux\" <<'CLI'
+if [[ \"\${1:-}\" == \"config\" && \"\${2:-}\" == \"get\" && \"\${3:-}\" == \"global-bin-dir\" ]]; then
+  printf '%s\\n' 'undefined'
+elif [[ \"\${1:-}\" == \"add\" && \"\${2:-}\" == \"--global\" ]]; then
+  cat > \"$GLOBAL_BIN/purplemux\" <<'CLI'
 #!/usr/bin/env bash
 printf '%s\\n' '0.4.6'
 CLI
-  chmod +x \"$STUB_BIN/purplemux\"
+  chmod +x \"$GLOBAL_BIN/purplemux\"
 fi
 `);
 
   if (cliVersion !== undefined) {
-    writeExecutable(path.join(binDirectory, 'purplemux'), `#!/usr/bin/env bash
+    writeExecutable(path.join(toolBinDirectory, 'purplemux'), `#!/usr/bin/env bash
 printf '%s\\n' '${cliVersion}'
 `);
   }
@@ -70,8 +74,9 @@ printf '%s\\n' '${cliVersion}'
       BUILD_CHECK: buildCheck,
       COMMAND_LOG: logPath,
       FAIL_COMMAND: failCommand,
-      PATH: `${binDirectory}:/usr/bin:/bin`,
-      STUB_BIN: binDirectory,
+      GLOBAL_BIN: globalBinDirectory,
+      PATH: `${toolBinDirectory}:/usr/bin:/bin`,
+      PNPM_HOME: directory,
     },
   });
 
@@ -88,10 +93,11 @@ afterEach(() => {
 });
 
 describe('start.sh', () => {
-  it('installs a missing CLI from the checkout', () => {
+  it('adds the configured global bin to PATH and installs a missing CLI', () => {
     const result = runStartScript();
 
     expect(result.status).toBe(0);
+    expect(result.stdout).toContain('Adding pnpm global bin to PATH for this launch:');
     expect(result.commands).toContain(`pnpm add --global ${root}\n`);
     expect(result.commands).toContain('pnpm start\n');
   });

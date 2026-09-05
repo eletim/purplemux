@@ -12,6 +12,29 @@ fi
 
 repo_version="$(node -p "require('./package.json').version")"
 installed_version=""
+configured_global_bin="$(pnpm config get global-bin-dir)"
+
+if [[ -n "$configured_global_bin" && "$configured_global_bin" != "undefined" && "$configured_global_bin" != "null" ]]; then
+  pnpm_global_bin="$configured_global_bin"
+elif [[ -n "${PNPM_HOME:-}" ]]; then
+  pnpm_global_bin="${PNPM_HOME%/}/bin"
+else
+  pnpm_global_root="$(pnpm root --global)"
+  pnpm_global_bin="$(dirname -- "$(dirname -- "$(dirname -- "$pnpm_global_root")")")/bin"
+fi
+
+if [[ -z "$pnpm_global_bin" ]]; then
+  echo "[purplemux] pnpm did not report a global bin directory." >&2
+  exit 1
+fi
+
+case ":$PATH:" in
+  *":$pnpm_global_bin:"*) ;;
+  *)
+    echo "[purplemux] Adding pnpm global bin to PATH for this launch: $pnpm_global_bin"
+    export PATH="$pnpm_global_bin:$PATH"
+    ;;
+esac
 
 if command -v purplemux >/dev/null 2>&1; then
   installed_version="$(purplemux --version 2>/dev/null || true)"
