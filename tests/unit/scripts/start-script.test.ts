@@ -49,9 +49,7 @@ printf '\\n' >> \"$COMMAND_LOG\"
 if [[ \"\${FAIL_COMMAND:-}\" == \"\${1:-}\" ]]; then
   exit 1
 fi
-if [[ \"\${1:-}\" == \"config\" && \"\${2:-}\" == \"get\" && \"\${3:-}\" == \"global-bin-dir\" ]]; then
-  printf '%s\\n' 'undefined'
-elif [[ \"\${1:-}\" == \"add\" && \"\${2:-}\" == \"--global\" ]]; then
+if [[ \"\${1:-}\" == \"add\" && \"\${2:-}\" == \"--global\" ]]; then
   cat > \"$GLOBAL_BIN/purplemux\" <<'CLI'
 #!/usr/bin/env bash
 printf '%s\\n' '0.4.6'
@@ -98,6 +96,9 @@ describe('start.sh', () => {
 
     expect(result.status).toBe(0);
     expect(result.stdout).toContain('Adding pnpm global bin to PATH for this launch:');
+    expect(result.commands).not.toContain('pnpm config');
+    expect(result.commands).not.toContain('pnpm bin');
+    expect(result.commands).not.toContain('pnpm root');
     expect(result.commands).toContain(`pnpm add --global ${root}\n`);
     expect(result.commands).toContain('pnpm start\n');
   });
