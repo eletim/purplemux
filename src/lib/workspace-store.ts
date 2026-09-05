@@ -11,9 +11,10 @@ import {
   resolveLayoutDir,
   resolveLayoutFile,
   removeLayoutFile,
-  crossCheckLayout,
+  crossCheckWorkspaceLayout,
   collectAllTabs,
   createDefaultLayout,
+  removeWorkspaceLayoutIfEmpty,
 } from '@/lib/layout-store';
 import type { ICreateLayoutOptions } from '@/lib/layout-store';
 import { listProviders } from '@/lib/providers/registry';
@@ -259,10 +260,7 @@ export const initWorkspaceStore = async (): Promise<void> => {
     );
 
     try {
-      const changed = await crossCheckLayout(layout, relevantTmuxSessions, ws.id, ws.directories[0]);
-      if (changed) {
-        await writeLayoutFile(layout, layoutFile);
-      }
+      await crossCheckWorkspaceLayout(ws.id, relevantTmuxSessions, ws.directories[0]);
     } catch (err) {
       log.error(`Workspace '${ws.name}': tmux consistency check failed: ${err instanceof Error ? err.message : err}`);
     }
@@ -360,6 +358,53 @@ export const deleteWorkspace = async (workspaceId: string): Promise<boolean> =>
     await writeWorkspacesFile(data);
     log.info(`Deleted: ${workspaceId} (${ws.name})`);
     return true;
+  });
+
+export type TDeleteWorkspaceIfEmptyResult =
+  | { workspaceId: string; status: 'deleted'; deleted: true }
+  | { workspaceId: string; status: 'absent'; deleted: false }
+  | {
+    workspaceId: string;
+    status: 'not-empty';
+    deleted: false;
+    tabCount: number;
+    sessionCount: number;
+  };
+
+/** Public automation deletion semantics. Unlike the UI delete operation, this
+ * never terminates tabs or sessions. The layout lock keeps the precondition
+ * check and workspace metadata mutation in one server-side critical section.
+ */
+export const deleteWorkspaceIfEmpty = async (
+  workspaceId: string,
+): Promise<TDeleteWorkspaceIfEmptyResult> =>
+  withLock(async () => {
+    const data = (await readWorkspacesFile()) ?? emptyState();
+    const idx = data.workspaces.findIndex((workspace) => workspace.id === workspaceId);
+    if (idx === -1) {
+      return { workspaceId, status: 'absent', deleted: false };
+    }
+
+    const layoutResult = await removeWorkspaceLayoutIfEmpty(workspaceId, async () => {
+      data.workspaces.splice(idx, 1);
+      if (data.activeWorkspaceId === workspaceId) {
+        data.activeWorkspaceId = data.workspaces[0]?.id;
+      }
+      await writeWorkspacesFile(data);
+    });
+
+    if (!layoutResult.empty) {
+      return {
+        workspaceId,
+        status: 'not-empty',
+        deleted: false,
+        tabCount: layoutResult.tabCount,
+        sessionCount: layoutResult.sessionCount,
+      };
+    }
+
+    log.info(`Conditionally deleted empty workspace: ${workspaceId}`);
+    return { workspaceId, status: 'deleted', deleted: true };
   });
 
 export const renameWorkspace = async (workspaceId: string, name: string): Promise<IWorkspace | null> =>

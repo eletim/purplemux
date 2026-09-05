@@ -1,5 +1,5 @@
-import { readLayoutFile, resolveLayoutFile, collectAllTabs } from '@/lib/layout-store';
-import { hasSession, createSession, getPaneCurrentCommand, getSessionPanePid, sendKeysSeparated } from '@/lib/tmux';
+import { readLayoutFile, resolveLayoutFile, collectAllTabs, ensureRegisteredTabSession } from '@/lib/layout-store';
+import { getPaneCurrentCommand, getSessionPanePid, sendKeysSeparated } from '@/lib/tmux';
 import { getWorkspaces } from '@/lib/workspace-store';
 import { getProviderByPanelType, getProviderByProcessName } from '@/lib/providers';
 import type { IAgentPreflight, IAgentProvider } from '@/lib/providers/types';
@@ -112,10 +112,20 @@ const sendResumeKeys = async (target: IAutoResumeTarget): Promise<boolean> => {
 export const executeAutoResume = async (targets: IAutoResumeTarget[]): Promise<void> => {
   // Phase 1: Sequential session creation — first createSession cold-starts tmux server, so avoid race
   let hasNewSession = false;
+  const resumableTargets: IAutoResumeTarget[] = [];
   for (const target of targets) {
-    if (!(await hasSession(target.tmuxSession))) {
+    const result = await ensureRegisteredTabSession(
+      target.workspaceId,
+      target.tabId,
+      target.tmuxSession,
+    );
+    if (result === 'missing') {
+      log.debug(`Skip stale auto-resume target: ${target.tmuxSession}`);
+      continue;
+    }
+    resumableTargets.push(target);
+    if (result === 'created') {
       log.debug(`No tmux session, creating new: ${target.tmuxSession}`);
-      await createSession(target.tmuxSession, 80, 24);
       hasNewSession = true;
     }
   }
@@ -126,7 +136,7 @@ export const executeAutoResume = async (targets: IAutoResumeTarget[]): Promise<v
   }
 
   // Phase 3: Send resume commands in parallel
-  await Promise.allSettled(targets.map((target) => sendResumeKeys(target)));
+  await Promise.allSettled(resumableTargets.map((target) => sendResumeKeys(target)));
 };
 
 export const autoResumeOnStartup = async (): Promise<void> => {

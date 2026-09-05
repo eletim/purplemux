@@ -51,6 +51,7 @@ Die App enthält Node, tmux und den purplemux-Server und ergänzt:
 git clone https://github.com/subicura/purplemux.git
 cd purplemux
 pnpm install
+pnpm build
 pnpm start
 ```
 
@@ -114,7 +115,7 @@ systemctl --user enable --now purplemux
 | npx | automatisch (neueste bei jedem Lauf) |
 | Global npm | `npm update -g purplemux` |
 | macOS-App | automatisch (App aktualisiert beim Start) |
-| Aus dem Quellcode | `git pull && pnpm install && pnpm start` |
+| Aus dem Quellcode | `git pull && pnpm install && pnpm build && pnpm start` |
 
 ## Deinstallation
 

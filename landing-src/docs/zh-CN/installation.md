@@ -51,6 +51,7 @@ pnpm 和 yarn 用法相同(`pnpm add -g purplemux` / `yarn global add purplemux`
 git clone https://github.com/subicura/purplemux.git
 cd purplemux
 pnpm install
+pnpm build
 pnpm start
 ```
 
@@ -114,7 +115,7 @@ systemctl --user enable --now purplemux
 | npx | 自动(每次运行都是最新) |
 | 全局 npm | `npm update -g purplemux` |
 | macOS 应用 | 自动(启动时检查更新) |
-| 从源码 | `git pull && pnpm install && pnpm start` |
+| 从源码 | `git pull && pnpm install && pnpm build && pnpm start` |
 
 ## 卸载
 

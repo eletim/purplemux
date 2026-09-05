@@ -128,6 +128,7 @@ purplemux
 purplemux workspace create --cwd /absolute/project/path --name "my workspace"
 purplemux tab create -w WS -t codex-cli -n "fix auth"
 purplemux tab create -w WS -t agent-sessions
+purplemux workspace delete -w WS --if-empty
 ```
 
 ### Run from source
@@ -135,9 +136,12 @@ purplemux tab create -w WS -t agent-sessions
 ```bash
 git clone https://github.com/subicura/purplemux.git
 cd purplemux
-pnpm install
-pnpm start
+bash start.sh
 ```
+
+`start.sh` installs or updates the `purplemux` CLI from this checkout, builds only when the production artifact is missing or stale, and then starts PurpleMux. It does not download the published npm package.
+
+For manual startup, run `pnpm install`, `pnpm build`, and `pnpm start`. `pnpm start` refuses to launch if the standalone build is missing or stale. Use `pnpm dev` for source-backed development with hot reload.
 
 Development mode:
 

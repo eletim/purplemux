@@ -51,6 +51,7 @@ pnpm и yarn работают так же (`pnpm add -g purplemux` / `yarn globa
 git clone https://github.com/subicura/purplemux.git
 cd purplemux
 pnpm install
+pnpm build
 pnpm start
 ```
 
@@ -114,7 +115,7 @@ systemctl --user enable --now purplemux
 | npx | автоматически (свежая версия при каждом запуске) |
 | Глобальный npm | `npm update -g purplemux` |
 | macOS-приложение | автоматически (обновляется при запуске) |
-| Из исходников | `git pull && pnpm install && pnpm start` |
+| Из исходников | `git pull && pnpm install && pnpm build && pnpm start` |
 
 ## Удаление
 

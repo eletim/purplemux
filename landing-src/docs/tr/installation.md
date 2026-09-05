@@ -51,6 +51,7 @@ Uygulama Node, tmux ve purplemux sunucusunu içerir; ayrıca şunları sağlar:
 git clone https://github.com/subicura/purplemux.git
 cd purplemux
 pnpm install
+pnpm build
 pnpm start
 ```
 
@@ -114,7 +115,7 @@ systemctl --user enable --now purplemux
 | npx | otomatik (her çalıştırmada en güncel) |
 | Global npm | `npm update -g purplemux` |
 | macOS uygulaması | otomatik (açılışta günceller) |
-| Kaynaktan | `git pull && pnpm install && pnpm start` |
+| Kaynaktan | `git pull && pnpm install && pnpm build && pnpm start` |
 
 ## Kaldırma
 
