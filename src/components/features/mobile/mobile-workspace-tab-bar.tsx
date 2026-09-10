@@ -108,7 +108,7 @@ const MobileWorkspaceTabBar = ({
                 )}
               >
                 {isAgent ? (
-                  <AgentStatusGlyph status={status} showIdle />
+                  <AgentStatusGlyph status={status} compact showIdle />
                 ) : item.panelType === 'web-browser' ? (
                   <Globe className="h-2.5 w-2.5 text-muted-foreground/50" />
                 ) : item.panelType === 'diff' ? (

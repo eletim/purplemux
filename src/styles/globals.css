@@ -266,6 +266,14 @@
 
 /* Mulmo agent state language: spinner = working, triangle = needs input,
    check = completed. The shape remains legible without relying on color. */
+:root[data-ui-mode="mulmo"] .agent-status-glyph-default {
+  display: none;
+}
+
+:root[data-ui-mode="mulmo"] .agent-status-glyph-mulmo {
+  display: inline-flex;
+}
+
 :root[data-ui-mode="mulmo"] .agent-status-glyph[data-agent-status="busy"] {
   color: var(--ui-blue);
 }

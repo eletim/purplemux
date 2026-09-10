@@ -16,7 +16,7 @@ const DotByStatus = ({ status, panelType, terminalStatus, process }: { status: T
   let inner: React.ReactNode;
 
   if (panelType === 'claude-code' || panelType === 'codex-cli') {
-    inner = <AgentStatusGlyph status={status} showIdle />;
+    inner = <AgentStatusGlyph status={status} compact showIdle />;
   } else if (panelType === 'web-browser') {
     inner = <Globe className="h-2.5 w-2.5 text-muted-foreground/50" aria-hidden="true" />;
   } else if (panelType === 'diff') {
