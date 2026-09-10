@@ -109,6 +109,7 @@ const useDeepLink = () => {
       }
       if (controller.signal.aborted) return null;
 
+      useLayoutStore.getState().setProtectedLayoutWorkspaceId(null);
       const workspaceExists = useWorkspaceStore.getState().workspaces
         .some((workspace) => workspace.id === target.workspaceId);
       const result = await followDeepLink(

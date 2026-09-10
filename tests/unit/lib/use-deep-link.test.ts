@@ -183,4 +183,32 @@ describe('useDeepLink', () => {
       resolvedLayoutWorkspaceId: 'ws-target',
     });
   });
+
+  it('clears the previous protection when the next canonical link has no workspace', async () => {
+    useTestDeepLink();
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(useTestDeepLink()).toEqual({
+      isResolving: false,
+      resolvedLayoutWorkspaceId: 'ws-target',
+    });
+
+    setProtectedLayoutWorkspaceId.mockClear();
+    router.query = { workspace: 'ws-missing', tab: 'missing-tab' };
+    expect(useTestDeepLink()).toEqual({
+      isResolving: true,
+      resolvedLayoutWorkspaceId: null,
+    });
+
+    expect(setProtectedLayoutWorkspaceId).toHaveBeenCalledOnce();
+    expect(setProtectedLayoutWorkspaceId).toHaveBeenCalledWith(null);
+    expect(navigateToTab).toHaveBeenCalledOnce();
+
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(useTestDeepLink()).toEqual({
+      isResolving: false,
+      resolvedLayoutWorkspaceId: null,
+    });
+    expect(toastError).toHaveBeenCalledOnce();
+    expect(navigateToTab).toHaveBeenCalledOnce();
+  });
 });
