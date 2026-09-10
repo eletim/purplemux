@@ -181,10 +181,11 @@ describe('navigateToTab', () => {
     }));
     vi.stubGlobal('fetch', fetchMock);
 
-    const navigation = navigateToTab('ws-target', 'target-tab');
+    const navigation = navigateToTab('ws-target', 'target-tab', { readOnly: true });
 
     await expect(navigation).resolves.toBe('failed');
     expect(fetchMock).toHaveBeenCalledOnce();
+    expect(String(fetchMock.mock.calls[0][0])).toContain('readOnly=true');
     expect(fetchMock.mock.calls.some(([, init]) => (
       (init as RequestInit | undefined)?.method === 'POST'
     ))).toBe(false);
@@ -195,7 +196,7 @@ describe('navigateToTab', () => {
     });
   });
 
-  it('claims an in-flight layout fetch and prevents its creation recovery', async () => {
+  it('keeps an in-flight deep-link layout fetch read-only and prevents creation recovery', async () => {
     useWorkspaceStore.setState({ activeWorkspaceId: 'ws-target' });
     useLayoutStore.setState({
       layout: null,
@@ -215,15 +216,20 @@ describe('navigateToTab', () => {
     ));
     vi.stubGlobal('fetch', fetchMock);
 
-    const layoutFetch = useLayoutStore.getState().fetchLayout('ws-target');
+    const layoutFetch = useLayoutStore.getState().fetchLayout(
+      'ws-target',
+      undefined,
+      { readOnly: true },
+    );
     expect(useLayoutStore.getState().isLoading).toBe(true);
-    const navigation = navigateToTab('ws-target', 'target-tab');
+    const navigation = navigateToTab('ws-target', 'target-tab', { readOnly: true });
 
     resolveFetch({ ok: false, json: async () => ({}) });
     await layoutFetch;
 
     await expect(navigation).resolves.toBe('failed');
     expect(fetchMock).toHaveBeenCalledOnce();
+    expect(String(fetchMock.mock.calls[0][0])).toContain('readOnly=true');
     expect(fetchMock.mock.calls.some(([, init]) => init?.method === 'POST')).toBe(false);
     expect(useLayoutStore.getState()).toMatchObject({
       layout: null,

@@ -41,7 +41,7 @@ interface IIndexProps {
 const Index = ({ initialConfig, initialQuickPrompts, initialSidebarItems }: IIndexProps) => {
   const isMobile = useIsMobile();
   const { setTheme } = useTheme();
-  useDeepLink();
+  const deepLinkTarget = useDeepLink();
   useBrowserTitle('purplemux');
   const themeInitRef = useRef(false);
   useEffect(() => {
@@ -61,7 +61,9 @@ const Index = ({ initialConfig, initialQuickPrompts, initialSidebarItems }: IInd
       <Head>
         <title>purplemux</title>
       </Head>
-      {isMobile ? <MobileTerminalPage /> : <TerminalPage />}
+      {isMobile
+        ? <MobileTerminalPage readOnlyWorkspaceId={deepLinkTarget?.workspaceId} />
+        : <TerminalPage readOnlyWorkspaceId={deepLinkTarget?.workspaceId} />}
     </SWRConfig>
   );
 };

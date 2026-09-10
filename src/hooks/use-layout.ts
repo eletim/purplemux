@@ -92,7 +92,11 @@ interface ILayoutState {
 
   setWorkspaceId: (id: string | null) => void;
   setLayout: (data: ILayoutData) => void;
-  fetchLayout: (wsId?: string | null, preserveActive?: boolean) => Promise<void>;
+  fetchLayout: (
+    wsId?: string | null,
+    preserveActive?: boolean,
+    options?: IFetchLayoutOptions,
+  ) => Promise<void>;
   splitPane: (paneId: string, orientation: 'horizontal' | 'vertical') => Promise<void>;
   closePane: (paneId: string) => Promise<void>;
   focusPane: (paneId: string) => void;
@@ -121,7 +125,16 @@ let _onFetchError: (() => void) | null = null;
 let _ratioTimer: ReturnType<typeof setTimeout> | null = null;
 let _suppressFetch = false;
 const _terminalTimers = new Map<string, ReturnType<typeof setTimeout>>();
-let _pendingFocusOwner: { requestId: number; workspaceId: string; tabId: string } | null = null;
+interface IFetchLayoutOptions {
+  readOnly?: boolean;
+}
+
+let _pendingFocusOwner: {
+  requestId: number;
+  workspaceId: string;
+  tabId: string;
+  readOnly: boolean;
+} | null = null;
 
 const wsQuery = (base: string, wsId: string | null): string => {
   if (!wsId) return base;
@@ -207,12 +220,14 @@ const useLayoutStore = create<ILayoutState>((set, get) => ({
     applyLayout(set, get, data);
   },
 
-  fetchLayout: async (wsId?, preserveActive?) => {
+  fetchLayout: async (wsId?, preserveActive?, options?) => {
     if (_suppressFetch) return;
     const targetWsId = wsId ?? get().workspaceId;
     if (!targetWsId) return;
     const shouldPreserve = preserveActive !== false;
     const navigationOwnedAtStart = _pendingFocusOwner?.workspaceId === targetWsId;
+    const readOnly = options?.readOnly === true
+      || (_pendingFocusOwner?.workspaceId === targetWsId && _pendingFocusOwner.readOnly);
 
     _abortController?.abort();
     const controller = new AbortController();
@@ -222,7 +237,8 @@ const useLayoutStore = create<ILayoutState>((set, get) => ({
       set({ isLoading: true, error: null });
     }
     try {
-      const res = await fetch(wsQuery('/api/layout', targetWsId), { signal: controller.signal });
+      const endpoint = readOnly ? '/api/layout?readOnly=true' : '/api/layout';
+      const res = await fetch(wsQuery(endpoint, targetWsId), { signal: controller.signal });
       if (!res.ok) throw new Error();
       const data: ILayoutData = await res.json();
       if (controller.signal.aborted) return;
@@ -309,7 +325,7 @@ const useLayoutStore = create<ILayoutState>((set, get) => ({
       const currentNavigationOwner = _pendingFocusOwner?.workspaceId === targetWsId
         ? _pendingFocusOwner
         : null;
-      if (navigationOwnedAtStart || currentNavigationOwner) {
+      if (readOnly || navigationOwnedAtStart || currentNavigationOwner) {
         if (
           currentNavigationOwner
           && get().workspaceId === targetWsId
@@ -323,7 +339,11 @@ const useLayoutStore = create<ILayoutState>((set, get) => ({
           });
           _onFetchError?.();
         } else {
-          set({ retryCount });
+          set({
+            retryCount,
+            error: t('terminal', 'layoutFetchError'),
+          });
+          _onFetchError?.();
         }
         return;
       }
@@ -783,6 +803,7 @@ export type TNavigateToTabResult = 'focused' | 'not-found' | 'failed' | 'cancell
 
 interface INavigateToTabOptions {
   signal?: AbortSignal;
+  readOnly?: boolean;
 }
 
 let _navigationRequestId = 0;
@@ -860,7 +881,12 @@ export const navigateToTab = (
   });
 
   const setPendingFocus = () => {
-    _pendingFocusOwner = { requestId, workspaceId, tabId };
+    _pendingFocusOwner = {
+      requestId,
+      workspaceId,
+      tabId,
+      readOnly: options.readOnly === true,
+    };
     useLayoutStore.setState({ pendingFocusTabId: tabId, error: null });
   };
 
@@ -878,7 +904,7 @@ export const navigateToTab = (
   if (workspaceId === store.workspaceId) {
     if (!store.isLoading && !store.layout) {
       store.setWorkspaceId(workspaceId);
-      store.fetchLayout(workspaceId);
+      store.fetchLayout(workspaceId, undefined, { readOnly: options.readOnly });
     }
   } else {
     store.clearLayout();
@@ -973,7 +999,15 @@ export const navigateToTabOrCreate = async (
   }
 };
 
-const useLayout = ({ workspaceId, onFetchError }: { workspaceId: string | null; onFetchError?: () => void }) => {
+const useLayout = ({
+  workspaceId,
+  onFetchError,
+  readOnly = false,
+}: {
+  workspaceId: string | null;
+  onFetchError?: () => void;
+  readOnly?: boolean;
+}) => {
   useEffect(() => {
     setOnFetchError(onFetchError ?? null);
   }, [onFetchError]);
@@ -982,9 +1016,9 @@ const useLayout = ({ workspaceId, onFetchError }: { workspaceId: string | null; 
     if (workspaceId) {
       const store = useLayoutStore.getState();
       store.setWorkspaceId(workspaceId);
-      store.fetchLayout(workspaceId);
+      store.fetchLayout(workspaceId, undefined, { readOnly });
     }
-  }, [workspaceId]);
+  }, [readOnly, workspaceId]);
 
   useEffect(() => {
     return useLayoutStore.subscribe((state) => {

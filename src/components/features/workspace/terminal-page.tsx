@@ -40,7 +40,7 @@ const getInitialGitPanelSize = () => {
   return Math.min(MAX_GIT_PANEL_SIZE, Math.max(MIN_GIT_PANEL_SIZE, value));
 };
 
-const TerminalPage = () => {
+const TerminalPage = ({ readOnlyWorkspaceId }: { readOnlyWorkspaceId?: string }) => {
   const t = useTranslations('terminal');
   const isLoading = useWorkspaceStore((s) => s.isLoading);
   const error = useWorkspaceStore((s) => s.error);
@@ -65,6 +65,7 @@ const TerminalPage = () => {
   const layout = useLayout({
     workspaceId: activeWorkspaceId,
     onFetchError: handleFetchError,
+    readOnly: activeWorkspaceId === readOnlyWorkspaceId,
   });
 
   const allTabsEmpty = !!(

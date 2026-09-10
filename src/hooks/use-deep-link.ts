@@ -67,6 +67,7 @@ const useDeepLink = () => {
       {
         navigate: (workspaceId, tabId) => navigateToTab(workspaceId, tabId, {
           signal: controller.signal,
+          readOnly: true,
         }),
         notifyWorkspaceNotFound: () => {
           if (active) {
@@ -98,6 +99,8 @@ const useDeepLink = () => {
     workspaceExists,
     workspacesLoading,
   ]);
+
+  return target;
 };
 
 export default useDeepLink;
