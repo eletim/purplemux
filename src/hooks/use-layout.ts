@@ -895,6 +895,13 @@ export const navigateToTab = (
       if (settled) return;
       settled = true;
       cleanup();
+      if (
+        result === 'focused'
+        && options.readOnly
+        && useLayoutStore.getState().protectedLayoutWorkspaceId === workspaceId
+      ) {
+        useLayoutStore.getState().setProtectedLayoutWorkspaceId(null);
+      }
       resolve(result);
     };
     const finishFromLayout = (state: ILayoutState) => {

@@ -223,6 +223,28 @@ describe('navigateToTab', () => {
       .toBe('target-tab');
   });
 
+  it('clears deep-link protection once a read-only navigation successfully focuses its tab', async () => {
+    useWorkspaceStore.setState({ activeWorkspaceId: 'ws-current' });
+    const persistedLayout = layout([tab('other-tab', 0), tab('target-tab', 1)]);
+    stubLayoutFetch(persistedLayout);
+
+    await expect(navigateToTab('ws-current', 'target-tab', { readOnly: true }))
+      .resolves.toBe('focused');
+
+    expect(useLayoutStore.getState().protectedLayoutWorkspaceId).toBeNull();
+  });
+
+  it('leaves deep-link protection set when a read-only navigation does not find its tab', async () => {
+    useWorkspaceStore.setState({ activeWorkspaceId: 'ws-current' });
+    const persistedLayout = layout([tab('other-tab', 0)]);
+    stubLayoutFetch(persistedLayout);
+
+    await expect(navigateToTab('ws-current', 'missing-tab', { readOnly: true }))
+      .resolves.toBe('not-found');
+
+    expect(useLayoutStore.getState().protectedLayoutWorkspaceId).toBe('ws-current');
+  });
+
   it('keeps the workspace selected and reports a missing tab when no layout exists', async () => {
     useWorkspaceStore.setState({ activeWorkspaceId: 'ws-target' });
     useLayoutStore.setState({ layout: null, workspaceId: 'ws-target', isLoading: false });
