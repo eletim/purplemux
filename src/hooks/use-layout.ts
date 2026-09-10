@@ -212,6 +212,7 @@ const useLayoutStore = create<ILayoutState>((set, get) => ({
     const targetWsId = wsId ?? get().workspaceId;
     if (!targetWsId) return;
     const shouldPreserve = preserveActive !== false;
+    const navigationOwnedAtStart = _pendingFocusOwnerId !== null;
 
     _abortController?.abort();
     const controller = new AbortController();
@@ -295,6 +296,24 @@ const useLayoutStore = create<ILayoutState>((set, get) => ({
     } catch (err) {
       if (err instanceof DOMException && err.name === 'AbortError') return;
       const retryCount = get().retryCount + 1;
+      if (navigationOwnedAtStart) {
+        if (
+          _pendingFocusOwnerId !== null
+          && get().workspaceId === targetWsId
+          && get().pendingFocusTabId
+        ) {
+          _pendingFocusOwnerId = null;
+          set({
+            retryCount,
+            pendingFocusTabId: null,
+            error: t('terminal', 'layoutFetchError'),
+          });
+          _onFetchError?.();
+        } else {
+          set({ retryCount });
+        }
+        return;
+      }
       set({ retryCount });
       if (retryCount >= 3) {
         try {
@@ -816,12 +835,11 @@ export const navigateToTab = (
         return;
       }
       if (state.workspaceId !== workspaceId || state.isLoading) return;
-      if (!state.layout) {
-        if (state.error) {
-          finish('failed');
-        }
+      if (state.error) {
+        finish('failed');
         return;
       }
+      if (!state.layout) return;
       if (state.pendingFocusTabId === tabId) return;
 
       finishFromLayout(state);

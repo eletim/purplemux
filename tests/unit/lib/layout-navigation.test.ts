@@ -164,4 +164,34 @@ describe('navigateToTab', () => {
     await expect(navigation).resolves.toBe('focused');
     expect(targetLayout.root.type === 'pane' ? targetLayout.root.activeTabId : null).toBe('target-tab');
   });
+
+  it('fails navigation without creating recovery resources after repeated layout errors', async () => {
+    useWorkspaceStore.setState({ activeWorkspaceId: 'ws-target' });
+    useLayoutStore.setState({
+      layout: null,
+      workspaceId: 'ws-target',
+      isLoading: false,
+      error: null,
+      retryCount: 2,
+      pendingFocusTabId: null,
+    });
+    const fetchMock = vi.fn(async (_input: string | URL | Request, _init?: RequestInit) => ({
+      ok: false,
+      json: async () => ({}),
+    }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const navigation = navigateToTab('ws-target', 'target-tab');
+
+    await expect(navigation).resolves.toBe('failed');
+    expect(fetchMock).toHaveBeenCalledOnce();
+    expect(fetchMock.mock.calls.some(([, init]) => (
+      (init as RequestInit | undefined)?.method === 'POST'
+    ))).toBe(false);
+    expect(useLayoutStore.getState()).toMatchObject({
+      layout: null,
+      retryCount: 3,
+      pendingFocusTabId: null,
+    });
+  });
 });
