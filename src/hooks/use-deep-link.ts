@@ -3,12 +3,17 @@ import { useRouter } from 'next/router';
 import { useTranslations } from 'next-intl';
 import { toast } from 'sonner';
 import useWorkspaceStore from '@/hooks/use-workspace-store';
-import { useLayoutStore } from '@/hooks/use-layout';
-import { collectPanes } from '@/lib/layout-tree';
+import { navigateToTab, type TNavigateToTabResult } from '@/hooks/use-layout';
 
 interface IDeepLinkTarget {
   workspaceId: string;
   tabId: string;
+}
+
+interface IDeepLinkActions {
+  navigate: (workspaceId: string, tabId: string) => Promise<TNavigateToTabResult>;
+  notifyWorkspaceNotFound: () => void;
+  notifyTabNotFound: () => void;
 }
 
 export const parseDeepLinkTarget = (
@@ -20,16 +25,28 @@ export const parseDeepLinkTarget = (
   return { workspaceId: workspace, tabId: tab };
 };
 
+export const followDeepLink = async (
+  target: IDeepLinkTarget,
+  workspaceExists: boolean,
+  actions: IDeepLinkActions,
+): Promise<TNavigateToTabResult | 'workspace-not-found'> => {
+  if (!workspaceExists) {
+    actions.notifyWorkspaceNotFound();
+    return 'workspace-not-found';
+  }
+
+  const result = await actions.navigate(target.workspaceId, target.tabId);
+  if (result === 'not-found') actions.notifyTabNotFound();
+  return result;
+};
+
 const useDeepLink = () => {
   const router = useRouter();
   const t = useTranslations('terminal');
   const workspaces = useWorkspaceStore((state) => state.workspaces);
-  const activeWorkspaceId = useWorkspaceStore((state) => state.activeWorkspaceId);
   const workspacesLoading = useWorkspaceStore((state) => state.isLoading);
-  const layout = useLayoutStore((state) => state.layout);
-  const layoutWorkspaceId = useLayoutStore((state) => state.workspaceId);
-  const layoutLoading = useLayoutStore((state) => state.isLoading);
   const handledKeyRef = useRef<string | null>(null);
+  const activeKeyRef = useRef<string | null>(null);
 
   const target = useMemo(
     () => parseDeepLinkTarget(router.query.workspace, router.query.tab),
@@ -37,53 +54,36 @@ const useDeepLink = () => {
   );
 
   useEffect(() => {
+    activeKeyRef.current = target ? JSON.stringify([target.workspaceId, target.tabId]) : null;
+  }, [target]);
+
+  useEffect(() => {
     if (!router.isReady || !target || workspacesLoading) return;
 
     const key = JSON.stringify([target.workspaceId, target.tabId]);
     if (handledKeyRef.current === key) return;
 
-    if (!workspaces.some((workspace) => workspace.id === target.workspaceId)) {
-      handledKeyRef.current = key;
-      toast.error(t('deepLinkWorkspaceNotFound', { workspaceId: target.workspaceId }));
-      return;
-    }
-
-    const workspaceState = useWorkspaceStore.getState();
-    const layoutState = useLayoutStore.getState();
-    if (workspaceState.activeWorkspaceId !== target.workspaceId) {
-      useLayoutStore.setState({ pendingFocusTabId: target.tabId });
-      if (layoutState.workspaceId !== target.workspaceId) {
-        layoutState.clearLayout();
-      }
-      workspaceState.switchWorkspace(target.workspaceId);
-      return;
-    }
-
-    if (
-      layoutState.workspaceId !== target.workspaceId
-      || !layoutState.layout
-      || layoutState.isLoading
-    ) {
-      useLayoutStore.setState({ pendingFocusTabId: target.tabId });
-      return;
-    }
-
-    const pane = collectPanes(layoutState.layout.root)
-      .find((candidate) => candidate.tabs.some((tab) => tab.id === target.tabId));
-    if (!pane) {
-      toast.error(t('deepLinkTabNotFound', { tabId: target.tabId }));
-    } else if (
-      layoutState.layout.activePaneId !== pane.id
-      || pane.activeTabId !== target.tabId
-    ) {
-      layoutState.focusTab(target.tabId);
-    }
     handledKeyRef.current = key;
+    followDeepLink(
+      target,
+      workspaces.some((workspace) => workspace.id === target.workspaceId),
+      {
+        navigate: navigateToTab,
+        notifyWorkspaceNotFound: () => {
+          if (activeKeyRef.current === key) {
+            toast.error(t('deepLinkWorkspaceNotFound', { workspaceId: target.workspaceId }));
+          }
+        },
+        notifyTabNotFound: () => {
+          if (activeKeyRef.current === key) {
+            toast.error(t('deepLinkTabNotFound', { tabId: target.tabId }));
+          }
+        },
+      },
+    ).catch(() => {
+      // Layout errors are surfaced by the existing layout state.
+    });
   }, [
-    activeWorkspaceId,
-    layout,
-    layoutLoading,
-    layoutWorkspaceId,
     router.isReady,
     t,
     target,

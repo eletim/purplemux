@@ -744,23 +744,65 @@ export const setOnFetchError = (fn: (() => void) | null): void => {
   _onFetchError = fn;
 };
 
-export const navigateToTab = (workspaceId: string, tabId: string) => {
+export type TNavigateToTabResult = 'focused' | 'not-found' | 'failed' | 'superseded';
+
+let _navigationRequestId = 0;
+
+export const navigateToTab = (workspaceId: string, tabId: string): Promise<TNavigateToTabResult> => {
+  const requestId = ++_navigationRequestId;
   const store = useLayoutStore.getState();
 
-  if (Router.pathname !== '/') {
-    useLayoutStore.setState({ pendingFocusTabId: tabId });
-    useWorkspaceStore.getState().switchWorkspace(workspaceId);
-    Router.push('/');
-    return;
+  if (Router.pathname === '/' && workspaceId === store.workspaceId && store.layout && !store.isLoading) {
+    return Promise.resolve(store.focusTab(tabId) ? 'focused' : 'not-found');
   }
 
+  let failNavigation = () => {};
+  const completion = new Promise<TNavigateToTabResult>((resolve) => {
+    let unsubscribe = () => {};
+    const finish = (result: TNavigateToTabResult) => {
+      unsubscribe();
+      resolve(result);
+    };
+    failNavigation = () => finish('failed');
+    unsubscribe = useLayoutStore.subscribe((state) => {
+      if (requestId !== _navigationRequestId) {
+        finish('superseded');
+        return;
+      }
+      if (state.workspaceId !== workspaceId || state.isLoading) return;
+      if (!state.layout) {
+        if (state.error) {
+          finish('failed');
+        }
+        return;
+      }
+      if (state.pendingFocusTabId === tabId) return;
+
+      unsubscribe();
+      resolve(state.focusTab(tabId) ? 'focused' : 'not-found');
+    });
+  });
+
+  if (Router.pathname !== '/') {
+    useLayoutStore.setState({ pendingFocusTabId: tabId, error: null });
+    useWorkspaceStore.getState().switchWorkspace(workspaceId);
+    Promise.resolve(Router.push('/')).then((navigated) => {
+      if (!navigated) failNavigation();
+    }).catch(failNavigation);
+    return completion;
+  }
+
+  useLayoutStore.setState({ pendingFocusTabId: tabId, error: null });
   if (workspaceId === store.workspaceId) {
-    store.focusTab(tabId);
+    if (!store.isLoading && !store.layout) {
+      store.setWorkspaceId(workspaceId);
+      store.fetchLayout(workspaceId);
+    }
   } else {
     store.clearLayout();
-    useLayoutStore.setState({ pendingFocusTabId: tabId });
     useWorkspaceStore.getState().switchWorkspace(workspaceId);
   }
+  return completion;
 };
 
 export const navigateToTabOrCreate = async (
