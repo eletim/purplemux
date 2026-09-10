@@ -9,6 +9,7 @@ vi.mock('next-intl', () => ({
 }));
 
 import AgentStatusGlyph from '@/components/features/workspace/agent-status-glyph';
+import { selectTabDisplayStatus, type ITabState } from '@/hooks/use-tab-store';
 import type { TTabDisplayStatus } from '@/types/status';
 
 const renderGlyph = (status: TTabDisplayStatus) =>
@@ -20,12 +21,15 @@ describe('Mulmo session status surfaces', () => {
     ['needs-input', 'lucide-triangle-alert', 'statusNeedsInput'],
     ['ready-for-review', 'lucide-circle-check', 'statusNeedsReview'],
   ] as const)('renders an accessible shape for %s', (status, iconClass, label) => {
-    const html = renderGlyph(status);
+    const tabs = { tab: { cliState: status } as ITabState };
+    const displayStatus = selectTabDisplayStatus(tabs, 'tab');
+    const html = renderGlyph(displayStatus);
 
+    expect(displayStatus).toBe(status);
     expect(html).toContain(`data-agent-status="${status}"`);
     expect(html).toContain('role="status"');
     expect(html).toContain(iconClass);
-    expect(html).toContain(label);
+    expect(html).toContain(`<span class="sr-only">${label}</span>`);
   });
 
   it('retains the original spinner and dot presentation for Default mode', () => {

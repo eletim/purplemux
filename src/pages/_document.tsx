@@ -1,6 +1,6 @@
 import Document, { Html, Head, Main, NextScript, type DocumentContext, type DocumentInitialProps } from 'next/document';
 import { getWorkspaces } from '@/lib/workspace-store';
-import { DEFAULT_UI_MODE, UI_MODE_STORAGE_KEY } from '@/lib/ui-mode';
+import { createUiModeInitScript, DEFAULT_UI_MODE } from '@/lib/ui-mode';
 
 interface IDocumentProps extends DocumentInitialProps {
   activeWorkspaceId: string;
@@ -32,7 +32,7 @@ class MyDocument extends Document<IDocumentProps> {
 
     const serverActiveWs = JSON.stringify(this.props.activeWorkspaceId || '');
     const initScript = `window.__SB__=(function(){var s=sessionStorage,l=localStorage,t=l.getItem("sidebar-tab"),a=s.getItem("active-ws")||${serverActiveWs};return{w:${sidebarWidth},c:${sidebarCollapsed},t:t==="sessions"?"sessions":"workspace",a:a||""}})()`;
-    const uiModeInitScript = `(function(){var m="${DEFAULT_UI_MODE}";try{m=localStorage.getItem(${JSON.stringify(UI_MODE_STORAGE_KEY)})==="mulmo"?"mulmo":m}catch(e){}document.documentElement.setAttribute("data-ui-mode",m)})()`;
+    const uiModeInitScript = createUiModeInitScript();
 
     return (
       <Html lang="en" data-ui-mode={DEFAULT_UI_MODE} suppressHydrationWarning>

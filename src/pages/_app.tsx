@@ -31,6 +31,7 @@ import useIsMobile from "@/hooks/use-is-mobile";
 import useWorkspaceStore from "@/hooks/use-workspace-store";
 import useConfigStore from "@/hooks/use-config-store";
 import useUiMode from "@/hooks/use-ui-mode";
+import { syncCustomCss } from "@/lib/custom-css";
 import { setMessages } from "@/lib/i18n";
 import { MESSAGE_NAMESPACES } from "@/lib/message-namespaces";
 import { applyUiMode } from "@/lib/ui-mode";
@@ -77,18 +78,7 @@ const CustomCSSSync = () => {
   const customCSS = useConfigStore((s) => s.customCSS);
 
   useEffect(() => {
-    const id = 'purplemux-custom-css';
-    let el = document.getElementById(id) as HTMLStyleElement | null;
-    if (!customCSS) {
-      el?.remove();
-      return;
-    }
-    if (!el) {
-      el = document.createElement('style');
-      el.id = id;
-      document.head.appendChild(el);
-    }
-    el.textContent = customCSS;
+    syncCustomCss(document, customCSS);
   }, [customCSS]);
 
   return null;
