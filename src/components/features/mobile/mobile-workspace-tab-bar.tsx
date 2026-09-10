@@ -3,7 +3,7 @@ import { Globe, GitCompareArrows, History } from 'lucide-react';
 import useTabStore, { selectTabDisplayStatus } from '@/hooks/use-tab-store';
 import { cn } from '@/lib/utils';
 import ProcessIcon from '@/components/icons/process-icon';
-import Spinner from '@/components/ui/spinner';
+import AgentStatusGlyph from '@/components/features/workspace/agent-status-glyph';
 import type { IWorkspace, IPaneNode, TPanelType } from '@/types/terminal';
 
 interface IMobileWorkspaceTabBarProps {
@@ -107,16 +107,8 @@ const MobileWorkspaceTabBar = ({
                   isActive && 'bg-foreground/15',
                 )}
               >
-                {isAgent && status === 'busy' ? (
-                  <Spinner className="h-2 w-2 text-muted-foreground" />
-                ) : isAgent && status === 'ready-for-review' ? (
-                  <span className="h-2 w-2 animate-pulse rounded-full bg-claude-active" />
-                ) : isAgent && status === 'needs-input' ? (
-                  <span className="h-2 w-2 animate-pulse rounded-full bg-ui-amber" />
-                ) : isAgent && status === 'unknown' ? (
-                  <span className="h-2 w-2 rounded-full bg-muted-foreground/50" />
-                ) : isAgent ? (
-                  <span className="h-2 w-2 rounded-full border border-muted-foreground/40" />
+                {isAgent ? (
+                  <AgentStatusGlyph status={status} showIdle />
                 ) : item.panelType === 'web-browser' ? (
                   <Globe className="h-2.5 w-2.5 text-muted-foreground/50" />
                 ) : item.panelType === 'diff' ? (
