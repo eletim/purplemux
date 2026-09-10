@@ -153,5 +153,7 @@
   "codexUpdateRunning": "Updating Codex...",
   "codexUpdateRunningHint": "This can take a few seconds. Codex will restart when the update finishes.",
   "codexUpdateSuccess": "Update finished. Restarting Codex...",
-  "codexUpdateRestarting": "Restarting Codex"
+  "codexUpdateRestarting": "Restarting Codex",
+  "deepLinkWorkspaceNotFound": "Workspace not found: {workspaceId}",
+  "deepLinkTabNotFound": "Tab not found: {tabId}"
 }
