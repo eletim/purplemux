@@ -190,7 +190,10 @@ const MobileTabHeader = ({
   };
 
   return (
-    <div className="flex h-11 shrink-0 items-center border-b border-border/50 bg-background">
+    <div
+      className="flex h-11 shrink-0 items-center border-b border-border/50 bg-background"
+      data-ui-chrome="header"
+    >
       <div className="flex min-w-0 flex-1 items-center gap-2 px-2">
         <div className="flex min-w-0 flex-1 items-center gap-2 px-1.5 py-1">
           <TabStatusIndicator tabId={tabId} panelType={panelType} />
@@ -226,6 +229,7 @@ const MobileTabHeader = ({
             iconButtonClassName,
             hasGitInlineStatus && 'w-auto gap-1 px-2',
           )}
+          data-ui-icon-button=""
           onClick={onOpenGit}
           aria-label="Open Git"
           title={gitTitle}

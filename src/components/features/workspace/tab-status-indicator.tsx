@@ -1,8 +1,8 @@
 import { memo } from 'react';
-import { useTranslations } from 'next-intl';
-import Spinner from '@/components/ui/spinner';
 import useTabStore, { selectTabDisplayStatus } from '@/hooks/use-tab-store';
+import useUiMode from '@/hooks/use-ui-mode';
 import type { TPanelType } from '@/types/terminal';
+import AgentStatusGlyph from '@/components/features/workspace/agent-status-glyph';
 
 interface ITabStatusIndicatorProps {
   tabId: string;
@@ -10,9 +10,9 @@ interface ITabStatusIndicatorProps {
 }
 
 const TabStatusIndicator = ({ tabId, panelType }: ITabStatusIndicatorProps) => {
-  const t = useTranslations('terminal');
+  const showDismissedCompletion = useUiMode((state) => state.mode === 'mulmo');
   const status = useTabStore(
-    (state) => selectTabDisplayStatus(state.tabs, tabId),
+    (state) => selectTabDisplayStatus(state.tabs, tabId, showDismissedCompletion),
   );
 
   const isAgent = panelType === 'claude-code' || panelType === 'codex-cli';
@@ -28,25 +28,7 @@ const TabStatusIndicator = ({ tabId, panelType }: ITabStatusIndicatorProps) => {
       }}
       aria-hidden={!visible || undefined}
     >
-      {!isAgent ? null : status === 'busy' ? (
-        <Spinner className="h-2.5 w-2.5 text-muted-foreground" />
-      ) : status === 'ready-for-review' ? (
-        <span
-          className="h-2 w-2 shrink-0 rounded-full bg-claude-active animate-pulse"
-          aria-hidden="true"
-        />
-      ) : status === 'needs-input' ? (
-        <span
-          className="h-2 w-2 shrink-0 rounded-full bg-ui-amber animate-pulse"
-          aria-hidden="true"
-        />
-      ) : status === 'unknown' ? (
-        <span
-          className="h-2 w-2 shrink-0 rounded-full bg-muted-foreground/50"
-          aria-hidden="true"
-        />
-      ) : null}
-      {visible && <span className="sr-only">{status === 'busy' ? t('statusBusy') : status === 'needs-input' ? t('statusNeedsInput') : status === 'unknown' ? '?' : t('statusNeedsReview')}</span>}
+      {isAgent && <AgentStatusGlyph status={status} />}
     </span>
   );
 };

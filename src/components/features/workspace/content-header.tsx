@@ -132,6 +132,7 @@ const ContentHeader = ({
     <div className="shrink-0 bg-background">
       <div
         className="relative z-40 flex h-12 shrink-0 items-center border-b border-border px-3"
+        data-ui-chrome="header"
         {...(isElectron ? { style: { WebkitAppRegion: 'drag' } as React.CSSProperties } : {})}
       >
       <div className="mr-auto" {...(isElectron ? { style: { WebkitAppRegion: 'no-drag' } as React.CSSProperties } : {})}>
@@ -286,6 +287,7 @@ const ContentHeader = ({
                     ? 'bg-accent text-foreground'
                     : 'hover:bg-accent hover:text-foreground',
                 )}
+                data-ui-icon-button=""
                 onClick={onToggleGitPanel}
                 aria-pressed={isGitPanelOpen}
                 aria-label="Toggle Git panel"

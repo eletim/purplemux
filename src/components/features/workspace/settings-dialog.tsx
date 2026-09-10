@@ -35,6 +35,7 @@ import {
 import { cn } from '@/lib/utils';
 import useTerminalTheme from '@/hooks/use-terminal-theme';
 import useConfigStore from '@/hooks/use-config-store';
+import UiModeControl from '@/components/features/workspace/ui-mode-control';
 import type { TGitAskProvider, TNoteSummaryProvider } from '@/hooks/use-config-store';
 import {
   LINE_HEIGHT_CUSTOM_MAX,
@@ -338,7 +339,17 @@ const AppearanceTab = () => {
   };
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-6">
+      <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+        <div>
+          <p className="text-sm font-medium">{t('uiMode')}</p>
+          <p className="text-sm text-muted-foreground">{t('uiModeDescription')}</p>
+        </div>
+        <UiModeControl />
+      </div>
+
+      <div className="border-t" />
+
       <div>
         <p className="text-sm font-medium">{t('customCSS')}</p>
         <p className="text-sm text-muted-foreground">{t('customCSSDescription')}</p>

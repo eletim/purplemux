@@ -42,7 +42,8 @@ import PaneTabBar from '@/components/features/workspace/pane-tab-bar';
 import { formatTabTitle, parseCurrentCommand, isShellProcess } from '@/lib/tab-title';
 import { isAppShortcut, isClearShortcut, isFocusInputShortcut, isShiftEnter } from '@/lib/keyboard-shortcuts';
 import useTerminalTheme from '@/hooks/use-terminal-theme';
-import useTabStore, { getInitialTabStateFromLayoutTab, selectSessionView, isCliIdle } from '@/hooks/use-tab-store';
+import useTabStore, { getInitialTabStateFromLayoutTab, isCliIdle, selectSessionView, selectTabDisplayStatus } from '@/hooks/use-tab-store';
+import useUiMode from '@/hooks/use-ui-mode';
 import { dismissTab as dismissStatusTab } from '@/hooks/use-agent-status';
 import type { IAgentSessionEntry } from '@/hooks/use-agent-sessions';
 import {
@@ -133,6 +134,10 @@ const PaneContainer = memo(({ paneId, paneNumber }: IPaneContainerProps) => {
   const isAgentPanel = isClaudeCode || isCodex;
   const isWebBrowser = activePanelType === 'web-browser';
   const isDiff = activePanelType === 'diff';
+  const uiMode = useUiMode((s) => s.mode);
+  const activeTabStatus = useTabStore((s) => (
+    activeTabId ? selectTabDisplayStatus(s.tabs, activeTabId, uiMode === 'mulmo') : 'idle'
+  ));
   const { ensureAgentInstalled, installDialogs } = useAgentInstallCheck();
 
   const { theme: terminalTheme } = useTerminalTheme();
@@ -1127,6 +1132,7 @@ const PaneContainer = memo(({ paneId, paneNumber }: IPaneContainerProps) => {
       role="region"
       aria-label={`Pane ${paneNumber}`}
       aria-current={isFocused ? 'true' : undefined}
+      data-ui-pane-status={isAgentPanel ? activeTabStatus : undefined}
       onClick={handleFocusPane}
       onPointerDown={handlePointerDown}
       onPointerUp={handlePointerUp}

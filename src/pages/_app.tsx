@@ -32,6 +32,7 @@ import useWorkspaceStore from "@/hooks/use-workspace-store";
 import useConfigStore from "@/hooks/use-config-store";
 import { setMessages } from "@/lib/i18n";
 import { MESSAGE_NAMESPACES } from "@/lib/message-namespaces";
+import { CustomCssSync, UiModeSync } from "@/components/root-presentation-sync";
 
 export type TNextPageWithLayout<P = object, IP = P> = NextPage<P, IP> & {
   getLayout?: (page: ReactElement) => ReactNode;
@@ -67,27 +68,6 @@ const FontSizeSync = () => {
     const value = FONT_SIZE_ROOT[fontSize] ?? '';
     root.style.fontSize = value;
   }, [fontSize]);
-
-  return null;
-};
-
-const CustomCSSSync = () => {
-  const customCSS = useConfigStore((s) => s.customCSS);
-
-  useEffect(() => {
-    const id = 'purplemux-custom-css';
-    let el = document.getElementById(id) as HTMLStyleElement | null;
-    if (!customCSS) {
-      el?.remove();
-      return;
-    }
-    if (!el) {
-      el = document.createElement('style');
-      el.id = id;
-      document.head.appendChild(el);
-    }
-    el.textContent = customCSS;
-  }, [customCSS]);
 
   return null;
 };
@@ -218,9 +198,10 @@ export default function App({ Component, pageProps }: TAppPropsWithLayout) {
         <main className="font-sans antialiased">
           <ElectronTitlebar isElectron={!!pageProps.isElectron} />
           {getLayout(<Component {...pageProps} />)}
+          <UiModeSync />
           <TerminalThemeSync />
           <FontSizeSync />
-          <CustomCSSSync />
+          <CustomCssSync />
           <AgentStatusProvider />
           <ThemedToaster />
         </main>

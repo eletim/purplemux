@@ -35,6 +35,10 @@
     "openShortcuts": "Aç"
   },
   "appearance": {
+    "uiMode": "Arayüz Modu",
+    "uiModeDescription": "Uygulamanın görsel stilini seçin.",
+    "uiModeDefault": "Varsayılan",
+    "uiModeMulmo": "Mulmo",
     "customCSS": "Özel CSS",
     "customCSSDescription": "Renkleri ve stilleri özelleştirmek için CSS değişkenlerini geçersiz kılın.",
     "apply": "Uygula",

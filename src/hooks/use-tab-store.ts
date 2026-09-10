@@ -401,13 +401,18 @@ export const getInitialTabStateFromLayoutTab = (tab: ITab): Partial<ITabState> =
   return patch;
 };
 
-export const selectTabDisplayStatus = (tabs: Record<string, ITabState>, tabId: string): TTabDisplayStatus => {
+export const selectTabDisplayStatus = (
+  tabs: Record<string, ITabState>,
+  tabId: string,
+  showDismissedCompletion = false,
+): TTabDisplayStatus => {
   const tab = tabs[tabId];
   if (!tab || tab.cliState === 'inactive') return 'idle';
   if (tab.cliState === 'busy') return 'busy';
   if (tab.cliState === 'ready-for-review') return 'ready-for-review';
   if (tab.cliState === 'needs-input') return 'needs-input';
   if (tab.cliState === 'unknown') return 'unknown';
+  if (showDismissedCompletion && tab.dismissedAt != null) return 'completed';
   return 'idle';
 };
 

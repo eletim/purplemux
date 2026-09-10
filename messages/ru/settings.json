@@ -35,6 +35,10 @@
     "openShortcuts": "Открыть"
   },
   "appearance": {
+    "uiMode": "Режим интерфейса",
+    "uiModeDescription": "Выберите визуальный стиль приложения.",
+    "uiModeDefault": "По умолчанию",
+    "uiModeMulmo": "Mulmo",
     "customCSS": "Пользовательский CSS",
     "customCSSDescription": "Переопределите CSS-переменные для настройки цветов и стилей.",
     "apply": "Применить",

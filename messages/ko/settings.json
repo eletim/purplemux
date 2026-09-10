@@ -35,6 +35,10 @@
     "openShortcuts": "열기"
   },
   "appearance": {
+    "uiMode": "UI 모드",
+    "uiModeDescription": "앱의 시각적 스타일을 선택합니다.",
+    "uiModeDefault": "기본",
+    "uiModeMulmo": "Mulmo",
     "customCSS": "Custom CSS",
     "customCSSDescription": "CSS 변수를 오버라이드하여 색상과 스타일을 커스터마이징합니다.",
     "apply": "적용",

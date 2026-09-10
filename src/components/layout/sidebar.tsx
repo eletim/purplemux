@@ -433,6 +433,7 @@ const Sidebar = () => {
         }}
         role="navigation"
         aria-label={t('workspaceList')}
+        data-ui-chrome="sidebar"
       >
         <div
           className="relative z-[60] flex h-12 shrink-0 items-center justify-between border-b border-sidebar-border px-3 pl-traffic-light"

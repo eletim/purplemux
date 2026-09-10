@@ -2,8 +2,9 @@ import { memo, useMemo } from 'react';
 import { GitCompareArrows, Globe } from 'lucide-react';
 import { useTranslations } from 'next-intl';
 import useTabStore, { selectTabDisplayStatus } from '@/hooks/use-tab-store';
+import useUiMode from '@/hooks/use-ui-mode';
 import ProcessIcon from '@/components/icons/process-icon';
-import Spinner from '@/components/ui/spinner';
+import AgentStatusGlyph from '@/components/features/workspace/agent-status-glyph';
 import type { TTabDisplayStatus, TTerminalStatus } from '@/types/status';
 import type { ITab, TPanelType } from '@/types/terminal';
 
@@ -16,17 +17,7 @@ const DotByStatus = ({ status, panelType, terminalStatus, process }: { status: T
   let inner: React.ReactNode;
 
   if (panelType === 'claude-code' || panelType === 'codex-cli') {
-    if (status === 'busy') {
-      inner = <Spinner className="h-2 w-2 text-muted-foreground" />;
-    } else if (status === 'ready-for-review') {
-      inner = <span className="h-2 w-2 rounded-full bg-claude-active animate-pulse" aria-hidden="true" />;
-    } else if (status === 'needs-input') {
-      inner = <span className="h-2 w-2 rounded-full bg-ui-amber animate-pulse" aria-hidden="true" />;
-    } else if (status === 'unknown') {
-      inner = <span className="h-2 w-2 rounded-full bg-muted-foreground/50" aria-hidden="true" />;
-    } else {
-      inner = <span className="h-2 w-2 rounded-full border border-muted-foreground/40" aria-hidden="true" />;
-    }
+    inner = <AgentStatusGlyph status={status} compact showIdle />;
   } else if (panelType === 'web-browser') {
     inner = <Globe className="h-2.5 w-2.5 text-muted-foreground/50" aria-hidden="true" />;
   } else if (panelType === 'diff') {
@@ -48,6 +39,7 @@ const DotByStatus = ({ status, panelType, terminalStatus, process }: { status: T
 
 const WorkspaceStatusIndicator = ({ workspaceId, tabs: layoutTabs }: IWorkspaceStatusIndicatorProps) => {
   const t = useTranslations('terminal');
+  const showDismissedCompletion = useUiMode((state) => state.mode === 'mulmo');
   const wsConnected = useTabStore((state) => state.statusWsConnected);
   const tabs = useTabStore((state) => state.tabs);
   const tabOrder = useTabStore((state) => state.tabOrders[workspaceId]);
@@ -55,7 +47,7 @@ const WorkspaceStatusIndicator = ({ workspaceId, tabs: layoutTabs }: IWorkspaceS
     if (layoutTabs) {
       return layoutTabs.map((tab) => ({
         tabId: tab.id,
-        status: selectTabDisplayStatus(tabs, tab.id),
+        status: selectTabDisplayStatus(tabs, tab.id, showDismissedCompletion),
         panelType: tab.panelType ?? tabs[tab.id]?.panelType,
         terminalStatus: tabs[tab.id]?.terminalStatus,
         currentProcess: tabs[tab.id]?.currentProcess,
@@ -74,12 +66,12 @@ const WorkspaceStatusIndicator = ({ workspaceId, tabs: layoutTabs }: IWorkspaceS
 
     return ordered.map((tabId) => ({
       tabId,
-      status: selectTabDisplayStatus(tabs, tabId),
+      status: selectTabDisplayStatus(tabs, tabId, showDismissedCompletion),
       panelType: tabs[tabId]?.panelType,
       terminalStatus: tabs[tabId]?.terminalStatus,
       currentProcess: tabs[tabId]?.currentProcess,
     }));
-  }, [tabs, tabOrder, workspaceId, layoutTabs]);
+  }, [tabs, tabOrder, workspaceId, layoutTabs, showDismissedCompletion]);
 
   if (wsConnected && tabEntries.length === 0) return null;
 
