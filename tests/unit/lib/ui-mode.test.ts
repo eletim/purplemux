@@ -4,6 +4,7 @@ import {
   UI_MODE_ATTRIBUTE,
   applyUiMode,
   resolveUiMode,
+  shouldDismissViewedStatus,
 } from '@/lib/ui-mode';
 
 describe('UI mode', () => {
@@ -22,5 +23,11 @@ describe('UI mode', () => {
     applyUiMode({ setAttribute }, 'mulmo');
 
     expect(setAttribute).toHaveBeenCalledWith(UI_MODE_ATTRIBUTE, 'mulmo');
+  });
+
+  it('preserves viewed completion attention in Mulmo mode', () => {
+    expect(shouldDismissViewedStatus('mulmo', true)).toBe(false);
+    expect(shouldDismissViewedStatus('default', true)).toBe(true);
+    expect(shouldDismissViewedStatus('default', false)).toBe(false);
   });
 });

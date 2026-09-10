@@ -42,7 +42,9 @@ import PaneTabBar from '@/components/features/workspace/pane-tab-bar';
 import { formatTabTitle, parseCurrentCommand, isShellProcess } from '@/lib/tab-title';
 import { isAppShortcut, isClearShortcut, isFocusInputShortcut, isShiftEnter } from '@/lib/keyboard-shortcuts';
 import useTerminalTheme from '@/hooks/use-terminal-theme';
-import useTabStore, { getInitialTabStateFromLayoutTab, selectSessionView, isCliIdle } from '@/hooks/use-tab-store';
+import useTabStore, { getInitialTabStateFromLayoutTab, isCliIdle, selectSessionView, selectTabDisplayStatus } from '@/hooks/use-tab-store';
+import useUiMode from '@/hooks/use-ui-mode';
+import { shouldDismissViewedStatus } from '@/lib/ui-mode';
 import { dismissTab as dismissStatusTab } from '@/hooks/use-agent-status';
 import type { IAgentSessionEntry } from '@/hooks/use-agent-sessions';
 import {
@@ -133,6 +135,12 @@ const PaneContainer = memo(({ paneId, paneNumber }: IPaneContainerProps) => {
   const isAgentPanel = isClaudeCode || isCodex;
   const isWebBrowser = activePanelType === 'web-browser';
   const isDiff = activePanelType === 'diff';
+  const uiMode = useUiMode((s) => s.mode);
+  const uiModeHydrated = useUiMode((s) => s.hydrated);
+  const dismissViewedStatus = shouldDismissViewedStatus(uiMode, uiModeHydrated);
+  const activeTabStatus = useTabStore((s) => (
+    activeTabId ? selectTabDisplayStatus(s.tabs, activeTabId) : 'idle'
+  ));
   const { ensureAgentInstalled, installDialogs } = useAgentInstallCheck();
 
   const { theme: terminalTheme } = useTerminalTheme();
@@ -346,17 +354,17 @@ const PaneContainer = memo(({ paneId, paneNumber }: IPaneContainerProps) => {
   });
 
   useEffect(() => {
-    if (!activeTabId || !isAgentPanel) return;
+    if (!dismissViewedStatus || !activeTabId || !isAgentPanel) return;
     if (isFocused && isCliIdle(claudeCliState)) {
       dismissStatusTab(activeTabId);
     }
-  }, [activeTabId, claudeCliState, isAgentPanel, isFocused]);
+  }, [activeTabId, claudeCliState, dismissViewedStatus, isAgentPanel, isFocused]);
 
   useEffect(() => {
-    if (activeTabId && isFocused) {
+    if (dismissViewedStatus && activeTabId && isFocused) {
       dismissStatusTab(activeTabId);
     }
-  }, [activeTabId, isFocused]);
+  }, [activeTabId, dismissViewedStatus, isFocused]);
 
   const handleScrollToBottom = useCallback(() => {
     if (claudeCliState !== 'idle') return;
@@ -669,10 +677,10 @@ const PaneContainer = memo(({ paneId, paneNumber }: IPaneContainerProps) => {
   const handleSwitchTab = useCallback(
     (tabId: string) => {
       if (tabId === activeTabId) return;
-      dismissStatusTab(tabId);
+      if (dismissViewedStatus) dismissStatusTab(tabId);
       switchTabInPane(paneId, tabId);
     },
-    [paneId, activeTabId, switchTabInPane],
+    [paneId, activeTabId, dismissViewedStatus, switchTabInPane],
   );
 
   const handleCreateTab = useCallback(async (panelType?: TPanelType, options?: { resumeSessionId?: string }) => {
@@ -1127,6 +1135,7 @@ const PaneContainer = memo(({ paneId, paneNumber }: IPaneContainerProps) => {
       role="region"
       aria-label={`Pane ${paneNumber}`}
       aria-current={isFocused ? 'true' : undefined}
+      data-ui-pane-status={isAgentPanel ? activeTabStatus : undefined}
       onClick={handleFocusPane}
       onPointerDown={handlePointerDown}
       onPointerUp={handlePointerUp}

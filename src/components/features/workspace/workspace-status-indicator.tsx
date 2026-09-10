@@ -3,7 +3,7 @@ import { GitCompareArrows, Globe } from 'lucide-react';
 import { useTranslations } from 'next-intl';
 import useTabStore, { selectTabDisplayStatus } from '@/hooks/use-tab-store';
 import ProcessIcon from '@/components/icons/process-icon';
-import Spinner from '@/components/ui/spinner';
+import AgentStatusGlyph from '@/components/features/workspace/agent-status-glyph';
 import type { TTabDisplayStatus, TTerminalStatus } from '@/types/status';
 import type { ITab, TPanelType } from '@/types/terminal';
 
@@ -16,17 +16,7 @@ const DotByStatus = ({ status, panelType, terminalStatus, process }: { status: T
   let inner: React.ReactNode;
 
   if (panelType === 'claude-code' || panelType === 'codex-cli') {
-    if (status === 'busy') {
-      inner = <Spinner className="h-2 w-2 text-muted-foreground" />;
-    } else if (status === 'ready-for-review') {
-      inner = <span className="h-2 w-2 rounded-full bg-claude-active animate-pulse" aria-hidden="true" />;
-    } else if (status === 'needs-input') {
-      inner = <span className="h-2 w-2 rounded-full bg-ui-amber animate-pulse" aria-hidden="true" />;
-    } else if (status === 'unknown') {
-      inner = <span className="h-2 w-2 rounded-full bg-muted-foreground/50" aria-hidden="true" />;
-    } else {
-      inner = <span className="h-2 w-2 rounded-full border border-muted-foreground/40" aria-hidden="true" />;
-    }
+    inner = <AgentStatusGlyph status={status} compact showIdle />;
   } else if (panelType === 'web-browser') {
     inner = <Globe className="h-2.5 w-2.5 text-muted-foreground/50" aria-hidden="true" />;
   } else if (panelType === 'diff') {
