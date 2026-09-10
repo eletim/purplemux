@@ -121,7 +121,7 @@ let _onFetchError: (() => void) | null = null;
 let _ratioTimer: ReturnType<typeof setTimeout> | null = null;
 let _suppressFetch = false;
 const _terminalTimers = new Map<string, ReturnType<typeof setTimeout>>();
-let _pendingFocusOwnerId: number | null = null;
+let _pendingFocusOwner: { requestId: number; workspaceId: string; tabId: string } | null = null;
 
 const wsQuery = (base: string, wsId: string | null): string => {
   if (!wsId) return base;
@@ -212,7 +212,7 @@ const useLayoutStore = create<ILayoutState>((set, get) => ({
     const targetWsId = wsId ?? get().workspaceId;
     if (!targetWsId) return;
     const shouldPreserve = preserveActive !== false;
-    const navigationOwnedAtStart = _pendingFocusOwnerId !== null;
+    const navigationOwnedAtStart = _pendingFocusOwner?.workspaceId === targetWsId;
 
     _abortController?.abort();
     const controller = new AbortController();
@@ -267,7 +267,12 @@ const useLayoutStore = create<ILayoutState>((set, get) => ({
         if (JSON.stringify(currentContent) === JSON.stringify(fetchedContent)) {
           const pendingTabId = get().pendingFocusTabId;
           if (pendingTabId) {
-            _pendingFocusOwnerId = null;
+            if (
+              _pendingFocusOwner?.workspaceId === targetWsId
+              && _pendingFocusOwner.tabId === pendingTabId
+            ) {
+              _pendingFocusOwner = null;
+            }
             set({ pendingFocusTabId: null });
             get().focusTab(pendingTabId);
           }
@@ -277,7 +282,12 @@ const useLayoutStore = create<ILayoutState>((set, get) => ({
       const pendingTabId = get().pendingFocusTabId;
       let pendingPaneId: string | null = null;
       if (pendingTabId) {
-        _pendingFocusOwnerId = null;
+        if (
+          _pendingFocusOwner?.workspaceId === targetWsId
+          && _pendingFocusOwner.tabId === pendingTabId
+        ) {
+          _pendingFocusOwner = null;
+        }
         set({ pendingFocusTabId: null });
         for (const pane of collectPanes(data.root)) {
           if (pane.tabs.some((t) => t.id === pendingTabId)) {
@@ -296,13 +306,16 @@ const useLayoutStore = create<ILayoutState>((set, get) => ({
     } catch (err) {
       if (err instanceof DOMException && err.name === 'AbortError') return;
       const retryCount = get().retryCount + 1;
-      if (navigationOwnedAtStart) {
+      const currentNavigationOwner = _pendingFocusOwner?.workspaceId === targetWsId
+        ? _pendingFocusOwner
+        : null;
+      if (navigationOwnedAtStart || currentNavigationOwner) {
         if (
-          _pendingFocusOwnerId !== null
+          currentNavigationOwner
           && get().workspaceId === targetWsId
-          && get().pendingFocusTabId
+          && get().pendingFocusTabId === currentNavigationOwner.tabId
         ) {
-          _pendingFocusOwnerId = null;
+          _pendingFocusOwner = null;
           set({
             retryCount,
             pendingFocusTabId: null,
@@ -799,8 +812,8 @@ export const navigateToTab = (
       unsubscribeLayout();
       unsubscribeWorkspace();
       options.signal?.removeEventListener('abort', cancel);
-      if (_pendingFocusOwnerId === requestId) {
-        _pendingFocusOwnerId = null;
+      if (_pendingFocusOwner?.requestId === requestId) {
+        _pendingFocusOwner = null;
         if (useLayoutStore.getState().pendingFocusTabId === tabId) {
           useLayoutStore.setState({ pendingFocusTabId: null });
         }
@@ -847,7 +860,7 @@ export const navigateToTab = (
   });
 
   const setPendingFocus = () => {
-    _pendingFocusOwnerId = requestId;
+    _pendingFocusOwner = { requestId, workspaceId, tabId };
     useLayoutStore.setState({ pendingFocusTabId: tabId, error: null });
   };
 
@@ -952,7 +965,7 @@ export const navigateToTabOrCreate = async (
   }
 
   if (targetWsId === useLayoutStore.getState().workspaceId) {
-    _pendingFocusOwnerId = null;
+    _pendingFocusOwner = null;
     useLayoutStore.setState({ pendingFocusTabId: newTab.id });
     useLayoutStore.getState().fetchLayout();
   } else {

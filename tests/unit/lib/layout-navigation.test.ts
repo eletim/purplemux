@@ -194,4 +194,41 @@ describe('navigateToTab', () => {
       pendingFocusTabId: null,
     });
   });
+
+  it('claims an in-flight layout fetch and prevents its creation recovery', async () => {
+    useWorkspaceStore.setState({ activeWorkspaceId: 'ws-target' });
+    useLayoutStore.setState({
+      layout: null,
+      workspaceId: 'ws-target',
+      isLoading: false,
+      error: null,
+      retryCount: 2,
+      pendingFocusTabId: null,
+    });
+    let resolveFetch = (_response: { ok: boolean; json: () => Promise<object> }): void => {
+      throw new Error('Layout fetch did not start');
+    };
+    const fetchMock = vi.fn((_input: string | URL | Request, _init?: RequestInit) => (
+      new Promise<{ ok: boolean; json: () => Promise<object> }>((resolve) => {
+        resolveFetch = resolve;
+      })
+    ));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const layoutFetch = useLayoutStore.getState().fetchLayout('ws-target');
+    expect(useLayoutStore.getState().isLoading).toBe(true);
+    const navigation = navigateToTab('ws-target', 'target-tab');
+
+    resolveFetch({ ok: false, json: async () => ({}) });
+    await layoutFetch;
+
+    await expect(navigation).resolves.toBe('failed');
+    expect(fetchMock).toHaveBeenCalledOnce();
+    expect(fetchMock.mock.calls.some(([, init]) => init?.method === 'POST')).toBe(false);
+    expect(useLayoutStore.getState()).toMatchObject({
+      layout: null,
+      retryCount: 3,
+      pendingFocusTabId: null,
+    });
+  });
 });
