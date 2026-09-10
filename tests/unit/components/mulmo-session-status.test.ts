@@ -20,9 +20,14 @@ describe('Mulmo session status surfaces', () => {
     ['busy', 'animate-spin', 'statusBusy'],
     ['needs-input', 'lucide-triangle-alert', 'statusNeedsInput'],
     ['ready-for-review', 'lucide-circle-check', 'statusNeedsReview'],
+    ['completed', 'lucide-circle-check', 'installDone'],
   ] as const)('renders an accessible shape for %s', (status, iconClass, label) => {
-    const tabs = { tab: { cliState: status } as ITabState };
-    const displayStatus = selectTabDisplayStatus(tabs, 'tab');
+    const tabs = {
+      tab: status === 'completed'
+        ? { cliState: 'idle', dismissedAt: Date.now() } as ITabState
+        : { cliState: status } as ITabState,
+    };
+    const displayStatus = selectTabDisplayStatus(tabs, 'tab', status === 'completed');
     const html = renderGlyph(displayStatus);
 
     expect(displayStatus).toBe(status);
@@ -50,6 +55,7 @@ describe('Mulmo session status surfaces', () => {
     expect(css).toMatch(/data-agent-status="busy"[^}]+var\(--ui-blue\)/);
     expect(css).toMatch(/data-agent-status="needs-input"[^}]+var\(--ui-amber\)/);
     expect(css).toMatch(/data-agent-status="ready-for-review"[^}]+var\(--ui-green\)/);
+    expect(css).toMatch(/data-agent-status="completed"[^}]+var\(--ui-green\)/);
     expect(css).toMatch(/data-ui-pane-status="ready-for-review"[^}]+var\(--ui-green\)/);
     expect(css).toMatch(/data-ui-mode="mulmo"[^}]+agent-status-glyph-default[^}]+display: none/);
     expect(css).toMatch(/data-ui-mode="mulmo"[^}]+agent-status-glyph-mulmo[^}]+display: inline-flex/);

@@ -1,6 +1,8 @@
 import { useRef, useEffect, useMemo } from 'react';
 import { Globe, GitCompareArrows, History } from 'lucide-react';
+import { useTranslations } from 'next-intl';
 import useTabStore, { selectTabDisplayStatus } from '@/hooks/use-tab-store';
+import useUiMode from '@/hooks/use-ui-mode';
 import { cn } from '@/lib/utils';
 import ProcessIcon from '@/components/icons/process-icon';
 import AgentStatusGlyph from '@/components/features/workspace/agent-status-glyph';
@@ -17,8 +19,10 @@ interface IMobileWorkspaceTabBarProps {
 
 interface ITabDot {
   workspaceId: string;
+  workspaceName: string;
   paneId: string;
   tabId: string;
+  tabName: string;
   panelType?: TPanelType;
 }
 
@@ -30,8 +34,10 @@ const MobileWorkspaceTabBar = ({
   selectedTabId,
   onSelect,
 }: IMobileWorkspaceTabBarProps) => {
+  const t = useTranslations('terminal');
   const activeRef = useRef<HTMLButtonElement>(null);
   const statusTabs = useTabStore((s) => s.tabs);
+  const showDismissedCompletion = useUiMode((state) => state.mode === 'mulmo');
   const items = useMemo(() => {
     const result: (ITabDot | 'divider')[] = [];
 
@@ -42,7 +48,14 @@ const MobileWorkspaceTabBar = ({
       for (const pane of panes) {
         const sorted = [...pane.tabs].sort((a, b) => a.order - b.order);
         for (const tab of sorted) {
-          wsTabs.push({ workspaceId: ws.id, paneId: pane.id, tabId: tab.id, panelType: tab.panelType });
+          wsTabs.push({
+            workspaceId: ws.id,
+            workspaceName: ws.name,
+            paneId: pane.id,
+            tabId: tab.id,
+            tabName: tab.name || tab.title || tab.sessionName,
+            panelType: tab.panelType,
+          });
         }
       }
 
@@ -83,9 +96,21 @@ const MobileWorkspaceTabBar = ({
             item.paneId === selectedPaneId &&
             item.tabId === selectedTabId;
           const isAgent = item.panelType === 'claude-code' || item.panelType === 'codex-cli';
-          const status = selectTabDisplayStatus(statusTabs, item.tabId);
+          const status = selectTabDisplayStatus(statusTabs, item.tabId, showDismissedCompletion);
           const termStatus = statusTabs[item.tabId]?.terminalStatus;
           const currentProcess = statusTabs[item.tabId]?.currentProcess;
+          const statusLabel = status === 'busy'
+            ? t('statusBusy')
+            : status === 'needs-input'
+              ? t('statusNeedsInput')
+              : status === 'ready-for-review'
+                ? t('statusNeedsReview')
+                : status === 'completed'
+                  ? t('installDone')
+                  : status === 'unknown'
+                    ? '?'
+                    : termStatus ?? 'idle';
+          const tabName = item.tabName || statusTabs[item.tabId]?.tabName || item.tabId;
           const iconColorClass = termStatus === 'server'
             ? 'text-ui-green'
             : termStatus === 'running'
@@ -99,6 +124,7 @@ const MobileWorkspaceTabBar = ({
               className="flex h-8 w-8 shrink-0 items-center justify-center"
               onClick={() => onSelect(item.workspaceId, item.paneId, item.tabId)}
               aria-current={isActive ? 'true' : undefined}
+              aria-label={`${item.workspaceName}, ${tabName}, ${statusLabel}`}
               data-ui-selection="pill"
             >
               <span

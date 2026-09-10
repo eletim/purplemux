@@ -22,9 +22,11 @@ const AgentStatusGlyph = ({ status, className, compact = false, showIdle = false
       ? t('statusNeedsInput')
       : status === 'ready-for-review'
         ? t('statusNeedsReview')
-        : status === 'unknown'
-          ? '?'
-          : 'idle';
+        : status === 'completed'
+          ? t('installDone')
+          : status === 'unknown'
+            ? '?'
+            : 'idle';
 
   return (
     <span
@@ -50,7 +52,7 @@ const AgentStatusGlyph = ({ status, className, compact = false, showIdle = false
           <Spinner className={compact ? 'h-2 w-2' : 'h-2.5 w-2.5'} />
         ) : status === 'needs-input' ? (
           <TriangleAlert className={cn(compact ? 'h-2.5 w-2.5' : 'h-3 w-3', 'motion-safe:animate-pulse')} />
-        ) : status === 'ready-for-review' ? (
+        ) : status === 'ready-for-review' || status === 'completed' ? (
           <CheckCircle2 className={cn(compact ? 'h-2.5 w-2.5' : 'h-3 w-3', 'motion-safe:animate-pulse')} />
         ) : status === 'unknown' ? (
           <span className="h-2 w-2 rounded-full bg-current opacity-50" />

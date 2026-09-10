@@ -7,7 +7,6 @@ import {
   UI_MODE_STORAGE_KEY,
   applyUiMode,
   resolveUiMode,
-  shouldDismissViewedStatus,
 } from '@/lib/ui-mode';
 
 describe('UI mode', () => {
@@ -83,11 +82,5 @@ describe('UI mode', () => {
     );
 
     expect(setAttribute).toHaveBeenCalledWith(UI_MODE_ATTRIBUTE, DEFAULT_UI_MODE);
-  });
-
-  it('preserves viewed completion attention in Mulmo mode', () => {
-    expect(shouldDismissViewedStatus('mulmo', true)).toBe(false);
-    expect(shouldDismissViewedStatus('default', true)).toBe(true);
-    expect(shouldDismissViewedStatus('default', false)).toBe(false);
   });
 });

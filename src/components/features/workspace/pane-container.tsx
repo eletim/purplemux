@@ -44,7 +44,6 @@ import { isAppShortcut, isClearShortcut, isFocusInputShortcut, isShiftEnter } fr
 import useTerminalTheme from '@/hooks/use-terminal-theme';
 import useTabStore, { getInitialTabStateFromLayoutTab, isCliIdle, selectSessionView, selectTabDisplayStatus } from '@/hooks/use-tab-store';
 import useUiMode from '@/hooks/use-ui-mode';
-import { shouldDismissViewedStatus } from '@/lib/ui-mode';
 import { dismissTab as dismissStatusTab } from '@/hooks/use-agent-status';
 import type { IAgentSessionEntry } from '@/hooks/use-agent-sessions';
 import {
@@ -136,10 +135,8 @@ const PaneContainer = memo(({ paneId, paneNumber }: IPaneContainerProps) => {
   const isWebBrowser = activePanelType === 'web-browser';
   const isDiff = activePanelType === 'diff';
   const uiMode = useUiMode((s) => s.mode);
-  const uiModeHydrated = useUiMode((s) => s.hydrated);
-  const dismissViewedStatus = shouldDismissViewedStatus(uiMode, uiModeHydrated);
   const activeTabStatus = useTabStore((s) => (
-    activeTabId ? selectTabDisplayStatus(s.tabs, activeTabId) : 'idle'
+    activeTabId ? selectTabDisplayStatus(s.tabs, activeTabId, uiMode === 'mulmo') : 'idle'
   ));
   const { ensureAgentInstalled, installDialogs } = useAgentInstallCheck();
 
@@ -354,17 +351,17 @@ const PaneContainer = memo(({ paneId, paneNumber }: IPaneContainerProps) => {
   });
 
   useEffect(() => {
-    if (!dismissViewedStatus || !activeTabId || !isAgentPanel) return;
+    if (!activeTabId || !isAgentPanel) return;
     if (isFocused && isCliIdle(claudeCliState)) {
       dismissStatusTab(activeTabId);
     }
-  }, [activeTabId, claudeCliState, dismissViewedStatus, isAgentPanel, isFocused]);
+  }, [activeTabId, claudeCliState, isAgentPanel, isFocused]);
 
   useEffect(() => {
-    if (dismissViewedStatus && activeTabId && isFocused) {
+    if (activeTabId && isFocused) {
       dismissStatusTab(activeTabId);
     }
-  }, [activeTabId, dismissViewedStatus, isFocused]);
+  }, [activeTabId, isFocused]);
 
   const handleScrollToBottom = useCallback(() => {
     if (claudeCliState !== 'idle') return;
@@ -677,10 +674,10 @@ const PaneContainer = memo(({ paneId, paneNumber }: IPaneContainerProps) => {
   const handleSwitchTab = useCallback(
     (tabId: string) => {
       if (tabId === activeTabId) return;
-      if (dismissViewedStatus) dismissStatusTab(tabId);
+      dismissStatusTab(tabId);
       switchTabInPane(paneId, tabId);
     },
-    [paneId, activeTabId, dismissViewedStatus, switchTabInPane],
+    [paneId, activeTabId, switchTabInPane],
   );
 
   const handleCreateTab = useCallback(async (panelType?: TPanelType, options?: { resumeSessionId?: string }) => {

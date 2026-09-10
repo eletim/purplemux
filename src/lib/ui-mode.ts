@@ -18,6 +18,3 @@ export const applyUiMode = (
 ) => {
   root.setAttribute(UI_MODE_ATTRIBUTE, mode);
 };
-
-export const shouldDismissViewedStatus = (mode: TUiMode, hydrated: boolean): boolean =>
-  hydrated && mode !== 'mulmo';

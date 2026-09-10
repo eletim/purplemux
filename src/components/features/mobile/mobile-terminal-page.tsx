@@ -21,8 +21,6 @@ import type { TGitAskProvider } from '@/hooks/use-config-store';
 import useMobileLayoutActions from '@/hooks/use-mobile-layout-actions';
 import { useAutoDeleteEmptyWorkspace } from '@/hooks/use-auto-delete-empty-workspace';
 import { useAgentInstallCheck } from '@/hooks/use-agent-install-check';
-import useUiMode from '@/hooks/use-ui-mode';
-import { shouldDismissViewedStatus } from '@/lib/ui-mode';
 
 const MobileTerminalPage = () => {
   const t = useTranslations('terminal');
@@ -95,9 +93,6 @@ const MobileTerminalPage = () => {
   const selectedTabId = currentPane?.activeTabId ?? null;
   const currentTab = currentPane?.tabs.find((t) => t.id === selectedTabId) ?? null;
   const currentPanelType: TPanelType = currentTab?.panelType ?? 'terminal';
-  const uiMode = useUiMode((s) => s.mode);
-  const uiModeHydrated = useUiMode((s) => s.hydrated);
-  const dismissViewedStatus = shouldDismissViewedStatus(uiMode, uiModeHydrated);
 
   const handleSelectWorkspace = useCallback(
     (workspaceId: string) => {
@@ -129,15 +124,15 @@ const MobileTerminalPage = () => {
   }, []);
 
   useEffect(() => {
-    if (dismissViewedStatus && selectedTabId) dismissTab(selectedTabId);
-  }, [dismissViewedStatus, selectedTabId]);
+    if (selectedTabId) dismissTab(selectedTabId);
+  }, [selectedTabId]);
 
   useEffect(() => {
-    if (!dismissViewedStatus || !selectedTabId || currentPanelType !== 'claude-code' || claudeCliState === 'inactive') return;
+    if (!selectedTabId || currentPanelType !== 'claude-code' || claudeCliState === 'inactive') return;
     if (claudeCliState === 'idle') {
       dismissTab(selectedTabId);
     }
-  }, [selectedTabId, claudeCliState, currentPanelType, dismissViewedStatus]);
+  }, [selectedTabId, claudeCliState, currentPanelType]);
 
   const currentTabNeedsAttention = useTabStore((s) => {
     if (!selectedTabId) return false;
@@ -146,10 +141,10 @@ const MobileTerminalPage = () => {
   });
 
   useEffect(() => {
-    if (dismissViewedStatus && currentTabNeedsAttention && selectedTabId) {
+    if (currentTabNeedsAttention && selectedTabId) {
       dismissTab(selectedTabId);
     }
-  }, [currentTabNeedsAttention, dismissViewedStatus, selectedTabId]);
+  }, [currentTabNeedsAttention, selectedTabId]);
 
   const tabMetadata = useTabMetadataStore((s) =>
     selectedTabId ? s.metadata[selectedTabId] : undefined,

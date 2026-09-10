@@ -418,7 +418,7 @@ const NotificationItem = ({
             {renderAction()}
           </p>
         )}
-        {showActions && !isActiveTab && (
+        {showActions && (
           <div className="mt-2 flex items-center gap-1.5">
             <Button
               variant="outline"
@@ -603,19 +603,17 @@ export const NotificationPanel = ({ onNavigated, className }: { onNavigated?: ()
                           icon={<span className="mt-px block h-2 w-2 rounded-full bg-claude-active" />}
                           onClick={isActive ? undefined : () => handleNavigate(item.workspaceId, item.tabId)}
                         />
-                        {!isActive && (
-                          <div className="mt-1 flex items-center pl-9">
-                            <Button
-                              variant="outline"
-                              size="sm"
-                              className="h-6 px-2 text-xs"
-                              onClick={() => handleDismiss(item.tabId)}
-                            >
-                              <Check className="mr-1 h-3 w-3" />
-                              {t('dismiss')}
-                            </Button>
-                          </div>
-                        )}
+                        <div className="mt-1 flex items-center pl-9">
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            className="h-6 px-2 text-xs"
+                            onClick={() => handleDismiss(item.tabId)}
+                          >
+                            <Check className="mr-1 h-3 w-3" />
+                            {t('dismiss')}
+                          </Button>
+                        </div>
                       </motion.div>
                     );
                   })}

@@ -51,7 +51,7 @@ export interface ITabStatusEntry {
   lastResumeOrStartedAt?: number;
 }
 
-export type TTabDisplayStatus = 'busy' | 'ready-for-review' | 'needs-input' | 'idle' | 'unknown';
+export type TTabDisplayStatus = 'busy' | 'ready-for-review' | 'needs-input' | 'completed' | 'idle' | 'unknown';
 
 export type IClientTabStatusEntry = Omit<ITabStatusEntry, 'tmuxSession' | 'jsonlPath' | 'processRetries'>;
 

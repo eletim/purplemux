@@ -282,7 +282,8 @@
   color: var(--ui-amber);
 }
 
-:root[data-ui-mode="mulmo"] .agent-status-glyph[data-agent-status="ready-for-review"] {
+:root[data-ui-mode="mulmo"] .agent-status-glyph[data-agent-status="ready-for-review"],
+:root[data-ui-mode="mulmo"] .agent-status-glyph[data-agent-status="completed"] {
   color: var(--ui-green);
 }
 
@@ -299,7 +300,8 @@
   box-shadow: inset 0 2px 0 var(--ui-amber);
 }
 
-:root[data-ui-mode="mulmo"] [data-ui-pane-status="ready-for-review"] {
+:root[data-ui-mode="mulmo"] [data-ui-pane-status="ready-for-review"],
+:root[data-ui-mode="mulmo"] [data-ui-pane-status="completed"] {
   box-shadow: inset 0 2px 0 var(--ui-green);
 }
 

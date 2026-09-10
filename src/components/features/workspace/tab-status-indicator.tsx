@@ -1,5 +1,6 @@
 import { memo } from 'react';
 import useTabStore, { selectTabDisplayStatus } from '@/hooks/use-tab-store';
+import useUiMode from '@/hooks/use-ui-mode';
 import type { TPanelType } from '@/types/terminal';
 import AgentStatusGlyph from '@/components/features/workspace/agent-status-glyph';
 
@@ -9,8 +10,9 @@ interface ITabStatusIndicatorProps {
 }
 
 const TabStatusIndicator = ({ tabId, panelType }: ITabStatusIndicatorProps) => {
+  const showDismissedCompletion = useUiMode((state) => state.mode === 'mulmo');
   const status = useTabStore(
-    (state) => selectTabDisplayStatus(state.tabs, tabId),
+    (state) => selectTabDisplayStatus(state.tabs, tabId, showDismissedCompletion),
   );
 
   const isAgent = panelType === 'claude-code' || panelType === 'codex-cli';
