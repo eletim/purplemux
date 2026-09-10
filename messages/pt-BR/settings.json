@@ -35,6 +35,10 @@
     "openShortcuts": "Abrir"
   },
   "appearance": {
+    "uiMode": "Modo da interface",
+    "uiModeDescription": "Escolha o estilo visual do aplicativo.",
+    "uiModeDefault": "Padrão",
+    "uiModeMulmo": "Mulmo",
     "customCSS": "CSS Personalizado",
     "customCSSDescription": "Substitua variaveis CSS para personalizar cores e estilos.",
     "apply": "Aplicar",

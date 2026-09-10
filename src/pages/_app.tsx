@@ -30,8 +30,10 @@ import useWebPush from "@/hooks/use-web-push";
 import useIsMobile from "@/hooks/use-is-mobile";
 import useWorkspaceStore from "@/hooks/use-workspace-store";
 import useConfigStore from "@/hooks/use-config-store";
+import useUiMode from "@/hooks/use-ui-mode";
 import { setMessages } from "@/lib/i18n";
 import { MESSAGE_NAMESPACES } from "@/lib/message-namespaces";
+import { applyUiMode } from "@/lib/ui-mode";
 
 export type TNextPageWithLayout<P = object, IP = P> = NextPage<P, IP> & {
   getLayout?: (page: ReactElement) => ReactNode;
@@ -88,6 +90,22 @@ const CustomCSSSync = () => {
     }
     el.textContent = customCSS;
   }, [customCSS]);
+
+  return null;
+};
+
+const UiModeSync = () => {
+  const mode = useUiMode((s) => s.mode);
+  const hydrated = useUiMode((s) => s.hydrated);
+  const hydrate = useUiMode((s) => s.hydrate);
+
+  useEffect(() => {
+    hydrate();
+  }, [hydrate]);
+
+  useEffect(() => {
+    if (hydrated) applyUiMode(document.documentElement, mode);
+  }, [hydrated, mode]);
 
   return null;
 };
@@ -218,6 +236,7 @@ export default function App({ Component, pageProps }: TAppPropsWithLayout) {
         <main className="font-sans antialiased">
           <ElectronTitlebar isElectron={!!pageProps.isElectron} />
           {getLayout(<Component {...pageProps} />)}
+          <UiModeSync />
           <TerminalThemeSync />
           <FontSizeSync />
           <CustomCSSSync />

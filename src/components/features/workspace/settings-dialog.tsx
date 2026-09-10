@@ -35,6 +35,7 @@ import {
 import { cn } from '@/lib/utils';
 import useTerminalTheme from '@/hooks/use-terminal-theme';
 import useConfigStore from '@/hooks/use-config-store';
+import useUiMode from '@/hooks/use-ui-mode';
 import type { TGitAskProvider, TNoteSummaryProvider } from '@/hooks/use-config-store';
 import {
   LINE_HEIGHT_CUSTOM_MAX,
@@ -316,6 +317,8 @@ const CSS_VARIABLE_GROUPS = [
 const AppearanceTab = () => {
   const t = useTranslations('settings.appearance');
   const tc = useTranslations('common');
+  const uiMode = useUiMode((s) => s.mode);
+  const setUiMode = useUiMode((s) => s.setMode);
   const customCSS = useConfigStore((s) => s.customCSS);
   const setCustomCSS = useConfigStore((s) => s.setCustomCSS);
   const [localCSS, setLocalCSS] = useState(customCSS);
@@ -338,7 +341,24 @@ const AppearanceTab = () => {
   };
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-6">
+      <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+        <div>
+          <p className="text-sm font-medium">{t('uiMode')}</p>
+          <p className="text-sm text-muted-foreground">{t('uiModeDescription')}</p>
+        </div>
+        <ButtonGroup>
+          <Button variant={uiMode === 'default' ? 'default' : 'outline'} size="sm" onClick={() => setUiMode('default')}>
+            {t('uiModeDefault')}
+          </Button>
+          <Button variant={uiMode === 'mulmo' ? 'default' : 'outline'} size="sm" onClick={() => setUiMode('mulmo')}>
+            {t('uiModeMulmo')}
+          </Button>
+        </ButtonGroup>
+      </div>
+
+      <div className="border-t" />
+
       <div>
         <p className="text-sm font-medium">{t('customCSS')}</p>
         <p className="text-sm text-muted-foreground">{t('customCSSDescription')}</p>
