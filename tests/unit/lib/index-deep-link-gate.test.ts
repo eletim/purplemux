@@ -3,12 +3,31 @@ import { WorkspaceTerminal } from '@/pages/index';
 
 describe('WorkspaceTerminal', () => {
   it('withholds the active workspace component until initial deep-link navigation resolves', () => {
-    expect(WorkspaceTerminal({ isMobile: false, isDeepLinkResolving: true })).toBeNull();
-    expect(WorkspaceTerminal({ isMobile: true, isDeepLinkResolving: true })).toBeNull();
+    expect(WorkspaceTerminal({
+      isMobile: false,
+      isDeepLinkResolving: true,
+      resolvedLayoutWorkspaceId: null,
+    })).toBeNull();
+    expect(WorkspaceTerminal({
+      isMobile: true,
+      isDeepLinkResolving: true,
+      resolvedLayoutWorkspaceId: null,
+    })).toBeNull();
   });
 
-  it('renders the selected terminal component after deep-link navigation resolves', () => {
-    expect(WorkspaceTerminal({ isMobile: false, isDeepLinkResolving: false })).not.toBeNull();
-    expect(WorkspaceTerminal({ isMobile: true, isDeepLinkResolving: false })).not.toBeNull();
+  it('passes the completed read-only workspace through the terminal mount', () => {
+    const desktop = WorkspaceTerminal({
+      isMobile: false,
+      isDeepLinkResolving: false,
+      resolvedLayoutWorkspaceId: 'ws-target',
+    });
+    const mobile = WorkspaceTerminal({
+      isMobile: true,
+      isDeepLinkResolving: false,
+      resolvedLayoutWorkspaceId: 'ws-target',
+    });
+
+    expect(desktop?.props).toMatchObject({ initialLayoutWorkspaceId: 'ws-target' });
+    expect(mobile?.props).toMatchObject({ initialLayoutWorkspaceId: 'ws-target' });
   });
 });

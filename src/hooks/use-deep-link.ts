@@ -18,6 +18,12 @@ interface IDeepLinkActions {
 
 interface IDeepLinkState {
   isResolving: boolean;
+  resolvedLayoutWorkspaceId: string | null;
+}
+
+interface IHandledDeepLink {
+  key: string;
+  resolvedLayoutWorkspaceId: string | null;
 }
 
 export const parseDeepLinkTarget = (
@@ -48,7 +54,7 @@ const useDeepLink = () => {
   const router = useRouter();
   const t = useTranslations('terminal');
   const handledKeyRef = useRef<string | null>(null);
-  const [handledKey, setHandledKey] = useState<string | null>(null);
+  const [handledDeepLink, setHandledDeepLink] = useState<IHandledDeepLink | null>(null);
   const notifyWorkspaceNotFound = useEffectEvent((target: IDeepLinkTarget, key: string) => {
     toast.error(t('deepLinkWorkspaceNotFound', { workspaceId: target.workspaceId }), {
       id: `deep-link-workspace-${key}`,
@@ -68,13 +74,20 @@ const useDeepLink = () => {
 
   useEffect(() => {
     if (!router.isReady) return;
-    if (!target || !key) return;
+    if (!target || !key) {
+      handledKeyRef.current = null;
+      let active = true;
+      Promise.resolve().then(() => {
+        if (active) setHandledDeepLink(null);
+      });
+      return () => { active = false; };
+    }
     if (handledKeyRef.current === key) return;
 
     const controller = new AbortController();
     let active = true;
 
-    const run = async () => {
+    const run = async (): Promise<string | null> => {
       if (useWorkspaceStore.getState().isLoading) {
         await new Promise<void>((resolve) => {
           let settled = false;
@@ -93,11 +106,11 @@ const useDeepLink = () => {
           if (!useWorkspaceStore.getState().isLoading) finish();
         });
       }
-      if (controller.signal.aborted) return;
+      if (controller.signal.aborted) return null;
 
       const workspaceExists = useWorkspaceStore.getState().workspaces
         .some((workspace) => workspace.id === target.workspaceId);
-      await followDeepLink(
+      const result = await followDeepLink(
         target,
         workspaceExists,
         {
@@ -113,14 +126,13 @@ const useDeepLink = () => {
           },
         },
       );
+      return result === 'workspace-not-found' ? null : target.workspaceId;
     };
 
-    run().catch(() => {
-      // Layout errors are surfaced by the existing layout state.
-    }).finally(() => {
+    run().catch(() => target.workspaceId).then((resolvedLayoutWorkspaceId) => {
       if (active) {
         handledKeyRef.current = key;
-        setHandledKey(key);
+        setHandledDeepLink({ key, resolvedLayoutWorkspaceId });
       }
     });
 
@@ -132,7 +144,10 @@ const useDeepLink = () => {
 
   return {
     isResolving: !router.isReady
-      || (!!key && handledKey !== key),
+      || (!!key && handledDeepLink?.key !== key),
+    resolvedLayoutWorkspaceId: handledDeepLink?.key === key
+      ? handledDeepLink.resolvedLayoutWorkspaceId
+      : null,
   } satisfies IDeepLinkState;
 };
 

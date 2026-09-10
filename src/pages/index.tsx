@@ -41,18 +41,25 @@ interface IIndexProps {
 export const WorkspaceTerminal = ({
   isMobile,
   isDeepLinkResolving,
+  resolvedLayoutWorkspaceId,
 }: {
   isMobile: boolean;
   isDeepLinkResolving: boolean;
+  resolvedLayoutWorkspaceId: string | null;
 }) => {
   if (isDeepLinkResolving) return null;
-  return isMobile ? <MobileTerminalPage /> : <TerminalPage />;
+  return isMobile
+    ? <MobileTerminalPage initialLayoutWorkspaceId={resolvedLayoutWorkspaceId} />
+    : <TerminalPage initialLayoutWorkspaceId={resolvedLayoutWorkspaceId} />;
 };
 
 const Index = ({ initialConfig, initialQuickPrompts, initialSidebarItems }: IIndexProps) => {
   const isMobile = useIsMobile();
   const { setTheme } = useTheme();
-  const { isResolving: isDeepLinkResolving } = useDeepLink();
+  const {
+    isResolving: isDeepLinkResolving,
+    resolvedLayoutWorkspaceId,
+  } = useDeepLink();
   useBrowserTitle('purplemux');
   const themeInitRef = useRef(false);
   useEffect(() => {
@@ -75,6 +82,7 @@ const Index = ({ initialConfig, initialQuickPrompts, initialSidebarItems }: IInd
       <WorkspaceTerminal
         isMobile={isMobile}
         isDeepLinkResolving={isDeepLinkResolving}
+        resolvedLayoutWorkspaceId={resolvedLayoutWorkspaceId}
       />
     </SWRConfig>
   );

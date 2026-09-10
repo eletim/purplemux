@@ -1,4 +1,4 @@
-import { useEffect } from 'react';
+import { useEffect, useRef } from 'react';
 import Router from 'next/router';
 import { create } from 'zustand';
 import { useShallow } from 'zustand/react/shallow';
@@ -1036,12 +1036,14 @@ export const navigateToTabOrCreate = async (
 const useLayout = ({
   workspaceId,
   onFetchError,
-  readOnly = false,
+  initialLayoutWorkspaceId = null,
 }: {
   workspaceId: string | null;
   onFetchError?: () => void;
-  readOnly?: boolean;
+  initialLayoutWorkspaceId?: string | null;
 }) => {
+  const initialLayoutWorkspaceIdRef = useRef(initialLayoutWorkspaceId);
+
   useEffect(() => {
     setOnFetchError(onFetchError ?? null);
   }, [onFetchError]);
@@ -1050,9 +1052,11 @@ const useLayout = ({
     if (workspaceId) {
       const store = useLayoutStore.getState();
       store.setWorkspaceId(workspaceId);
-      store.fetchLayout(workspaceId, undefined, { readOnly });
+      if (initialLayoutWorkspaceIdRef.current === workspaceId) return;
+      initialLayoutWorkspaceIdRef.current = null;
+      store.fetchLayout(workspaceId);
     }
-  }, [readOnly, workspaceId]);
+  }, [workspaceId]);
 
   useEffect(() => {
     return useLayoutStore.subscribe((state) => {

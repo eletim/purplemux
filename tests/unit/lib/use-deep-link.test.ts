@@ -124,19 +124,55 @@ describe('useDeepLink', () => {
   });
 
   it('consumes a URL target once and does not reactivate it after unrelated rerenders', async () => {
-    expect(useTestDeepLink()).toEqual({ isResolving: true });
+    expect(useTestDeepLink()).toEqual({
+      isResolving: true,
+      resolvedLayoutWorkspaceId: null,
+    });
     expect(navigateToTab).toHaveBeenCalledOnce();
     expect(navigateToTab).toHaveBeenCalledWith('ws-target', 'target-tab', expect.objectContaining({
       readOnly: true,
     }));
 
     await new Promise<void>((resolve) => setImmediate(resolve));
-    expect(useTestDeepLink()).toEqual({ isResolving: false });
+    expect(useTestDeepLink()).toEqual({
+      isResolving: false,
+      resolvedLayoutWorkspaceId: 'ws-target',
+    });
 
     workspaceState.activeWorkspaceId = 'ws-current';
     workspaceState.workspaces = [{ id: 'ws-target' }, { id: 'ws-new' }];
     translation.current = vi.fn((key: string) => `updated-${key}`);
-    expect(useTestDeepLink()).toEqual({ isResolving: false });
+    expect(useTestDeepLink()).toEqual({
+      isResolving: false,
+      resolvedLayoutWorkspaceId: 'ws-target',
+    });
     expect(navigateToTab).toHaveBeenCalledOnce();
+  });
+
+  it('handles the same canonical link again after the URL parameters are removed', async () => {
+    useTestDeepLink();
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(useTestDeepLink().isResolving).toBe(false);
+
+    router.query = {};
+    expect(useTestDeepLink()).toEqual({
+      isResolving: false,
+      resolvedLayoutWorkspaceId: null,
+    });
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    useTestDeepLink();
+
+    router.query = { workspace: 'ws-target', tab: 'target-tab' };
+    expect(useTestDeepLink()).toEqual({
+      isResolving: true,
+      resolvedLayoutWorkspaceId: null,
+    });
+    expect(navigateToTab).toHaveBeenCalledTimes(2);
+
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(useTestDeepLink()).toEqual({
+      isResolving: false,
+      resolvedLayoutWorkspaceId: 'ws-target',
+    });
   });
 });
