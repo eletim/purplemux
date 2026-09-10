@@ -12,6 +12,24 @@ const declarationsFor = (selector: string) => {
   return match?.[1] ?? '';
 };
 
+const splitSelectorList = (selectorList: string): string[] => {
+  const selectors: string[] = [];
+  let parentheses = 0;
+  let start = 0;
+
+  for (let index = 0; index < selectorList.length; index++) {
+    if (selectorList[index] === '(') parentheses++;
+    if (selectorList[index] === ')') parentheses--;
+    if (selectorList[index] === ',' && parentheses === 0) {
+      selectors.push(selectorList.slice(start, index).trim());
+      start = index + 1;
+    }
+  }
+
+  selectors.push(selectorList.slice(start).trim());
+  return selectors;
+};
+
 describe('UI mode theme boundaries', () => {
   it('keeps the Default light and dark palettes independent of UI mode', () => {
     expect(declarationsFor(':root')).toContain('--background: oklch(0.995 0.003 287)');
@@ -34,12 +52,14 @@ describe('UI mode theme boundaries', () => {
     const mulmoSection = css.slice(
       css.indexOf('/* Mulmo mode mirrors'),
       css.indexOf('@theme inline'),
-    );
-    const selectors = [...mulmoSection.matchAll(/(?:^|\n)([^\n{}]+) \{/g)]
-      .map((match) => match[1].trim())
-      .filter((selector) => selector.startsWith(':root'));
+    ).replace(/\/\*[\s\S]*?\*\//g, '');
+    const selectors = [...mulmoSection.matchAll(/([^{}]+)\{[^{}]*\}/g)]
+      .flatMap((match) => splitSelectorList(match[1]));
+    const unscopedSelectors = selectors.filter((selector) => (
+      !/^:root(?:\.dark)?\[data-ui-mode="mulmo"\](?=$|[\s:.#\[])/.test(selector)
+    ));
 
     expect(selectors.length).toBeGreaterThan(10);
-    expect(selectors.every((selector) => selector.includes('[data-ui-mode="mulmo"]'))).toBe(true);
+    expect(unscopedSelectors).toEqual([]);
   });
 });
