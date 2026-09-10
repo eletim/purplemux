@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef } from 'react';
+import { useEffect, useMemo } from 'react';
 import { useRouter } from 'next/router';
 import { useTranslations } from 'next-intl';
 import { toast } from 'sonner';
@@ -45,49 +45,57 @@ const useDeepLink = () => {
   const t = useTranslations('terminal');
   const workspaces = useWorkspaceStore((state) => state.workspaces);
   const workspacesLoading = useWorkspaceStore((state) => state.isLoading);
-  const handledKeyRef = useRef<string | null>(null);
-  const activeKeyRef = useRef<string | null>(null);
 
   const target = useMemo(
     () => parseDeepLinkTarget(router.query.workspace, router.query.tab),
     [router.query.tab, router.query.workspace],
   );
-
-  useEffect(() => {
-    activeKeyRef.current = target ? JSON.stringify([target.workspaceId, target.tabId]) : null;
-  }, [target]);
+  const workspaceExists = target
+    ? workspaces.some((workspace) => workspace.id === target.workspaceId)
+    : false;
 
   useEffect(() => {
     if (!router.isReady || !target || workspacesLoading) return;
 
     const key = JSON.stringify([target.workspaceId, target.tabId]);
-    if (handledKeyRef.current === key) return;
+    const controller = new AbortController();
+    let active = true;
 
-    handledKeyRef.current = key;
     followDeepLink(
       target,
-      workspaces.some((workspace) => workspace.id === target.workspaceId),
+      workspaceExists,
       {
-        navigate: navigateToTab,
+        navigate: (workspaceId, tabId) => navigateToTab(workspaceId, tabId, {
+          signal: controller.signal,
+        }),
         notifyWorkspaceNotFound: () => {
-          if (activeKeyRef.current === key) {
-            toast.error(t('deepLinkWorkspaceNotFound', { workspaceId: target.workspaceId }));
+          if (active) {
+            toast.error(t('deepLinkWorkspaceNotFound', { workspaceId: target.workspaceId }), {
+              id: `deep-link-workspace-${key}`,
+            });
           }
         },
         notifyTabNotFound: () => {
-          if (activeKeyRef.current === key) {
-            toast.error(t('deepLinkTabNotFound', { tabId: target.tabId }));
+          if (active) {
+            toast.error(t('deepLinkTabNotFound', { tabId: target.tabId }), {
+              id: `deep-link-tab-${key}`,
+            });
           }
         },
       },
     ).catch(() => {
       // Layout errors are surfaced by the existing layout state.
     });
+
+    return () => {
+      active = false;
+      controller.abort();
+    };
   }, [
     router.isReady,
     t,
     target,
-    workspaces,
+    workspaceExists,
     workspacesLoading,
   ]);
 };

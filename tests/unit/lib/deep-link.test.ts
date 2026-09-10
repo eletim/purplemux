@@ -61,4 +61,14 @@ describe('followDeepLink', () => {
     expect(actions.notifyWorkspaceNotFound).not.toHaveBeenCalled();
     expect(actions.notifyTabNotFound).toHaveBeenCalledOnce();
   });
+
+  it('does not report a missing tab after navigation is cancelled', async () => {
+    const actions = makeActions();
+    actions.navigate.mockResolvedValue('cancelled');
+
+    await expect(followDeepLink(target, true, actions)).resolves.toBe('cancelled');
+
+    expect(actions.notifyWorkspaceNotFound).not.toHaveBeenCalled();
+    expect(actions.notifyTabNotFound).not.toHaveBeenCalled();
+  });
 });

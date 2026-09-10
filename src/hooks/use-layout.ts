@@ -121,6 +121,7 @@ let _onFetchError: (() => void) | null = null;
 let _ratioTimer: ReturnType<typeof setTimeout> | null = null;
 let _suppressFetch = false;
 const _terminalTimers = new Map<string, ReturnType<typeof setTimeout>>();
+let _pendingFocusOwnerId: number | null = null;
 
 const wsQuery = (base: string, wsId: string | null): string => {
   if (!wsId) return base;
@@ -265,6 +266,7 @@ const useLayoutStore = create<ILayoutState>((set, get) => ({
         if (JSON.stringify(currentContent) === JSON.stringify(fetchedContent)) {
           const pendingTabId = get().pendingFocusTabId;
           if (pendingTabId) {
+            _pendingFocusOwnerId = null;
             set({ pendingFocusTabId: null });
             get().focusTab(pendingTabId);
           }
@@ -274,6 +276,7 @@ const useLayoutStore = create<ILayoutState>((set, get) => ({
       const pendingTabId = get().pendingFocusTabId;
       let pendingPaneId: string | null = null;
       if (pendingTabId) {
+        _pendingFocusOwnerId = null;
         set({ pendingFocusTabId: null });
         for (const pane of collectPanes(data.root)) {
           if (pane.tabs.some((t) => t.id === pendingTabId)) {
@@ -744,13 +747,23 @@ export const setOnFetchError = (fn: (() => void) | null): void => {
   _onFetchError = fn;
 };
 
-export type TNavigateToTabResult = 'focused' | 'not-found' | 'failed' | 'superseded';
+export type TNavigateToTabResult = 'focused' | 'not-found' | 'failed' | 'cancelled' | 'superseded';
+
+interface INavigateToTabOptions {
+  signal?: AbortSignal;
+}
 
 let _navigationRequestId = 0;
 
-export const navigateToTab = (workspaceId: string, tabId: string): Promise<TNavigateToTabResult> => {
+export const navigateToTab = (
+  workspaceId: string,
+  tabId: string,
+  options: INavigateToTabOptions = {},
+): Promise<TNavigateToTabResult> => {
   const requestId = ++_navigationRequestId;
   const store = useLayoutStore.getState();
+
+  if (options.signal?.aborted) return Promise.resolve('cancelled');
 
   if (Router.pathname === '/' && workspaceId === store.workspaceId && store.layout && !store.isLoading) {
     return Promise.resolve(store.focusTab(tabId) ? 'focused' : 'not-found');
@@ -758,13 +771,46 @@ export const navigateToTab = (workspaceId: string, tabId: string): Promise<TNavi
 
   let failNavigation = () => {};
   const completion = new Promise<TNavigateToTabResult>((resolve) => {
-    let unsubscribe = () => {};
+    let settled = false;
+    let unsubscribeLayout = () => {};
+    let unsubscribeWorkspace = () => {};
+    let targetWorkspaceActivated = useWorkspaceStore.getState().activeWorkspaceId === workspaceId;
+
+    const cleanup = () => {
+      unsubscribeLayout();
+      unsubscribeWorkspace();
+      options.signal?.removeEventListener('abort', cancel);
+      if (_pendingFocusOwnerId === requestId) {
+        _pendingFocusOwnerId = null;
+        if (useLayoutStore.getState().pendingFocusTabId === tabId) {
+          useLayoutStore.setState({ pendingFocusTabId: null });
+        }
+      }
+    };
     const finish = (result: TNavigateToTabResult) => {
-      unsubscribe();
+      if (settled) return;
+      settled = true;
+      cleanup();
       resolve(result);
     };
+    const finishFromLayout = (state: ILayoutState) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      resolve(state.focusTab(tabId) ? 'focused' : 'not-found');
+    };
+    const cancel = () => finish('cancelled');
+
     failNavigation = () => finish('failed');
-    unsubscribe = useLayoutStore.subscribe((state) => {
+    options.signal?.addEventListener('abort', cancel, { once: true });
+    unsubscribeWorkspace = useWorkspaceStore.subscribe((state) => {
+      if (state.activeWorkspaceId === workspaceId) {
+        targetWorkspaceActivated = true;
+      } else if (targetWorkspaceActivated) {
+        cancel();
+      }
+    });
+    unsubscribeLayout = useLayoutStore.subscribe((state) => {
       if (requestId !== _navigationRequestId) {
         finish('superseded');
         return;
@@ -778,13 +824,18 @@ export const navigateToTab = (workspaceId: string, tabId: string): Promise<TNavi
       }
       if (state.pendingFocusTabId === tabId) return;
 
-      unsubscribe();
-      resolve(state.focusTab(tabId) ? 'focused' : 'not-found');
+      finishFromLayout(state);
     });
   });
 
-  if (Router.pathname !== '/') {
+  const setPendingFocus = () => {
+    _pendingFocusOwnerId = requestId;
     useLayoutStore.setState({ pendingFocusTabId: tabId, error: null });
+  };
+
+  if (Router.pathname !== '/') {
+    store.clearLayout();
+    setPendingFocus();
     useWorkspaceStore.getState().switchWorkspace(workspaceId);
     Promise.resolve(Router.push('/')).then((navigated) => {
       if (!navigated) failNavigation();
@@ -792,7 +843,7 @@ export const navigateToTab = (workspaceId: string, tabId: string): Promise<TNavi
     return completion;
   }
 
-  useLayoutStore.setState({ pendingFocusTabId: tabId, error: null });
+  setPendingFocus();
   if (workspaceId === store.workspaceId) {
     if (!store.isLoading && !store.layout) {
       store.setWorkspaceId(workspaceId);
@@ -883,6 +934,7 @@ export const navigateToTabOrCreate = async (
   }
 
   if (targetWsId === useLayoutStore.getState().workspaceId) {
+    _pendingFocusOwnerId = null;
     useLayoutStore.setState({ pendingFocusTabId: newTab.id });
     useLayoutStore.getState().fetchLayout();
   } else {

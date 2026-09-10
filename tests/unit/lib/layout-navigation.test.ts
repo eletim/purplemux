@@ -10,6 +10,7 @@ vi.mock('next/router', () => ({ default: router }));
 
 import { navigateToTab, useLayoutStore } from '@/hooks/use-layout';
 import useWorkspaceStore from '@/hooks/use-workspace-store';
+import { followDeepLink } from '@/hooks/use-deep-link';
 
 const tab = (id: string, order: number): ITab => ({
   id,
@@ -59,7 +60,7 @@ describe('navigateToTab', () => {
     vi.unstubAllGlobals();
   });
 
-  const loadTargetLayout = async (targetLayout: ILayoutData) => {
+  const stubLayoutFetch = (targetLayout: ILayoutData) => {
     vi.stubGlobal('fetch', vi.fn(async (input: string | URL | Request) => {
       const url = String(input);
       return {
@@ -67,7 +68,10 @@ describe('navigateToTab', () => {
         json: async () => url.startsWith('/api/layout') ? targetLayout : {},
       };
     }));
+  };
 
+  const loadTargetLayout = async (targetLayout: ILayoutData) => {
+    stubLayoutFetch(targetLayout);
     const navigation = navigateToTab('ws-target', 'target-tab');
     expect(useWorkspaceStore.getState().activeWorkspaceId).toBe('ws-target');
     expect(useLayoutStore.getState().pendingFocusTabId).toBe('target-tab');
@@ -93,5 +97,71 @@ describe('navigateToTab', () => {
 
     expect(useWorkspaceStore.getState().activeWorkspaceId).toBe('ws-target');
     expect(useLayoutStore.getState().workspaceId).toBe('ws-target');
+  });
+
+  it('cancels an unfinished request when the user switches away', async () => {
+    stubLayoutFetch(layout([tab('target-tab', 0)]));
+    const navigation = navigateToTab('ws-target', 'target-tab');
+
+    useWorkspaceStore.getState().switchWorkspace('ws-current');
+
+    await expect(navigation).resolves.toBe('cancelled');
+    expect(useLayoutStore.getState().pendingFocusTabId).toBeNull();
+
+    const lateLayout = layout([tab('other-tab', 0), tab('target-tab', 1)]);
+    useLayoutStore.getState().setWorkspaceId('ws-target');
+    useLayoutStore.getState().setLayout(lateLayout);
+    expect(lateLayout.root.type === 'pane' ? lateLayout.root.activeTabId : null).toBe('other-tab');
+  });
+
+  it('aborts an unfinished request without clearing another pending focus', async () => {
+    stubLayoutFetch(layout([tab('target-tab', 0)]));
+    const controller = new AbortController();
+    const navigation = navigateToTab('ws-target', 'target-tab', { signal: controller.signal });
+    useLayoutStore.setState({ pendingFocusTabId: 'other-pending-tab' });
+
+    controller.abort();
+
+    await expect(navigation).resolves.toBe('cancelled');
+    expect(useLayoutStore.getState().pendingFocusTabId).toBe('other-pending-tab');
+  });
+
+  it('suppresses the missing-tab fallback when a deep link is aborted on unmount', async () => {
+    stubLayoutFetch(layout([tab('other-tab', 0)]));
+    const controller = new AbortController();
+    const notifyTabNotFound = vi.fn();
+    const navigation = followDeepLink(
+      { workspaceId: 'ws-target', tabId: 'target-tab' },
+      true,
+      {
+        navigate: (workspaceId, tabId) => navigateToTab(workspaceId, tabId, {
+          signal: controller.signal,
+        }),
+        notifyWorkspaceNotFound: vi.fn(),
+        notifyTabNotFound,
+      },
+    );
+
+    controller.abort();
+
+    await expect(navigation).resolves.toBe('cancelled');
+    expect(notifyTabNotFound).not.toHaveBeenCalled();
+    expect(useLayoutStore.getState().pendingFocusTabId).toBeNull();
+  });
+
+  it('discards a stale layout before navigating from another route', async () => {
+    router.pathname = '/reports';
+    const targetLayout = layout([tab('other-tab', 0), tab('target-tab', 1)]);
+    stubLayoutFetch(targetLayout);
+
+    const navigation = navigateToTab('ws-target', 'target-tab');
+
+    expect(useLayoutStore.getState().layout).toBeNull();
+    expect(router.push).toHaveBeenCalledWith('/');
+    useLayoutStore.getState().setWorkspaceId('ws-target');
+    await useLayoutStore.getState().fetchLayout('ws-target');
+
+    await expect(navigation).resolves.toBe('focused');
+    expect(targetLayout.root.type === 'pane' ? targetLayout.root.activeTabId : null).toBe('target-tab');
   });
 });
