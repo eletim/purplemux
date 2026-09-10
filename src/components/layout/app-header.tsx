@@ -47,6 +47,7 @@ const AppHeader = ({ onMenuOpen, workspaceId, workspaceName }: IAppHeaderProps) 
         {onMenuOpen && (
           <button
             className="relative flex h-8 w-8 shrink-0 items-center justify-center text-foreground"
+            data-ui-icon-button=""
             onClick={onMenuOpen}
             aria-label={t('openMenu')}
           >

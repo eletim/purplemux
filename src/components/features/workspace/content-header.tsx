@@ -287,6 +287,7 @@ const ContentHeader = ({
                     ? 'bg-accent text-foreground'
                     : 'hover:bg-accent hover:text-foreground',
                 )}
+                data-ui-icon-button=""
                 onClick={onToggleGitPanel}
                 aria-pressed={isGitPanelOpen}
                 aria-label="Toggle Git panel"

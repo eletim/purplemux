@@ -229,6 +229,7 @@ const MobileTabHeader = ({
             iconButtonClassName,
             hasGitInlineStatus && 'w-auto gap-1 px-2',
           )}
+          data-ui-icon-button=""
           onClick={onOpenGit}
           aria-label="Open Git"
           title={gitTitle}

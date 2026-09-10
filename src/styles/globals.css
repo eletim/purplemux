@@ -232,13 +232,13 @@
   border-color: var(--border);
 }
 
-:root[data-ui-mode="mulmo"] [data-ui-chrome] button:has(> svg:only-child) {
+:root[data-ui-mode="mulmo"] [data-ui-chrome] :is(button:has(> svg:only-child), [data-ui-icon-button]) {
   border: 1px solid transparent;
   border-radius: var(--radius);
   color: var(--muted-foreground);
 }
 
-:root[data-ui-mode="mulmo"] [data-ui-chrome] button:has(> svg:only-child):hover {
+:root[data-ui-mode="mulmo"] [data-ui-chrome] :is(button:has(> svg:only-child), [data-ui-icon-button]):hover {
   border-color: var(--border);
   background: var(--mulmo-hover);
   color: var(--foreground);
