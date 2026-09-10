@@ -77,6 +77,7 @@ const workspaceState = vi.hoisted(() => ({
 }));
 const workspaceSubscribers = vi.hoisted(() => new Set<(state: typeof workspaceState) => void>());
 const navigateToTab = vi.hoisted(() => vi.fn(async () => 'focused' as const));
+const setProtectedLayoutWorkspaceId = vi.hoisted(() => vi.fn());
 const toastError = vi.hoisted(() => vi.fn());
 const translation = vi.hoisted(() => ({ current: vi.fn((key: string) => key) }));
 
@@ -99,7 +100,12 @@ vi.mock('@/hooks/use-workspace-store', () => ({
     },
   },
 }));
-vi.mock('@/hooks/use-layout', () => ({ navigateToTab }));
+vi.mock('@/hooks/use-layout', () => ({
+  navigateToTab,
+  useLayoutStore: {
+    getState: () => ({ setProtectedLayoutWorkspaceId }),
+  },
+}));
 
 import useDeepLink from '@/hooks/use-deep-link';
 
@@ -120,6 +126,7 @@ describe('useDeepLink', () => {
     workspaceState.workspaces = [{ id: 'ws-target' }];
     workspaceSubscribers.clear();
     navigateToTab.mockClear();
+    setProtectedLayoutWorkspaceId.mockClear();
     toastError.mockClear();
   });
 
@@ -161,6 +168,7 @@ describe('useDeepLink', () => {
     });
     await new Promise<void>((resolve) => setImmediate(resolve));
     useTestDeepLink();
+    expect(setProtectedLayoutWorkspaceId).toHaveBeenCalledWith(null);
 
     router.query = { workspace: 'ws-target', tab: 'target-tab' };
     expect(useTestDeepLink()).toEqual({

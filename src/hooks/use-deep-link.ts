@@ -3,7 +3,7 @@ import { useRouter } from 'next/router';
 import { useTranslations } from 'next-intl';
 import { toast } from 'sonner';
 import useWorkspaceStore from '@/hooks/use-workspace-store';
-import { navigateToTab, type TNavigateToTabResult } from '@/hooks/use-layout';
+import { navigateToTab, useLayoutStore, type TNavigateToTabResult } from '@/hooks/use-layout';
 
 interface IDeepLinkTarget {
   workspaceId: string;
@@ -75,6 +75,7 @@ const useDeepLink = () => {
   useEffect(() => {
     if (!router.isReady) return;
     if (!target || !key) {
+      useLayoutStore.getState().setProtectedLayoutWorkspaceId(null);
       handledKeyRef.current = null;
       let active = true;
       Promise.resolve().then(() => {
@@ -141,6 +142,10 @@ const useDeepLink = () => {
       controller.abort();
     };
   }, [key, router.isReady, target]);
+
+  useEffect(() => () => {
+    useLayoutStore.getState().setProtectedLayoutWorkspaceId(null);
+  }, []);
 
   return {
     isResolving: !router.isReady

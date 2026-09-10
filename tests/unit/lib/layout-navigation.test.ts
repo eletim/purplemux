@@ -52,6 +52,7 @@ describe('navigateToTab', () => {
       isLoading: false,
       error: null,
       pendingFocusTabId: null,
+      protectedLayoutWorkspaceId: null,
     });
   });
 
@@ -241,6 +242,25 @@ describe('navigateToTab', () => {
     expect(notifyTabNotFound).toHaveBeenCalledOnce();
     expect(useWorkspaceStore.getState().activeWorkspaceId).toBe('ws-target');
     expect(useLayoutStore.getState().layout).toBeNull();
+  });
+
+  it('clears deep-link protection when the user explicitly requests layout recovery', async () => {
+    useLayoutStore.setState({
+      workspaceId: 'ws-target',
+      layout: null,
+      isLoading: false,
+      protectedLayoutWorkspaceId: 'ws-target',
+    });
+    const recoveredLayout = layout([tab('recovered-tab', 0)]);
+    stubLayoutFetch(recoveredLayout);
+
+    await expect(useLayoutStore.getState().recoverLayout()).resolves.toBe('loaded');
+
+    const fetchMock = vi.mocked(fetch);
+    expect(fetchMock).toHaveBeenCalledOnce();
+    expect(String(fetchMock.mock.calls[0][0])).toBe('/api/layout?workspace=ws-target');
+    expect(useLayoutStore.getState().protectedLayoutWorkspaceId).toBeNull();
+    expect(useLayoutStore.getState().layout).toBe(recoveredLayout);
   });
 
   it('keeps an in-flight deep-link layout fetch read-only and prevents creation recovery', async () => {

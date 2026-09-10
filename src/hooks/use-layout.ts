@@ -89,14 +89,17 @@ interface ILayoutState {
   paneCount: number;
   canSplit: boolean;
   pendingFocusTabId: string | null;
+  protectedLayoutWorkspaceId: string | null;
 
   setWorkspaceId: (id: string | null) => void;
+  setProtectedLayoutWorkspaceId: (id: string | null) => void;
   setLayout: (data: ILayoutData) => void;
   fetchLayout: (
     wsId?: string | null,
     preserveActive?: boolean,
     options?: IFetchLayoutOptions,
   ) => Promise<TFetchLayoutResult>;
+  recoverLayout: () => Promise<TFetchLayoutResult>;
   splitPane: (paneId: string, orientation: 'horizontal' | 'vertical') => Promise<void>;
   closePane: (paneId: string) => Promise<void>;
   focusPane: (paneId: string) => void;
@@ -213,10 +216,15 @@ const useLayoutStore = create<ILayoutState>((set, get) => ({
   paneCount: 0,
   canSplit: false,
   pendingFocusTabId: null,
+  protectedLayoutWorkspaceId: null,
 
   setWorkspaceId: (id) => {
     _suppressFetch = false;
     set({ workspaceId: id });
+  },
+
+  setProtectedLayoutWorkspaceId: (id) => {
+    set({ protectedLayoutWorkspaceId: id });
   },
 
   setLayout: (data) => {
@@ -230,6 +238,7 @@ const useLayoutStore = create<ILayoutState>((set, get) => ({
     const shouldPreserve = preserveActive !== false;
     const navigationOwnedAtStart = _pendingFocusOwner?.workspaceId === targetWsId;
     const readOnly = options?.readOnly === true
+      || get().protectedLayoutWorkspaceId === targetWsId
       || (_pendingFocusOwner?.workspaceId === targetWsId && _pendingFocusOwner.readOnly);
 
     _abortController?.abort();
@@ -396,6 +405,15 @@ const useLayoutStore = create<ILayoutState>((set, get) => ({
         set({ isLoading: false });
       }
     }
+  },
+
+  recoverLayout: async () => {
+    const targetWsId = get().workspaceId;
+    if (!targetWsId) return 'cancelled';
+    if (get().protectedLayoutWorkspaceId === targetWsId) {
+      set({ protectedLayoutWorkspaceId: null });
+    }
+    return get().fetchLayout(targetWsId);
   },
 
   splitPane: async (paneId, orientation) => {
@@ -839,6 +857,12 @@ export const navigateToTab = (
 
   if (options.signal?.aborted) return Promise.resolve('cancelled');
 
+  if (options.readOnly) {
+    store.setProtectedLayoutWorkspaceId(workspaceId);
+  } else if (store.protectedLayoutWorkspaceId === workspaceId) {
+    store.setProtectedLayoutWorkspaceId(null);
+  }
+
   if (
     !options.readOnly
     && Router.pathname === '/'
@@ -1091,6 +1115,7 @@ const useLayout = ({
     updateTabPanelType: s.updateTabPanelType,
     clearLayout: s.clearLayout,
     fetchLayout: s.fetchLayout,
+    recoverLayout: s.recoverLayout,
     focusTab: s.focusTab,
     focusPrevTab: s.focusPrevTab,
     focusNextTab: s.focusNextTab,

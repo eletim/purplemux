@@ -69,7 +69,9 @@ vi.mock('zustand', () => ({
   },
 }));
 
-import useLayout, { useLayoutStore } from '@/hooks/use-layout';
+import useLayout, { navigateToTab, useLayoutStore } from '@/hooks/use-layout';
+import useSync from '@/hooks/use-sync';
+import useWorkspaceStore from '@/hooks/use-workspace-store';
 
 const existingLayout: ILayoutData = {
   root: {
@@ -93,11 +95,17 @@ const useMountedLayout = (
     isLoading: false,
     error,
     pendingFocusTabId: null,
+    protectedLayoutWorkspaceId: null,
   });
   useLayout({
     workspaceId: 'ws-target',
     initialLayoutWorkspaceId,
   });
+  hooks.flushEffects();
+};
+
+const useMountedSync = () => {
+  useSync();
   hooks.flushEffects();
 };
 
@@ -126,7 +134,8 @@ describe('deep-link terminal mount', () => {
     });
   });
 
-  it('retains the ordinary initial layout fetch without a completed deep-link result', () => {
+  it('retains the ordinary initial layout fetch without a completed deep-link result', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => ({ ok: false })));
     useMountedLayout(null, null, null);
 
     expect(fetch).toHaveBeenCalledOnce();
@@ -134,5 +143,78 @@ describe('deep-link terminal mount', () => {
       '/api/layout?workspace=ws-target',
       expect.objectContaining({ signal: expect.any(AbortSignal) }),
     );
+    await new Promise<void>((resolve) => setImmediate(resolve));
+  });
+
+  it('keeps visibility and layout-event refreshes read-only after a missing deep-link result', async () => {
+    const visibilityListeners = new Set<() => void>();
+    class SyncSocket {
+      static instances: SyncSocket[] = [];
+      onmessage: ((event: { data: string }) => void) | null = null;
+      onclose: (() => void) | null = null;
+      onerror: (() => void) | null = null;
+
+      constructor(_url: string) {
+        SyncSocket.instances.push(this);
+      }
+
+      close() {}
+    }
+    vi.stubGlobal('location', { protocol: 'http:', host: 'localhost:8022' });
+    vi.stubGlobal('document', {
+      visibilityState: 'visible',
+      addEventListener: (type: string, listener: () => void) => {
+        if (type === 'visibilitychange') visibilityListeners.add(listener);
+      },
+      removeEventListener: (type: string, listener: () => void) => {
+        if (type === 'visibilitychange') visibilityListeners.delete(listener);
+      },
+    });
+    vi.stubGlobal('WebSocket', SyncSocket);
+    const fetchMock = vi.fn(async (
+      _input: string | URL | Request,
+      _init?: RequestInit,
+    ) => ({ ok: true, json: async () => null }));
+    vi.stubGlobal('fetch', fetchMock);
+    useWorkspaceStore.setState({
+      activeWorkspaceId: 'ws-target',
+      workspaces: [{ id: 'ws-target', name: 'Target', directories: ['/tmp/target'] }],
+      isLoading: false,
+      syncWorkspaces: vi.fn(async () => {}),
+    });
+    useLayoutStore.setState({
+      workspaceId: 'ws-target',
+      layout: null,
+      isLoading: false,
+      error: null,
+      pendingFocusTabId: null,
+      protectedLayoutWorkspaceId: null,
+    });
+
+    await expect(navigateToTab('ws-target', 'missing-tab', { readOnly: true }))
+      .resolves.toBe('not-found');
+    expect(useLayoutStore.getState().protectedLayoutWorkspaceId).toBe('ws-target');
+
+    fetchMock.mockClear();
+    hooks.reset();
+    useMountedSync();
+    visibilityListeners.forEach((listener) => listener());
+    await new Promise<void>((resolve) => setImmediate(resolve));
+
+    SyncSocket.instances[0].onmessage?.({
+      data: JSON.stringify({ type: 'layout', workspaceId: 'ws-target' }),
+    });
+    await new Promise<void>((resolve) => setImmediate(resolve));
+
+    useWorkspaceStore.setState({ activeWorkspaceId: 'ws-other' });
+    SyncSocket.instances[0].onmessage?.({
+      data: JSON.stringify({ type: 'layout', workspaceId: 'ws-target' }),
+    });
+    await new Promise<void>((resolve) => setImmediate(resolve));
+
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+    expect(fetchMock.mock.calls.every(([input]) => String(input).includes('readOnly=true')))
+      .toBe(true);
+    expect(fetchMock.mock.calls.some(([, init]) => init?.method === 'POST')).toBe(false);
   });
 });
