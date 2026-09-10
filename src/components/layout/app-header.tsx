@@ -39,11 +39,15 @@ const AppHeader = ({ onMenuOpen, workspaceId, workspaceName }: IAppHeaderProps) 
   const [editOpen, setEditOpen] = useState(false);
 
   return (
-    <header className="flex h-12 shrink-0 items-center justify-between border-b border-sidebar-border bg-background px-3">
+    <header
+      className="flex h-12 shrink-0 items-center justify-between border-b border-sidebar-border bg-background px-3"
+      data-ui-chrome="header"
+    >
       <div className="flex min-w-0 items-center gap-1.5">
         {onMenuOpen && (
           <button
             className="relative flex h-8 w-8 shrink-0 items-center justify-center text-foreground"
+            data-ui-icon-button=""
             onClick={onMenuOpen}
             aria-label={t('openMenu')}
           >

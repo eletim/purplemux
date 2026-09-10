@@ -63,7 +63,7 @@ const MobileWorkspaceTabBar = ({
   if (totalTabs === 0) return null;
 
   return (
-    <div className="shrink-0 border-t bg-background">
+    <div className="shrink-0 border-t bg-background" data-ui-chrome="tab-bar">
       <div
         className="flex h-10 items-center justify-center overflow-x-auto px-4"
         style={{ scrollbarWidth: 'none', WebkitOverflowScrolling: 'touch' }}
@@ -99,6 +99,7 @@ const MobileWorkspaceTabBar = ({
               className="flex h-8 w-8 shrink-0 items-center justify-center"
               onClick={() => onSelect(item.workspaceId, item.paneId, item.tabId)}
               aria-current={isActive ? 'true' : undefined}
+              data-ui-selection="pill"
             >
               <span
                 className={cn(

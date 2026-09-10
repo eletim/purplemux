@@ -103,6 +103,7 @@ const WorkspaceItem = ({
         onDoubleClick={startEditing}
         role="button"
         aria-current={isActive ? 'true' : undefined}
+        data-ui-selection="rail"
         tabIndex={0}
         render={<div />}
       >
