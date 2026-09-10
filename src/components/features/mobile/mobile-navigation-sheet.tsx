@@ -212,6 +212,8 @@ const MobileNavigationSheet = ({
           onTouchEnd={handleLongPressEnd}
           onTouchCancel={handleLongPressEnd}
           onContextMenu={(e) => e.preventDefault()}
+          aria-current={isTabActive ? 'true' : undefined}
+          data-ui-selection="rail"
         >
           <TabStatusIndicator
             tabId={tab.id}
@@ -310,6 +312,8 @@ const MobileNavigationSheet = ({
               : 'text-foreground hover:bg-accent/50',
           )}
           onClick={() => handleToggleWorkspace(ws.id)}
+          aria-current={isActive ? 'true' : undefined}
+          data-ui-selection="rail"
         >
           {isExpanded ? (
             <ChevronDown size={14} className="shrink-0 text-muted-foreground" />
@@ -345,7 +349,12 @@ const MobileNavigationSheet = ({
 
   return (
     <Sheet open={open} onOpenChange={handleSheetOpenChange}>
-      <SheetContent side="left" className="w-72 gap-0 p-0" showCloseButton={false}>
+      <SheetContent
+        side="left"
+        className="w-72 gap-0 p-0"
+        showCloseButton={false}
+        data-ui-chrome="navigation"
+      >
         <SheetHeader className="flex-row items-center border-b py-1.5 pl-1 pr-3">
           <button
             className="flex h-11 w-11 shrink-0 items-center justify-center text-muted-foreground focus-visible:outline-none"
