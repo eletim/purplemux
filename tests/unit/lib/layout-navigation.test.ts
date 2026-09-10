@@ -75,9 +75,6 @@ describe('navigateToTab', () => {
     const navigation = navigateToTab('ws-target', 'target-tab');
     expect(useWorkspaceStore.getState().activeWorkspaceId).toBe('ws-target');
     expect(useLayoutStore.getState().pendingFocusTabId).toBe('target-tab');
-
-    useLayoutStore.getState().setWorkspaceId('ws-target');
-    await useLayoutStore.getState().fetchLayout('ws-target');
     return navigation;
   };
 
@@ -196,6 +193,56 @@ describe('navigateToTab', () => {
     });
   });
 
+  it('replaces a same-workspace cached tab with a fresh read before reporting success', async () => {
+    useWorkspaceStore.setState({ activeWorkspaceId: 'ws-current' });
+    const persistedLayout = layout([tab('other-tab', 0)]);
+    stubLayoutFetch(persistedLayout);
+
+    await expect(navigateToTab('ws-current', 'current-tab', { readOnly: true }))
+      .resolves.toBe('not-found');
+
+    expect(fetch).toHaveBeenCalledOnce();
+    expect(String(vi.mocked(fetch).mock.calls[0][0])).toContain('readOnly=true');
+    expect(useLayoutStore.getState().layout).toBe(persistedLayout);
+  });
+
+  it('finds a same-workspace tab that exists only in the freshly persisted layout', async () => {
+    useWorkspaceStore.setState({ activeWorkspaceId: 'ws-current' });
+    const persistedLayout = layout([tab('other-tab', 0), tab('target-tab', 1)]);
+    stubLayoutFetch(persistedLayout);
+
+    await expect(navigateToTab('ws-current', 'target-tab', { readOnly: true }))
+      .resolves.toBe('focused');
+
+    const fetchMock = vi.mocked(fetch);
+    expect(fetchMock).toHaveBeenCalledOnce();
+    expect(String(fetchMock.mock.calls[0][0])).toContain('readOnly=true');
+    expect(fetchMock.mock.calls[0][1]?.method).toBeUndefined();
+    expect(persistedLayout.root.type === 'pane' ? persistedLayout.root.activeTabId : null)
+      .toBe('target-tab');
+  });
+
+  it('keeps the workspace selected and reports a missing tab when no layout exists', async () => {
+    useWorkspaceStore.setState({ activeWorkspaceId: 'ws-target' });
+    useLayoutStore.setState({ layout: null, workspaceId: 'ws-target', isLoading: false });
+    vi.stubGlobal('fetch', vi.fn(async () => ({ ok: true, json: async () => null })));
+    const notifyTabNotFound = vi.fn();
+
+    await expect(followDeepLink(
+      { workspaceId: 'ws-target', tabId: 'target-tab' },
+      true,
+      {
+        navigate: (workspaceId, tabId) => navigateToTab(workspaceId, tabId, { readOnly: true }),
+        notifyWorkspaceNotFound: vi.fn(),
+        notifyTabNotFound,
+      },
+    )).resolves.toBe('not-found');
+
+    expect(notifyTabNotFound).toHaveBeenCalledOnce();
+    expect(useWorkspaceStore.getState().activeWorkspaceId).toBe('ws-target');
+    expect(useLayoutStore.getState().layout).toBeNull();
+  });
+
   it('keeps an in-flight deep-link layout fetch read-only and prevents creation recovery', async () => {
     useWorkspaceStore.setState({ activeWorkspaceId: 'ws-target' });
     useLayoutStore.setState({
@@ -206,12 +253,12 @@ describe('navigateToTab', () => {
       retryCount: 2,
       pendingFocusTabId: null,
     });
-    let resolveFetch = (_response: { ok: boolean; json: () => Promise<object> }): void => {
-      throw new Error('Layout fetch did not start');
-    };
+    const pendingFetches: Array<(
+      response: { ok: boolean; json: () => Promise<object> },
+    ) => void> = [];
     const fetchMock = vi.fn((_input: string | URL | Request, _init?: RequestInit) => (
       new Promise<{ ok: boolean; json: () => Promise<object> }>((resolve) => {
-        resolveFetch = resolve;
+        pendingFetches.push(resolve);
       })
     ));
     vi.stubGlobal('fetch', fetchMock);
@@ -224,12 +271,14 @@ describe('navigateToTab', () => {
     expect(useLayoutStore.getState().isLoading).toBe(true);
     const navigation = navigateToTab('ws-target', 'target-tab', { readOnly: true });
 
-    resolveFetch({ ok: false, json: async () => ({}) });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    pendingFetches[0]({ ok: false, json: async () => ({}) });
     await layoutFetch;
+    pendingFetches[1]({ ok: false, json: async () => ({}) });
 
     await expect(navigation).resolves.toBe('failed');
-    expect(fetchMock).toHaveBeenCalledOnce();
-    expect(String(fetchMock.mock.calls[0][0])).toContain('readOnly=true');
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(fetchMock.mock.calls.every(([input]) => String(input).includes('readOnly=true'))).toBe(true);
     expect(fetchMock.mock.calls.some(([, init]) => init?.method === 'POST')).toBe(false);
     expect(useLayoutStore.getState()).toMatchObject({
       layout: null,

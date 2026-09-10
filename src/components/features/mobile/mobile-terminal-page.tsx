@@ -22,7 +22,7 @@ import useMobileLayoutActions from '@/hooks/use-mobile-layout-actions';
 import { useAutoDeleteEmptyWorkspace } from '@/hooks/use-auto-delete-empty-workspace';
 import { useAgentInstallCheck } from '@/hooks/use-agent-install-check';
 
-const MobileTerminalPage = ({ readOnlyWorkspaceId }: { readOnlyWorkspaceId?: string }) => {
+const MobileTerminalPage = () => {
   const t = useTranslations('terminal');
   const tm = useTranslations('mobile');
   const tc = useTranslations('common');
@@ -45,7 +45,6 @@ const MobileTerminalPage = ({ readOnlyWorkspaceId }: { readOnlyWorkspaceId?: str
   const layout = useLayout({
     workspaceId: activeWorkspaceId,
     onFetchError: handleFetchError,
-    readOnly: activeWorkspaceId === readOnlyWorkspaceId,
   });
 
   const panes = useMemo(() => {

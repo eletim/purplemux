@@ -67,7 +67,8 @@ describe('deep-link layout retrieval', () => {
     const missingResponse = responseCapture();
     await handler(request(workspaceId), missingResponse);
 
-    expect(missingResponse.status).toHaveBeenCalledWith(404);
+    expect(missingResponse.status).toHaveBeenCalledWith(200);
+    expect(missingResponse.json).toHaveBeenCalledWith(null);
     await expect(fs.access(layoutFile)).rejects.toThrow();
     expect(await fs.readdir(workspaceDir)).toEqual([]);
     expect(createSession).not.toHaveBeenCalled();
@@ -76,7 +77,8 @@ describe('deep-link layout retrieval', () => {
     const corruptResponse = responseCapture();
     await handler(request(workspaceId), corruptResponse);
 
-    expect(corruptResponse.status).toHaveBeenCalledWith(404);
+    expect(corruptResponse.status).toHaveBeenCalledWith(200);
+    expect(corruptResponse.json).toHaveBeenCalledWith(null);
     expect(await fs.readFile(layoutFile, 'utf8')).toBe('{not valid json');
     await expect(fs.access(backupFile)).rejects.toThrow();
     expect(createSession).not.toHaveBeenCalled();
