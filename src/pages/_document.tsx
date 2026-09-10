@@ -1,5 +1,6 @@
 import Document, { Html, Head, Main, NextScript, type DocumentContext, type DocumentInitialProps } from 'next/document';
 import { getWorkspaces } from '@/lib/workspace-store';
+import { DEFAULT_UI_MODE, UI_MODE_STORAGE_KEY } from '@/lib/ui-mode';
 
 interface IDocumentProps extends DocumentInitialProps {
   activeWorkspaceId: string;
@@ -31,9 +32,10 @@ class MyDocument extends Document<IDocumentProps> {
 
     const serverActiveWs = JSON.stringify(this.props.activeWorkspaceId || '');
     const initScript = `window.__SB__=(function(){var s=sessionStorage,l=localStorage,t=l.getItem("sidebar-tab"),a=s.getItem("active-ws")||${serverActiveWs};return{w:${sidebarWidth},c:${sidebarCollapsed},t:t==="sessions"?"sessions":"workspace",a:a||""}})()`;
+    const uiModeInitScript = `(function(){var m="${DEFAULT_UI_MODE}";try{m=localStorage.getItem(${JSON.stringify(UI_MODE_STORAGE_KEY)})==="mulmo"?"mulmo":m}catch(e){}document.documentElement.setAttribute("data-ui-mode",m)})()`;
 
     return (
-      <Html lang="en" suppressHydrationWarning>
+      <Html lang="en" data-ui-mode={DEFAULT_UI_MODE} suppressHydrationWarning>
         <Head>
           <link rel="preload" as="font" type="font/woff2" href="/fonts/PretendardVariable.woff2" crossOrigin="anonymous" />
           <link rel="preload" as="font" type="font/woff2" href="/fonts/MesloLGLDZNerdFont-Regular.woff2" crossOrigin="anonymous" />
@@ -64,6 +66,7 @@ class MyDocument extends Document<IDocumentProps> {
           <link rel="apple-touch-startup-image" href="/splash/splash-1620x2160.png" media="(device-width: 810px) and (device-height: 1080px) and (-webkit-device-pixel-ratio: 2)" />
           <link rel="apple-touch-startup-image" href="/splash/splash-1488x2266.png" media="(device-width: 744px) and (device-height: 1133px) and (-webkit-device-pixel-ratio: 2)" />
           <style dangerouslySetInnerHTML={{ __html: `:root{--initial-sb-w:${effectiveWidth}px;--initial-sb-mw:${effectiveMinWidth}px}` }} />
+          <script dangerouslySetInnerHTML={{ __html: uiModeInitScript }} />
           <script dangerouslySetInnerHTML={{ __html: initScript }} />
           <script dangerouslySetInnerHTML={{ __html: `if(window.electronAPI){document.documentElement.style.setProperty('--titlebar-height','24px');document.documentElement.style.setProperty('--traffic-light-area','82px')}` }} />
         </Head>

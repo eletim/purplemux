@@ -35,6 +35,10 @@
     "openShortcuts": "開く"
   },
   "appearance": {
+    "uiMode": "UIモード",
+    "uiModeDescription": "アプリの表示スタイルを選択します。",
+    "uiModeDefault": "デフォルト",
+    "uiModeMulmo": "Mulmo",
     "customCSS": "カスタム CSS",
     "customCSSDescription": "CSS変数をオーバーライドして色やスタイルをカスタマイズします。",
     "apply": "適用",

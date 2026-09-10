@@ -35,6 +35,10 @@
     "openShortcuts": "開啟"
   },
   "appearance": {
+    "uiMode": "介面模式",
+    "uiModeDescription": "選擇應用程式的視覺樣式。",
+    "uiModeDefault": "預設",
+    "uiModeMulmo": "Mulmo",
     "customCSS": "自訂 CSS",
     "customCSSDescription": "覆寫 CSS 變數以自訂色彩和樣式。",
     "apply": "套用",
