@@ -1,11 +1,12 @@
 // @vitest-environment jsdom
 
 import { createElement, Fragment } from 'react';
-import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import dayjs from 'dayjs';
 import relativeTime from 'dayjs/plugin/relativeTime';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import MobileWorkspaceTabBar from '@/components/features/mobile/mobile-workspace-tab-bar';
+import MobileTerminalPage from '@/components/features/mobile/mobile-terminal-page';
 import { NotificationPanel, useNotificationCount } from '@/components/features/workspace/notification-sheet';
 import useTabStore, { selectTabDisplayStatus } from '@/hooks/use-tab-store';
 import useAgentStatus from '@/hooks/use-agent-status';
@@ -36,6 +37,27 @@ vi.mock('next/router', () => ({
   useRouter: () => ({ pathname: '/' }),
   default: { push: vi.fn() },
 }));
+
+vi.mock('@/hooks/use-layout', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/hooks/use-layout')>();
+  return {
+    ...actual,
+    default: () => actual.useLayoutStore(),
+  };
+});
+
+vi.mock('@/hooks/use-auto-delete-empty-workspace', () => ({
+  useAutoDeleteEmptyWorkspace: vi.fn(),
+}));
+
+vi.mock('@/hooks/use-agent-install-check', () => ({
+  useAgentInstallCheck: () => ({ ensureAgentInstalled: vi.fn(), installDialogs: null }),
+}));
+
+vi.mock('@/components/features/mobile/mobile-tab-header', () => ({ default: () => null }));
+vi.mock('@/components/features/mobile/mobile-surface-view', () => ({ default: () => null }));
+vi.mock('@/components/features/mobile/mobile-new-tab-dialog', () => ({ default: () => null }));
+vi.mock('@/components/features/mobile/mobile-git-fullscreen', () => ({ default: () => null }));
 
 vi.mock('motion/react', async () => {
   const React = await import('react');
@@ -101,7 +123,12 @@ describe('status surface integration', () => {
     useUiMode.setState({ mode: 'mulmo', hydrated: true });
     useTabStore.setState({ tabs: {}, tabOrders: {}, statusWsConnected: true });
     useSessionHistoryStore.setState({ entries: [] });
-    useWorkspaceStore.setState({ workspaces: [workspace], activeWorkspaceId: workspace.id });
+    useWorkspaceStore.setState({
+      workspaces: [workspace],
+      activeWorkspaceId: workspace.id,
+      isLoading: false,
+      error: null,
+    });
     useLayoutStore.setState({
       workspaceId: workspace.id,
       layout: {
@@ -111,6 +138,8 @@ describe('status surface integration', () => {
       },
       paneCount: 1,
       canSplit: true,
+      isLoading: false,
+      error: null,
     });
   });
 
@@ -146,6 +175,8 @@ describe('status surface integration', () => {
       name: 'Workspace One, Agent One, Needs review',
     });
     expect(agentButton.getAttribute('aria-current')).toBe('true');
+    expect(agentButton.querySelector('[role="status"]')).toBeNull();
+    expect(agentButton.querySelector('[role="img"][aria-label="Needs review"]')).not.toBeNull();
     expect(screen.getByRole('button', {
       name: 'Workspace One, Shell One, running',
     })).toBeDefined();
@@ -154,7 +185,11 @@ describe('status surface integration', () => {
     expect(onSelect).toHaveBeenCalledWith(workspace.id, 'pane-1', 'agent-tab');
   });
 
-  it('acknowledges an active completion and keeps only the Mulmo history cue', async () => {
+  it.each([
+    ['default', 'idle'],
+    ['mulmo', 'Done'],
+  ] as const)('automatically acknowledges the active completion in %s mode', async (mode, visibleStatus) => {
+    useUiMode.setState({ mode });
     useTabStore.getState().initTab('agent-tab', {
       workspaceId: workspace.id,
       panelType: 'claude-code',
@@ -165,7 +200,7 @@ describe('status surface integration', () => {
     render(createElement(Fragment, null,
       createElement(AgentStatusConnection),
       createElement(NotificationCounts),
-      createElement(NotificationPanel),
+      createElement(MobileTerminalPage),
       createElement(MobileWorkspaceTabBar, {
         workspaces: [workspace],
         activeWorkspaceId: workspace.id,
@@ -176,10 +211,7 @@ describe('status surface integration', () => {
       }),
     ));
 
-    expect(screen.getByLabelText('notification counts').textContent).toBe('0:1');
     expect(FakeWebSocket.instances).toHaveLength(1);
-    fireEvent.click(screen.getByRole('button', { name: 'Dismiss' }));
-
     await waitFor(() => expect(screen.getByLabelText('notification counts').textContent).toBe('0:0'));
     const dismissed = useTabStore.getState().tabs['agent-tab'];
     expect(dismissed.cliState).toBe('idle');
@@ -190,18 +222,54 @@ describe('status surface integration', () => {
     }));
     expect(selectTabDisplayStatus(useTabStore.getState().tabs, 'agent-tab')).toBe('idle');
     expect(selectTabDisplayStatus(useTabStore.getState().tabs, 'agent-tab', true)).toBe('completed');
-    expect(screen.getByRole('button', {
-      name: 'Workspace One, Agent One, Done',
-    }).querySelector('[data-agent-status="completed"]')).not.toBeNull();
-
-    act(() => useUiMode.setState({ mode: 'default' }));
-
-    expect(screen.getByRole('button', {
-      name: 'Workspace One, Agent One, idle',
-    })).toBeDefined();
+    const statusButton = screen.getByRole('button', {
+      name: `Workspace One, Agent One, ${visibleStatus}`,
+    });
+    expect(statusButton.querySelector(`[data-agent-status="${mode === 'mulmo' ? 'completed' : 'idle'}"]`))
+      .not.toBeNull();
     expect(useTabStore.getState().tabs['agent-tab']).toMatchObject({
       cliState: 'idle',
       dismissedAt: dismissed.dismissedAt,
     });
   });
+
+  it.each([false, true])(
+    'keeps the active-session Dismiss control hidden in Default mode (history: %s)',
+    (withHistory) => {
+      useUiMode.setState({ mode: 'default' });
+      useTabStore.getState().initTab('agent-tab', {
+        workspaceId: workspace.id,
+        panelType: 'claude-code',
+        cliState: 'ready-for-review',
+        readyForReviewAt: Date.now(),
+        agentProviderId: 'claude',
+        agentSessionId: withHistory ? 'session-1' : null,
+      });
+      if (withHistory) {
+        useSessionHistoryStore.setState({
+          entries: [{
+            id: 'history-1',
+            workspaceId: workspace.id,
+            workspaceName: workspace.name,
+            workspaceDir: workspace.directories[0],
+            tabId: 'agent-tab',
+            providerId: 'claude',
+            agentSessionId: 'session-1',
+            prompt: 'prompt',
+            result: 'result',
+            startedAt: Date.now() - 1000,
+            completedAt: Date.now(),
+            duration: 1000,
+            dismissedAt: null,
+            toolUsage: {},
+            touchedFiles: [],
+          }],
+        });
+      }
+
+      render(createElement(NotificationPanel));
+
+      expect(screen.queryByRole('button', { name: 'Dismiss' })).toBeNull();
+    },
+  );
 });

@@ -32,9 +32,10 @@ describe('Mulmo session status surfaces', () => {
 
     expect(displayStatus).toBe(status);
     expect(html).toContain(`data-agent-status="${status}"`);
-    expect(html).toContain('role="status"');
+    expect(html).toContain('role="img"');
+    expect(html).not.toContain('role="status"');
     expect(html).toContain(iconClass);
-    expect(html).toContain(`<span class="sr-only">${label}</span>`);
+    expect(html).toContain(`aria-label="${label}"`);
   });
 
   it('retains the original spinner and dot presentation for Default mode', () => {

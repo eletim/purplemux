@@ -32,7 +32,8 @@ const AgentStatusGlyph = ({ status, className, compact = false, showIdle = false
     <span
       className={cn('agent-status-glyph inline-flex items-center justify-center', className)}
       data-agent-status={status}
-      role="status"
+      role="img"
+      aria-label={label}
     >
       <span className="agent-status-glyph-default inline-flex items-center justify-center" aria-hidden="true">
         {status === 'busy' ? (
@@ -60,7 +61,6 @@ const AgentStatusGlyph = ({ status, className, compact = false, showIdle = false
           <span className="h-2 w-2 rounded-full border border-current opacity-50" />
         )}
       </span>
-      <span className="sr-only">{label}</span>
     </span>
   );
 };
