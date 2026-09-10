@@ -135,7 +135,10 @@ const createDefaultPaneNode = (wsId: string, cwd?: string): { pane: IPaneNode; t
   };
 };
 
-export const readLayoutFile = async (filePath: string): Promise<ILayoutData | null> => {
+const readLayoutFileInternal = async (
+  filePath: string,
+  backupCorrupt: boolean,
+): Promise<ILayoutData | null> => {
   let raw: string;
   try {
     raw = await fs.readFile(filePath, 'utf-8');
@@ -147,12 +150,20 @@ export const readLayoutFile = async (filePath: string): Promise<ILayoutData | nu
     return JSON.parse(raw) as ILayoutData;
   } catch {
     log.warn(`${filePath} parse failed`);
-    try {
-      await fs.copyFile(filePath, filePath.replace(/\.json$/, '.json.bak'));
-    } catch {}
+    if (backupCorrupt) {
+      try {
+        await fs.copyFile(filePath, filePath.replace(/\.json$/, '.json.bak'));
+      } catch {}
+    }
     return null;
   }
 };
+
+export const readLayoutFile = async (filePath: string): Promise<ILayoutData | null> =>
+  readLayoutFileInternal(filePath, true);
+
+export const readExistingLayout = async (wsId: string): Promise<ILayoutData | null> =>
+  readLayoutFileInternal(resolveLayoutFile(wsId), false);
 
 const extractWsIdFromPath = (filePath: string): string | null => {
   const match = filePath.match(/workspaces\/(ws-[^/]+)\//);

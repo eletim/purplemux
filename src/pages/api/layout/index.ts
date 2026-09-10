@@ -1,5 +1,5 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
-import { getLayout, patchLayout } from '@/lib/layout-store';
+import { getLayout, patchLayout, readExistingLayout } from '@/lib/layout-store';
 import { getActiveWorkspaceId, getWorkspaceById } from '@/lib/workspace-store';
 import { createLogger } from '@/lib/logger';
 
@@ -13,6 +13,13 @@ const handler = async (req: NextApiRequest, res: NextApiResponse) => {
 
   if (req.method === 'GET') {
     try {
+      if (req.query.readOnly === 'true') {
+        const layout = await readExistingLayout(wsId);
+        if (!layout) {
+          return res.status(404).json({ error: 'Layout not found' });
+        }
+        return res.status(200).json(layout);
+      }
       const ws = await getWorkspaceById(wsId);
       const layout = await getLayout(wsId, ws?.directories[0]);
       return res.status(200).json(layout);
