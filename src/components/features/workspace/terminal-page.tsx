@@ -15,6 +15,7 @@ import { requestSync } from '@/hooks/use-agent-status';
 import PaneLayout from '@/components/features/workspace/pane-layout';
 import ContentHeader from '@/components/features/workspace/content-header';
 import GitSidePanel from '@/components/features/workspace/git-side-panel';
+import LayoutUnavailable from '@/components/features/workspace/layout-unavailable';
 import useSidebarActions from '@/hooks/use-sidebar-actions';
 import { useAutoDeleteEmptyWorkspace } from '@/hooks/use-auto-delete-empty-workspace';
 import type { TGitAskProvider } from '@/hooks/use-config-store';
@@ -40,7 +41,11 @@ const getInitialGitPanelSize = () => {
   return Math.min(MAX_GIT_PANEL_SIZE, Math.max(MIN_GIT_PANEL_SIZE, value));
 };
 
-const TerminalPage = () => {
+const TerminalPage = ({
+  initialLayoutWorkspaceId,
+}: {
+  initialLayoutWorkspaceId?: string | null;
+}) => {
   const t = useTranslations('terminal');
   const isLoading = useWorkspaceStore((s) => s.isLoading);
   const error = useWorkspaceStore((s) => s.error);
@@ -65,6 +70,7 @@ const TerminalPage = () => {
   const layout = useLayout({
     workspaceId: activeWorkspaceId,
     onFetchError: handleFetchError,
+    initialLayoutWorkspaceId,
   });
 
   const allTabsEmpty = !!(
@@ -268,15 +274,13 @@ const TerminalPage = () => {
           </div>
         )}
 
-        {layout.error && !layout.isLoading && (
-          <div className="flex h-full flex-col items-center justify-center gap-3">
-            <AlertTriangle className="h-5 w-5 text-ui-amber" />
-            <span className="text-sm text-muted-foreground">{layout.error}</span>
-            <Button variant="outline" size="sm" className="gap-1.5" onClick={() => layout.fetchLayout()}>
-              <RefreshCw className="h-3.5 w-3.5" />
-              {t('retryAction')}
-            </Button>
-          </div>
+        {!layout.isLoading && (layout.error || !layout.layout) && (
+          <LayoutUnavailable
+            message={layout.error ?? t('layoutFetchError')}
+            retryLabel={t('retryAction')}
+            onRetry={layout.recoverLayout}
+            surface="desktop"
+          />
         )}
 
         {layout.layout && !layout.isLoading && !allTabsEmpty && (

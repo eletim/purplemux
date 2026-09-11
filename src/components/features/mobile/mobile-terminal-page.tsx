@@ -21,8 +21,13 @@ import type { TGitAskProvider } from '@/hooks/use-config-store';
 import useMobileLayoutActions from '@/hooks/use-mobile-layout-actions';
 import { useAutoDeleteEmptyWorkspace } from '@/hooks/use-auto-delete-empty-workspace';
 import { useAgentInstallCheck } from '@/hooks/use-agent-install-check';
+import LayoutUnavailable from '@/components/features/workspace/layout-unavailable';
 
-const MobileTerminalPage = () => {
+const MobileTerminalPage = ({
+  initialLayoutWorkspaceId,
+}: {
+  initialLayoutWorkspaceId?: string | null;
+}) => {
   const t = useTranslations('terminal');
   const tm = useTranslations('mobile');
   const tc = useTranslations('common');
@@ -45,6 +50,7 @@ const MobileTerminalPage = () => {
   const layout = useLayout({
     workspaceId: activeWorkspaceId,
     onFetchError: handleFetchError,
+    initialLayoutWorkspaceId,
   });
 
   const panes = useMemo(() => {
@@ -257,28 +263,21 @@ const MobileTerminalPage = () => {
     );
   }
 
+  if (!layout.isLoading && (layout.error || !layout.layout)) {
+    return (
+      <LayoutUnavailable
+        message={layout.error ?? t('layoutFetchError')}
+        retryLabel={tc('retry')}
+        onRetry={layout.recoverLayout}
+        surface="mobile"
+      />
+    );
+  }
+
   if (!layout.layout || layout.isLoading) {
     return (
       <div className="flex flex-1 flex-col items-center justify-center">
         <Spinner className="h-4 w-4 text-muted-foreground" />
-      </div>
-    );
-  }
-
-  if (layout.error && !layout.isLoading) {
-    return (
-      <div className="flex flex-1 flex-col items-center justify-center gap-3">
-        <AlertTriangle className="h-5 w-5 text-ui-amber" />
-        <span className="text-sm text-muted-foreground">{layout.error}</span>
-        <Button
-          variant="outline"
-          size="sm"
-          className="gap-1.5"
-          onClick={() => layout.fetchLayout()}
-        >
-          <RefreshCw className="h-3.5 w-3.5" />
-          {tc('retry')}
-        </Button>
       </div>
     );
   }

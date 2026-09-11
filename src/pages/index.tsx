@@ -19,6 +19,7 @@ import useBrowserTitle from '@/hooks/use-browser-title';
 import { getPageShellLayout } from '@/components/layout/page-shell';
 import { requireAuth } from '@/lib/require-auth';
 import { loadMessagesServer } from '@/lib/load-messages';
+import useDeepLink from '@/hooks/use-deep-link';
 
 const TerminalPage = dynamic(
   () => import('@/components/features/workspace/terminal-page'),
@@ -37,9 +38,28 @@ interface IIndexProps {
   initialSidebarItems: ISidebarItemsData;
 }
 
+export const WorkspaceTerminal = ({
+  isMobile,
+  isDeepLinkResolving,
+  resolvedLayoutWorkspaceId,
+}: {
+  isMobile: boolean;
+  isDeepLinkResolving: boolean;
+  resolvedLayoutWorkspaceId: string | null;
+}) => {
+  if (isDeepLinkResolving) return null;
+  return isMobile
+    ? <MobileTerminalPage initialLayoutWorkspaceId={resolvedLayoutWorkspaceId} />
+    : <TerminalPage initialLayoutWorkspaceId={resolvedLayoutWorkspaceId} />;
+};
+
 const Index = ({ initialConfig, initialQuickPrompts, initialSidebarItems }: IIndexProps) => {
   const isMobile = useIsMobile();
   const { setTheme } = useTheme();
+  const {
+    isResolving: isDeepLinkResolving,
+    resolvedLayoutWorkspaceId,
+  } = useDeepLink();
   useBrowserTitle('purplemux');
   const themeInitRef = useRef(false);
   useEffect(() => {
@@ -59,7 +79,11 @@ const Index = ({ initialConfig, initialQuickPrompts, initialSidebarItems }: IInd
       <Head>
         <title>purplemux</title>
       </Head>
-      {isMobile ? <MobileTerminalPage /> : <TerminalPage />}
+      <WorkspaceTerminal
+        isMobile={isMobile}
+        isDeepLinkResolving={isDeepLinkResolving}
+        resolvedLayoutWorkspaceId={resolvedLayoutWorkspaceId}
+      />
     </SWRConfig>
   );
 };

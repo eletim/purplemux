@@ -8,6 +8,18 @@ import type { ILayoutData } from '@/types/terminal';
 
 const RECONNECT_DELAY = 3000;
 
+const fetchLayoutForSync = (workspaceId: string) => {
+  const layoutStore = useLayoutStore.getState();
+  return layoutStore.fetchLayout(workspaceId, undefined, {
+    readOnly: layoutStore.protectedLayoutWorkspaceId === workspaceId,
+  });
+};
+
+const layoutUrlForSync = (workspaceId: string): string => {
+  const readOnly = useLayoutStore.getState().protectedLayoutWorkspaceId === workspaceId;
+  return `/api/layout?workspace=${workspaceId}${readOnly ? '&readOnly=true' : ''}`;
+};
+
 type TToastVariant = 'info' | 'success' | 'warning' | 'error';
 type TSystemToastAction = { kind: 'copy'; label: string; text: string; successMessage?: string };
 
@@ -102,10 +114,10 @@ const useSync = () => {
 
           if (data.type === 'layout') {
             const activeWsId = useWorkspaceStore.getState().activeWorkspaceId;
-            if (data.workspaceId === activeWsId) {
-              useLayoutStore.getState().fetchLayout(activeWsId);
+            if (activeWsId && data.workspaceId === activeWsId) {
+              fetchLayoutForSync(activeWsId);
             } else if (data.workspaceId) {
-              fetch(`/api/layout?workspace=${data.workspaceId}`)
+              fetch(layoutUrlForSync(data.workspaceId))
                 .then((res) => (res.ok ? res.json() : null))
                 .then((layout: ILayoutData | null) => {
                   if (!layout?.root) return;
@@ -140,7 +152,7 @@ const useSync = () => {
       useWorkspaceStore.getState().syncWorkspaces();
       const activeWsId = useWorkspaceStore.getState().activeWorkspaceId;
       if (activeWsId) {
-        useLayoutStore.getState().fetchLayout(activeWsId);
+        fetchLayoutForSync(activeWsId);
       }
     };
     document.addEventListener('visibilitychange', handleVisibilityChange);
