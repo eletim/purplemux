@@ -610,6 +610,26 @@ class StatusManager {
     return isCodexTuiReadyContent(content);
   }
 
+  private async pollLaunchReadiness(tabId: string): Promise<void> {
+    const entry = this.tabs.get(tabId);
+    if (!entry || entry.cliState !== 'inactive' || entry.panelType !== 'codex-cli') return;
+
+    const provider = getProviderByPanelType(entry.panelType);
+    if (!provider) return;
+
+    const panePid = await getSessionPanePid(entry.tmuxSession);
+    if (!panePid) return;
+
+    const ready = await this.checkCodexTuiReady(entry, async () => {
+      const childPids = await getChildPids(panePid);
+      return provider.isAgentRunning(panePid, childPids);
+    });
+    if (!ready || this.tabs.get(tabId) !== entry || entry.cliState !== 'inactive') return;
+
+    hookLog.debug({ tabId }, 'codex tui ready after launch — synthetic session-start');
+    this.updateTabFromHook(entry.tmuxSession, 'session-start');
+  }
+
   async recoverUnknownIfPending(tabId: string): Promise<{ recovered: boolean; reason?: string }> {
     const entry = this.tabs.get(tabId);
     if (!entry) return { recovered: false, reason: 'no-entry' };
@@ -958,8 +978,8 @@ class StatusManager {
     }
     for (const delay of LAUNCH_READY_POLL_DELAYS_MS) {
       setTimeout(() => {
-        this.poll().catch((err) => {
-          log.error({ err, tabId }, 'Launch readiness poll error');
+        this.pollLaunchReadiness(tabId).catch((err) => {
+          log.error({ err, tabId }, 'Launch readiness check error');
         });
       }, delay);
     }
