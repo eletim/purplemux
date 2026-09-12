@@ -89,6 +89,14 @@ const useTerminal = ({ theme, fontSize = DEFAULT_FONT_SIZE, lineHeight = DEFAULT
     callbacksRef.current = { theme, fontSize, lineHeight, onInput, onResize, onTitleChange, customKeyEventHandler, t };
   }, [theme, fontSize, lineHeight, onInput, onResize, onTitleChange, customKeyEventHandler, t]);
 
+  useEffect(() => {
+    const label = t('copyPromptBlockLabel');
+    containerNode?.querySelectorAll<HTMLButtonElement>('.terminal-prompt-copy-button').forEach((button) => {
+      button.setAttribute('aria-label', label);
+      button.title = label;
+    });
+  }, [containerNode, t]);
+
   const write = useCallback((data: Uint8Array) => {
     writeQueueRef.current.push(data);
     if (!isWritingRef.current) {
@@ -227,6 +235,7 @@ const useTerminal = ({ theme, fontSize = DEFAULT_FONT_SIZE, lineHeight = DEFAULT
           decoration: IDecoration;
           button: HTMLButtonElement;
         }>();
+        let pendingLineFeeds = 0;
 
         const addPromptDecoration = (row: number) => {
           const buffer = terminal.buffer.active;
@@ -275,13 +284,24 @@ const useTerminal = ({ theme, fontSize = DEFAULT_FONT_SIZE, lineHeight = DEFAULT
           });
         };
 
-        const refreshPromptDecorations = () => {
-          if (terminal.buffer.active.type !== 'normal') return;
-          const promptRows = new Set(findShellPromptRows(terminal.buffer.active));
+        const refreshPromptDecorations = (scanFullBuffer = false) => {
+          if (terminal.buffer.active.type !== 'normal') {
+            pendingLineFeeds = 0;
+            return;
+          }
+          const buffer = terminal.buffer.active;
+          const scanStart = scanFullBuffer
+            ? 0
+            : Math.max(0, buffer.length - terminal.rows - pendingLineFeeds - 1);
+          pendingLineFeeds = 0;
+          const promptRows = new Set(findShellPromptRows(buffer, scanStart));
           const decoratedRows = new Set<number>();
 
           for (const entry of [...promptDecorations]) {
-            if (entry.marker.isDisposed || !promptRows.has(entry.marker.line)) {
+            if (
+              entry.marker.isDisposed
+              || (entry.marker.line >= scanStart && !promptRows.has(entry.marker.line))
+            ) {
               entry.decoration.dispose();
             } else {
               decoratedRows.add(entry.marker.line);
@@ -293,8 +313,11 @@ const useTerminal = ({ theme, fontSize = DEFAULT_FONT_SIZE, lineHeight = DEFAULT
           }
         };
 
-        terminal.onWriteParsed(refreshPromptDecorations);
-        refreshPromptDecorations();
+        terminal.onLineFeed(() => {
+          pendingLineFeeds++;
+        });
+        terminal.onWriteParsed(() => refreshPromptDecorations());
+        refreshPromptDecorations(true);
       }
 
       terminalInstance.current = terminal;
@@ -363,12 +386,16 @@ const useTerminal = ({ theme, fontSize = DEFAULT_FONT_SIZE, lineHeight = DEFAULT
 
       if (isTouchDevice && screenEl) {
         let lastY = 0;
+        let touchStartedOnPromptButton = false;
 
         const onTouchStart = (e: TouchEvent) => {
+          touchStartedOnPromptButton = e.target instanceof Element
+            && e.target.closest('.terminal-prompt-copy-button') !== null;
           lastY = e.touches[0].clientY;
         };
 
         const onTouchMove = (e: TouchEvent) => {
+          if (touchStartedOnPromptButton) return;
           const currentY = e.touches[0].clientY;
           const deltaY = lastY - currentY;
           lastY = currentY;

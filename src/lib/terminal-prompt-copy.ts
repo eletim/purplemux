@@ -16,7 +16,7 @@ interface ILogicalBufferLine {
 
 const HOST_PATH_PROMPT_RE = /^(?:\([^)]+\)\s*)?[\w.-]+@[\w.-]+:(?:~|\/).*?[#$%>❯➜](?:\s|$)/;
 const PATH_PROMPT_RE = /^(?:~|\/)[^\r\n]*?[#$%>❯➜](?:\s|$)/;
-const SIMPLE_PROMPT_RE = /^[#$%❯➜](?:\s|$)/;
+const SIMPLE_PROMPT_RE = /^[$%❯➜](?:\s|$)/;
 
 export const isShellPrompt = (text: string): boolean => (
   HOST_PATH_PROMPT_RE.test(text)
@@ -24,10 +24,19 @@ export const isShellPrompt = (text: string): boolean => (
   || SIMPLE_PROMPT_RE.test(text)
 );
 
-const readLogicalLines = (buffer: ITerminalPromptBuffer): ILogicalBufferLine[] => {
+const findLogicalLineStart = (buffer: ITerminalPromptBuffer, row: number): number => {
+  let startRow = Math.max(0, Math.min(row, buffer.length - 1));
+  while (startRow > 0 && buffer.getLine(startRow)?.isWrapped) startRow--;
+  return startRow;
+};
+
+const readLogicalLines = (
+  buffer: ITerminalPromptBuffer,
+  startRow = 0,
+): ILogicalBufferLine[] => {
   const logicalLines: ILogicalBufferLine[] = [];
 
-  for (let row = 0; row < buffer.length; row++) {
+  for (let row = findLogicalLineStart(buffer, startRow); row < buffer.length; row++) {
     const line = buffer.getLine(row);
     if (!line) continue;
     const continuesOnNextRow = buffer.getLine(row + 1)?.isWrapped === true;
@@ -50,8 +59,11 @@ const readLogicalLines = (buffer: ITerminalPromptBuffer): ILogicalBufferLine[] =
   return logicalLines;
 };
 
-export const findShellPromptRows = (buffer: ITerminalPromptBuffer): number[] => (
-  readLogicalLines(buffer)
+export const findShellPromptRows = (
+  buffer: ITerminalPromptBuffer,
+  startRow = 0,
+): number[] => (
+  readLogicalLines(buffer, startRow)
     .filter((line) => isShellPrompt(line.text))
     .map((line) => line.startRow)
 );
