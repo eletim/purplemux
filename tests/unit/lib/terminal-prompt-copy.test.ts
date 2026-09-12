@@ -1,13 +1,20 @@
-import { describe, expect, it } from 'vitest';
+// @vitest-environment jsdom
+
+import { describe, expect, it, vi } from 'vitest';
 import {
   findShellPromptRows,
   getPromptBlockText,
   isShellPrompt,
+  syncPromptCopyButtons,
   type ITerminalPromptBuffer,
   type ITerminalPromptLine,
 } from '@/lib/terminal-prompt-copy';
 
-const createBuffer = (rows: Array<string | { text: string; wrapped: boolean }>) => ({
+const createBuffer = (
+  rows: Array<string | { text: string; wrapped: boolean }>,
+  type: 'normal' | 'alternate' = 'normal',
+) => ({
+  type,
   length: rows.length,
   getLine: (row: number): ITerminalPromptLine | undefined => {
     const value = rows[row];
@@ -22,10 +29,13 @@ const createBuffer = (rows: Array<string | { text: string; wrapped: boolean }>) 
 
 describe('terminal prompt copy boundaries', () => {
   it('recognizes common prompt forms without matching ordinary output', () => {
+    expect(isShellPrompt('eletim@E-ryzen:~$')).toBe(true);
     expect(isShellPrompt('eletim@E-ryzen:~$ pnpm test')).toBe(true);
     expect(isShellPrompt('root@server:/srv/app#')).toBe(true);
     expect(isShellPrompt('~/purplemux % git status')).toBe(true);
     expect(isShellPrompt('$ echo hello')).toBe(true);
+    expect(isShellPrompt('  eletim@E-ryzen:~$ pnpm test')).toBe(true);
+    expect(isShellPrompt('\u200beletim@E-ryzen:~$ pnpm test')).toBe(true);
     expect(isShellPrompt('# a comment from a displayed config file')).toBe(false);
     expect(isShellPrompt('# Markdown heading')).toBe(false);
     expect(isShellPrompt('build output: 100% done')).toBe(false);
@@ -113,5 +123,119 @@ describe('terminal prompt copy boundaries', () => {
 
   it('rejects a row that is not a prompt boundary', () => {
     expect(getPromptBlockText(createBuffer(['plain output']), 0)).toBeNull();
+  });
+
+  it('creates positioned buttons only for prompts in the viewport', () => {
+    const gutter = document.createElement('div');
+    const onCopy = vi.fn();
+    const buffer = createBuffer([
+      'eletim@E-ryzen:~$ above',
+      'above output',
+      'eletim@E-ryzen:~$',
+      'visible output',
+      'eletim@E-ryzen:~/purplemux$ visible',
+      'eletim@E-ryzen:~$ below',
+    ]);
+
+    syncPromptCopyButtons({
+      gutter,
+      buffer,
+      viewportY: 2,
+      viewportRows: 3,
+      screenTop: 4,
+      screenHeight: 60,
+      label: 'Copy command block',
+      onCopy,
+    });
+
+    const buttons = [...gutter.querySelectorAll<HTMLButtonElement>('.terminal-prompt-copy-button')];
+    expect(buttons).toHaveLength(2);
+    expect(buttons.map((button) => button.dataset.bufferRow)).toEqual(['2', '4']);
+    expect(buttons.map((button) => [button.style.top, button.style.height])).toEqual([
+      ['4px', '20px'],
+      ['44px', '20px'],
+    ]);
+
+    buttons[0].click();
+    expect(onCopy).toHaveBeenCalledWith(2);
+  });
+
+  it.each(['normal', 'alternate'] as const)(
+    'creates a DOM button for a prompt in the %s buffer',
+    (type) => {
+      const gutter = document.createElement('div');
+      const buffer = createBuffer([
+        'plain output',
+        '  \u200beletim@E-ryzen:~$ printf hello',
+        'hello',
+      ], type);
+      const copied: string[] = [];
+
+      syncPromptCopyButtons({
+        gutter,
+        buffer,
+        viewportY: 0,
+        viewportRows: 3,
+        screenTop: 0,
+        screenHeight: 60,
+        label: 'Copy command block',
+        onCopy: (row) => {
+          const text = getPromptBlockText(buffer, row);
+          if (text) copied.push(text);
+        },
+      });
+
+      const button = gutter.querySelector<HTMLButtonElement>('.terminal-prompt-copy-button');
+      expect(button?.dataset.bufferRow).toBe('1');
+      const gutterMouseDown = vi.fn();
+      gutter.addEventListener('mousedown', gutterMouseDown);
+      const mouseDown = new MouseEvent('mousedown', { bubbles: true, cancelable: true });
+      button?.dispatchEvent(mouseDown);
+      expect(mouseDown.defaultPrevented).toBe(true);
+      expect(gutterMouseDown).not.toHaveBeenCalled();
+      button?.click();
+      expect(copied).toEqual(['  \u200beletim@E-ryzen:~$ printf hello\nhello']);
+    },
+  );
+
+  it('repositions and replaces buttons after scroll, resize, and write', () => {
+    const gutter = document.createElement('div');
+    const onCopy = vi.fn();
+    const rows = [
+      'plain output',
+      'eletim@E-ryzen:~$ first',
+      'plain output',
+      'eletim@E-ryzen:~$ second',
+      'plain output',
+    ];
+    const buffer = createBuffer(rows);
+    const sync = (viewportY: number, screenTop: number, screenHeight: number) => {
+      syncPromptCopyButtons({
+        gutter,
+        buffer,
+        viewportY,
+        viewportRows: 3,
+        screenTop,
+        screenHeight,
+        label: 'Copy command block',
+        onCopy,
+      });
+    };
+
+    sync(0, 4, 60);
+    expect(gutter.querySelector<HTMLButtonElement>('[data-buffer-row="1"]')?.style.top).toBe('24px');
+
+    sync(2, 4, 60);
+    expect(gutter.querySelector('[data-buffer-row="1"]')).toBeNull();
+    expect(gutter.querySelector<HTMLButtonElement>('[data-buffer-row="3"]')?.style.top).toBe('24px');
+
+    sync(2, 2, 75);
+    const resized = gutter.querySelector<HTMLButtonElement>('[data-buffer-row="3"]');
+    expect(resized?.style.top).toBe('27px');
+    expect(resized?.style.height).toBe('25px');
+
+    rows[4] = 'eletim@E-ryzen:~$ written';
+    sync(2, 2, 75);
+    expect(gutter.querySelector('[data-buffer-row="4"]')).not.toBeNull();
   });
 });

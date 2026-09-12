@@ -1,5 +1,5 @@
 import { useEffect, useRef, useCallback, useState } from "react";
-import { Terminal, type IDecoration, type IMarker } from "@xterm/xterm";
+import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 
 import { WebLinksAddon } from "@xterm/addon-web-links";
@@ -11,7 +11,7 @@ import type { ITerminalThemeColors } from "@/lib/terminal-themes";
 import { createMultilineUrlLinkProvider } from "@/lib/multiline-url-link-provider";
 import { copyToClipboard } from "@/lib/clipboard";
 import { DEFAULT_LINE_HEIGHT } from "@/lib/terminal-line-height";
-import { findShellPromptRows, getPromptBlockText } from "@/lib/terminal-prompt-copy";
+import { getPromptBlockText, syncPromptCopyButtons } from "@/lib/terminal-prompt-copy";
 import isElectron from "@/hooks/use-is-electron";
 
 interface IUseTerminalOptions {
@@ -172,7 +172,9 @@ const useTerminal = ({ theme, fontSize = DEFAULT_FONT_SIZE, lineHeight = DEFAULT
     let disposed = false;
     let resizeRaf = 0;
     let reFitTimer = 0;
+    let promptCopyRaf = 0;
     let resizeObserver: ResizeObserver | null = null;
+    let promptCopyResizeObserver: ResizeObserver | null = null;
     let cleanupTouch: (() => void) | null = null;
 
     loadFonts().then(() => {
@@ -230,94 +232,53 @@ const useTerminal = ({ theme, fontSize = DEFAULT_FONT_SIZE, lineHeight = DEFAULT
         gutter.setAttribute('aria-hidden', 'false');
         terminal.element.appendChild(gutter);
 
-        const promptDecorations = new Set<{
-          marker: IMarker;
-          decoration: IDecoration;
-          button: HTMLButtonElement;
-        }>();
-        let pendingLineFeeds = 0;
-
-        const addPromptDecoration = (row: number) => {
+        const copyPromptBlock = async (row: number) => {
           const buffer = terminal.buffer.active;
-          const marker = terminal.registerMarker(row - buffer.baseY - buffer.cursorY);
-          const decoration = terminal.registerDecoration({ marker, layer: 'top' });
-          if (!decoration) {
-            marker.dispose();
-            return;
-          }
-
-          const button = document.createElement('button');
-          button.type = 'button';
-          button.className = 'terminal-prompt-copy-button';
-          button.setAttribute('aria-label', callbacksRef.current.t('copyPromptBlockLabel'));
-          button.title = callbacksRef.current.t('copyPromptBlockLabel');
-          button.addEventListener('mousedown', (event) => {
-            event.preventDefault();
-            event.stopPropagation();
-          });
-          button.addEventListener('click', async (event) => {
-            event.preventDefault();
-            event.stopPropagation();
-            const text = getPromptBlockText(terminal.buffer.active, marker.line);
-            if (!text) return;
-            const ok = await copyToClipboard(text);
-            if (ok) {
-              toast.success(callbacksRef.current.t('copyPaneSuccess'), {
-                id: COPY_TOAST_ID,
-                duration: 1500,
-              });
-            }
-          });
-          gutter.appendChild(button);
-
-          const entry = { marker, decoration, button };
-          promptDecorations.add(entry);
-          decoration.onRender((element) => {
-            element.style.pointerEvents = 'none';
-            button.style.display = element.style.display;
-            button.style.top = element.style.top;
-            button.style.height = element.style.height;
-          });
-          decoration.onDispose(() => {
-            button.remove();
-            promptDecorations.delete(entry);
-          });
-        };
-
-        const refreshPromptDecorations = (scanFullBuffer = false) => {
-          if (terminal.buffer.active.type !== 'normal') {
-            pendingLineFeeds = 0;
-            return;
-          }
-          const buffer = terminal.buffer.active;
-          const scanStart = scanFullBuffer
-            ? 0
-            : Math.max(0, buffer.length - terminal.rows - pendingLineFeeds - 1);
-          pendingLineFeeds = 0;
-          const promptRows = new Set(findShellPromptRows(buffer, scanStart));
-          const decoratedRows = new Set<number>();
-
-          for (const entry of [...promptDecorations]) {
-            if (
-              entry.marker.isDisposed
-              || (entry.marker.line >= scanStart && !promptRows.has(entry.marker.line))
-            ) {
-              entry.decoration.dispose();
-            } else {
-              decoratedRows.add(entry.marker.line);
-            }
-          }
-
-          for (const row of promptRows) {
-            if (!decoratedRows.has(row)) addPromptDecoration(row);
+          const text = getPromptBlockText(buffer, row);
+          if (!text) return;
+          const ok = await copyToClipboard(text);
+          if (ok) {
+            toast.success(callbacksRef.current.t('copyPaneSuccess'), {
+              id: COPY_TOAST_ID,
+              duration: 1500,
+            });
           }
         };
 
-        terminal.onLineFeed(() => {
-          pendingLineFeeds++;
-        });
-        terminal.onWriteParsed(() => refreshPromptDecorations());
-        refreshPromptDecorations(true);
+        const syncPromptButtons = () => {
+          promptCopyRaf = 0;
+          const buffer = terminal.buffer.active;
+          const screen = terminal.element?.querySelector<HTMLElement>('.xterm-screen');
+          if (!screen || !terminal.element) return;
+          const terminalRect = terminal.element.getBoundingClientRect();
+          const screenRect = screen.getBoundingClientRect();
+          syncPromptCopyButtons({
+            gutter,
+            buffer,
+            viewportY: buffer.viewportY,
+            viewportRows: terminal.rows,
+            screenTop: screenRect.top - terminalRect.top,
+            screenHeight: screenRect.height,
+            label: callbacksRef.current.t('copyPromptBlockLabel'),
+            onCopy: copyPromptBlock,
+          });
+        };
+
+        const schedulePromptButtonSync = () => {
+          if (promptCopyRaf) return;
+          promptCopyRaf = requestAnimationFrame(syncPromptButtons);
+        };
+
+        terminal.onScroll(schedulePromptButtonSync);
+        terminal.onResize(schedulePromptButtonSync);
+        terminal.onWriteParsed(schedulePromptButtonSync);
+
+        const screen = terminal.element.querySelector<HTMLElement>('.xterm-screen');
+        if (screen) {
+          promptCopyResizeObserver = new ResizeObserver(schedulePromptButtonSync);
+          promptCopyResizeObserver.observe(screen);
+        }
+        schedulePromptButtonSync();
       }
 
       terminalInstance.current = terminal;
@@ -426,8 +387,10 @@ const useTerminal = ({ theme, fontSize = DEFAULT_FONT_SIZE, lineHeight = DEFAULT
       disposed = true;
       setIsReady(false);
       cancelAnimationFrame(resizeRaf);
+      cancelAnimationFrame(promptCopyRaf);
       clearTimeout(reFitTimer);
       resizeObserver?.disconnect();
+      promptCopyResizeObserver?.disconnect();
       cleanupTouch?.();
       containerNode.classList.remove('terminal-prompt-copy-enabled');
       terminalInstance.current?.dispose();
