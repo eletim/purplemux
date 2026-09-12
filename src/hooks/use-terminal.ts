@@ -247,10 +247,6 @@ const useTerminal = ({ theme, fontSize = DEFAULT_FONT_SIZE, lineHeight = DEFAULT
 
         const syncPromptButtons = () => {
           promptCopyRaf = 0;
-          if (terminal.buffer.active.type !== 'normal') {
-            gutter.replaceChildren();
-            return;
-          }
           const buffer = terminal.buffer.active;
           const screen = terminal.element?.querySelector<HTMLElement>('.xterm-screen');
           if (!screen || !terminal.element) return;

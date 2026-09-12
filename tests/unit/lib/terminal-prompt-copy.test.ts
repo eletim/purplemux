@@ -10,7 +10,11 @@ import {
   type ITerminalPromptLine,
 } from '@/lib/terminal-prompt-copy';
 
-const createBuffer = (rows: Array<string | { text: string; wrapped: boolean }>) => ({
+const createBuffer = (
+  rows: Array<string | { text: string; wrapped: boolean }>,
+  type: 'normal' | 'alternate' = 'normal',
+) => ({
+  type,
   length: rows.length,
   getLine: (row: number): ITerminalPromptLine | undefined => {
     const value = rows[row];
@@ -30,6 +34,8 @@ describe('terminal prompt copy boundaries', () => {
     expect(isShellPrompt('root@server:/srv/app#')).toBe(true);
     expect(isShellPrompt('~/purplemux % git status')).toBe(true);
     expect(isShellPrompt('$ echo hello')).toBe(true);
+    expect(isShellPrompt('  eletim@E-ryzen:~$ pnpm test')).toBe(true);
+    expect(isShellPrompt('\u200beletim@E-ryzen:~$ pnpm test')).toBe(true);
     expect(isShellPrompt('# a comment from a displayed config file')).toBe(false);
     expect(isShellPrompt('# Markdown heading')).toBe(false);
     expect(isShellPrompt('build output: 100% done')).toBe(false);
@@ -154,16 +160,55 @@ describe('terminal prompt copy boundaries', () => {
     expect(onCopy).toHaveBeenCalledWith(2);
   });
 
-  it('repositions and replaces buttons after scroll and resize', () => {
+  it.each(['normal', 'alternate'] as const)(
+    'creates a DOM button for a prompt in the %s buffer',
+    (type) => {
+      const gutter = document.createElement('div');
+      const buffer = createBuffer([
+        'plain output',
+        '  \u200beletim@E-ryzen:~$ printf hello',
+        'hello',
+      ], type);
+      const copied: string[] = [];
+
+      syncPromptCopyButtons({
+        gutter,
+        buffer,
+        viewportY: 0,
+        viewportRows: 3,
+        screenTop: 0,
+        screenHeight: 60,
+        label: 'Copy command block',
+        onCopy: (row) => {
+          const text = getPromptBlockText(buffer, row);
+          if (text) copied.push(text);
+        },
+      });
+
+      const button = gutter.querySelector<HTMLButtonElement>('.terminal-prompt-copy-button');
+      expect(button?.dataset.bufferRow).toBe('1');
+      const gutterMouseDown = vi.fn();
+      gutter.addEventListener('mousedown', gutterMouseDown);
+      const mouseDown = new MouseEvent('mousedown', { bubbles: true, cancelable: true });
+      button?.dispatchEvent(mouseDown);
+      expect(mouseDown.defaultPrevented).toBe(true);
+      expect(gutterMouseDown).not.toHaveBeenCalled();
+      button?.click();
+      expect(copied).toEqual(['  \u200beletim@E-ryzen:~$ printf hello\nhello']);
+    },
+  );
+
+  it('repositions and replaces buttons after scroll, resize, and write', () => {
     const gutter = document.createElement('div');
     const onCopy = vi.fn();
-    const buffer = createBuffer([
+    const rows = [
       'plain output',
       'eletim@E-ryzen:~$ first',
       'plain output',
       'eletim@E-ryzen:~$ second',
       'plain output',
-    ]);
+    ];
+    const buffer = createBuffer(rows);
     const sync = (viewportY: number, screenTop: number, screenHeight: number) => {
       syncPromptCopyButtons({
         gutter,
@@ -188,5 +233,9 @@ describe('terminal prompt copy boundaries', () => {
     const resized = gutter.querySelector<HTMLButtonElement>('[data-buffer-row="3"]');
     expect(resized?.style.top).toBe('27px');
     expect(resized?.style.height).toBe('25px');
+
+    rows[4] = 'eletim@E-ryzen:~$ written';
+    sync(2, 2, 75);
+    expect(gutter.querySelector('[data-buffer-row="4"]')).not.toBeNull();
   });
 });
