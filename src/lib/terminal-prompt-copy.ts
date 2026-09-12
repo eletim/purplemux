@@ -18,11 +18,17 @@ const HOST_PATH_PROMPT_RE = /^(?:\([^)]+\)\s*)?[\w.-]+@[\w.-]+:(?:~|\/).*?[#$%>�
 const PATH_PROMPT_RE = /^(?:~|\/)[^\r\n]*?[#$%>❯➜](?:\s|$)/;
 const SIMPLE_PROMPT_RE = /^[$%❯➜](?:\s|$)/;
 
-export const isShellPrompt = (text: string): boolean => (
-  HOST_PATH_PROMPT_RE.test(text)
-  || PATH_PROMPT_RE.test(text)
-  || SIMPLE_PROMPT_RE.test(text)
-);
+const normalizePromptCandidate = (text: string): string => text
+  .replace(/^[\s\u200B\u200C\u200D\uFEFF]+/, '');
+
+export const isShellPrompt = (text: string): boolean => {
+  const candidate = normalizePromptCandidate(text);
+  return (
+    HOST_PATH_PROMPT_RE.test(candidate)
+    || PATH_PROMPT_RE.test(candidate)
+    || SIMPLE_PROMPT_RE.test(candidate)
+  );
+};
 
 const findLogicalLineStart = (buffer: ITerminalPromptBuffer, row: number): number => {
   let startRow = Math.max(0, Math.min(row, buffer.length - 1));
