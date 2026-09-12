@@ -40,6 +40,7 @@ import {
   type TAgentPanelType,
 } from '@/lib/agent-check';
 import { reloadForReconnectRecovery } from '@/lib/ws-reload-recovery';
+import { copyToClipboard } from '@/lib/clipboard';
 
 
 interface ITermActions {
@@ -48,6 +49,9 @@ interface ITermActions {
   fit: () => { cols: number; rows: number };
   focus: () => void;
   getBufferText: () => string;
+  trackCommandInput: (data: string) => void;
+  setCommandCopyTarget: (clientY: number) => void;
+  getCommandAndOutput: () => string;
 }
 
 interface IWsActions {
@@ -70,6 +74,9 @@ const NOOP_TERM_ACTIONS: ITermActions = {
   fit: () => ({ cols: 40, rows: 24 }),
   focus: () => {},
   getBufferText: () => '',
+  trackCommandInput: () => {},
+  setCommandCopyTarget: () => {},
+  getCommandAndOutput: () => '',
 };
 
 const NOOP_WS_ACTIONS: IWsActions = {
@@ -243,7 +250,7 @@ const MobileSurfaceView = ({
     return true;
   }, []);
 
-  const { terminalRef, write, clear, reset, fit, focus, isReady, getBufferText } = useTerminal({
+  const { terminalRef, write, clear, reset, fit, focus, isReady, getBufferText, trackCommandInput, setCommandCopyTarget, getCommandAndOutput } = useTerminal({
     theme: terminalTheme.colors,
     fontSize: isAgentPanel ? undefined : MOBILE_FONT_SIZE,
     lineHeight: resolveLineHeight(configLineHeight, configLineHeightCustom),
@@ -303,7 +310,18 @@ const MobileSurfaceView = ({
       fetchAndUpdateCwd();
     },
     customKeyEventHandler: handleCustomKeyEvent,
+    trackCommands: panelType === 'terminal',
   });
+
+  const handleCopyCommandAndOutput = useCallback(async () => {
+    const content = termActionsRef.current.getCommandAndOutput();
+    if (!content) {
+      toast.error(tt('copyCommandAndOutputUnavailable'));
+      return;
+    }
+    const ok = await copyToClipboard(content);
+    toast[ok ? 'success' : 'error'](tt(ok ? 'copyPaneSuccess' : 'copyPaneCopyFailed'), { duration: 1500 });
+  }, [tt]);
 
   useEffect(() => {
     clearRef.current = clear;
@@ -339,8 +357,8 @@ const MobileSurfaceView = ({
     disconnectReason,
     connect,
     reconnect,
-    sendStdin,
-    sendWebStdin,
+    sendStdin: sendRawStdin,
+    sendWebStdin: sendRawWebStdin,
     sendResize,
   } = useTerminalWebSocket({
     onData: (data) => {
@@ -361,8 +379,18 @@ const MobileSurfaceView = ({
     onSessionEnded: handleSessionEnded,
   });
 
+  const sendStdin = useCallback((data: string) => {
+    termActionsRef.current.trackCommandInput(data);
+    sendRawStdin(data);
+  }, [sendRawStdin]);
+
+  const sendWebStdin = useCallback((data: string) => {
+    termActionsRef.current.trackCommandInput(data);
+    sendRawWebStdin(data);
+  }, [sendRawWebStdin]);
+
   useEffect(() => {
-    termActionsRef.current = { write, reset, fit, focus, getBufferText };
+    termActionsRef.current = { write, reset, fit, focus, getBufferText, trackCommandInput, setCommandCopyTarget, getCommandAndOutput };
     wsActionsRef.current = { sendStdin, sendResize };
   });
 
@@ -826,6 +854,9 @@ const MobileSurfaceView = ({
             !usesHiddenTerminal && ready && showTerminal ? 'opacity-100' : '',
             !usesHiddenTerminal && (!ready || !showTerminal) ? 'opacity-0' : '',
           )}
+          onCommandContextMenu={panelType === 'terminal' ? setCommandCopyTarget : undefined}
+          onCopyCommandAndOutput={panelType === 'terminal' ? handleCopyCommandAndOutput : undefined}
+          copyCommandAndOutputLabel={tt('copyCommandAndOutput')}
         />
       )}
 
