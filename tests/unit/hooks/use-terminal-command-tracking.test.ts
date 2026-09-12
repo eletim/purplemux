@@ -78,16 +78,24 @@ vi.mock('@xterm/addon-clipboard', () => ({ ClipboardAddon: class {} }));
 vi.mock('next-intl', () => ({ useTranslations: () => (key: string) => key }));
 vi.mock('sonner', () => ({ toast: { success: vi.fn() } }));
 
-const setBuffer = (terminal: IFakeTerminal, rows: string[], cursorLine: number, cursorColumn: number) => {
-  const lines = rows.map((text): IFakeLine => ({
-    text,
-    isWrapped: false,
-    length: text.length,
-    translateToString: (trimRight = false, start = 0, end) => {
-      const value = trimRight ? text.trimEnd() : text;
-      return value.slice(start, end);
-    },
-  }));
+const setBuffer = (
+  terminal: IFakeTerminal,
+  rows: Array<string | [string, boolean]>,
+  cursorLine: number,
+  cursorColumn: number,
+) => {
+  const lines = rows.map((row): IFakeLine => {
+    const [text, isWrapped] = typeof row === 'string' ? [row, false] : row;
+    return {
+      text,
+      isWrapped,
+      length: text.length,
+      translateToString: (trimRight = false, start = 0, end) => {
+        const value = trimRight ? text.trimEnd() : text;
+        return value.slice(start, end);
+      },
+    };
+  });
   terminal.buffer.active.length = lines.length;
   terminal.buffer.active.cursorY = cursorLine;
   terminal.buffer.active.cursorX = cursorColumn;
@@ -205,6 +213,55 @@ describe('useTerminal command tracking', () => {
 
     expect(result.current.getCommandAndOutput()).toBe(
       'user@host:~/repo\n$ echo hello\nhello',
+    );
+    unmount();
+  });
+
+  it('keeps path output before a plain Bash prompt', async () => {
+    const { result, terminal, unmount } = await setup();
+    setBuffer(terminal, ['$ '], 0, 2);
+    act(() => {
+      result.current.trackCommandInput('pwd');
+      result.current.trackCommandInput('\r');
+    });
+    setBuffer(terminal, ['$ pwd', '/home/user/repo', '$ '], 2, 2);
+
+    expect(result.current.getCommandAndOutput()).toBe('$ pwd\n/home/user/repo');
+    unmount();
+  });
+
+  it('separates commands across wrapped primary prompts', async () => {
+    const { result, terminal, unmount } = await setup();
+    const prefix = 'user@host:~/very/long/';
+    setBuffer(terminal, [prefix, ['repo$ ', true]], 1, 6);
+    act(() => {
+      result.current.trackCommandInput('echo one');
+      result.current.trackCommandInput('\r');
+    });
+    setBuffer(terminal, [
+      prefix,
+      ['repo$ echo one', true],
+      'one',
+      prefix,
+      ['repo$ ', true],
+    ], 4, 6);
+    act(() => {
+      result.current.trackCommandInput('echo two');
+      result.current.trackCommandInput('\r');
+    });
+    setBuffer(terminal, [
+      prefix,
+      ['repo$ echo one', true],
+      'one',
+      prefix,
+      ['repo$ echo two', true],
+      'two',
+      prefix,
+      ['repo$ ', true],
+    ], 7, 6);
+
+    expect(result.current.getCommandAndOutput()).toBe(
+      'user@host:~/very/long/repo$ echo two\ntwo',
     );
     unmount();
   });

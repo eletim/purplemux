@@ -124,4 +124,69 @@ describe('terminal command output', () => {
       'user@host:~/repo$ compare\nold > new\ncost $ 5\ndone',
     );
   });
+
+  it('keeps path output before a plain Bash prompt', () => {
+    const value = buffer([
+      ['$ pwd'],
+      ['/home/user/repo'],
+      ['$ '],
+    ]);
+    const range = findShellCommandRange(value, 1);
+
+    expect(range && serializeTerminalSpan(value, range)).toBe(
+      '$ pwd\n/home/user/repo',
+    );
+  });
+
+  it('reconstructs wrapped initial and subsequent prompts', () => {
+    const value = buffer([
+      ['user@host:~/very/long/'],
+      ['repo$ echo hello', true],
+      ['hello'],
+      ['user@host:~/very/long/'],
+      ['repo$ ', true],
+    ]);
+
+    expect(findPrimaryPromptBeforeCursor(value, 4, 6, {
+      tail: 'user@host:~/very/long/repo$ ',
+      multilinePrefix: null,
+    })).toMatchObject({ start: { line: 3, column: 0 } });
+    const range = findShellCommandRange(value, 2);
+    expect(range && serializeTerminalSpan(value, range)).toBe(
+      'user@host:~/very/long/repo$ echo hello\nhello',
+    );
+  });
+
+  it('converts Unicode string offsets to terminal cell columns', () => {
+    const prompt = 'user@host:~/repo$ ';
+    const cellLine = (cells: Array<[string, number]>, isWrapped = false) => ({
+      isWrapped,
+      length: cells.length,
+      getCell: (column: number) => cells[column]
+        ? { getChars: () => cells[column][0], getWidth: () => cells[column][1] }
+        : undefined,
+      translateToString: (_trimRight = false, start = 0, end = cells.length) => cells
+        .slice(start, end)
+        .map(([chars]) => chars)
+        .join(''),
+    });
+    const asciiCells = (text: string): Array<[string, number]> => [...text].map((char) => [char, 1]);
+    const first = cellLine(asciiCells(`${prompt}printf value`));
+    const second = cellLine([
+      ['界', 2],
+      ['', 0],
+      ['é', 1],
+      ...asciiCells(prompt),
+    ]);
+    const value: ITerminalTextBuffer = {
+      length: 2,
+      getLine: (line) => [first, second][line],
+    };
+    const range = findShellCommandRange(value, 1, 1);
+
+    expect(range).toMatchObject({ end: { line: 1, column: 3 } });
+    expect(range && serializeTerminalSpan(value, range)).toBe(
+      `${prompt}printf value\n界é`,
+    );
+  });
 });

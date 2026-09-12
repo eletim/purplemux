@@ -17,6 +17,7 @@ import {
   findPrimaryPromptBeforeCursor,
   findShellCommandRange,
   serializeTerminalSpan,
+  type IPromptSignature,
   type ITerminalTextRange,
 } from '@/lib/terminal-command-output';
 
@@ -35,7 +36,7 @@ interface ITrackedCommand {
   start: IMarker;
   startColumn: number;
   end: { marker: IMarker; column: number } | null;
-  promptTail: string;
+  promptSignature: IPromptSignature | undefined;
   submitted: boolean;
 }
 
@@ -160,7 +161,7 @@ const useTerminal = ({ theme, fontSize = DEFAULT_FONT_SIZE, lineHeight = DEFAULT
         buffer,
         cursorLine,
         cursorColumn,
-        current?.promptTail,
+        current?.promptSignature,
       );
       if (!current || (current.submitted && prompt)) {
         if (current && !current.end && prompt) {
@@ -174,7 +175,7 @@ const useTerminal = ({ theme, fontSize = DEFAULT_FONT_SIZE, lineHeight = DEFAULT
             start,
             startColumn: prompt?.start.column ?? 0,
             end: null,
-            promptTail: prompt?.tail ?? '',
+            promptSignature: prompt?.signature,
             submitted: false,
           };
           commands.push(current);
@@ -197,7 +198,7 @@ const useTerminal = ({ theme, fontSize = DEFAULT_FONT_SIZE, lineHeight = DEFAULT
     const buffer = terminal.buffer.active;
     const cursorLine = buffer.baseY + buffer.cursorY;
     const prompt = command.submitted
-      ? findPrimaryPromptBeforeCursor(buffer, cursorLine, buffer.cursorX, command.promptTail)
+      ? findPrimaryPromptBeforeCursor(buffer, cursorLine, buffer.cursorX, command.promptSignature)
       : null;
     const end = prompt && (
       prompt.start.line > start.line

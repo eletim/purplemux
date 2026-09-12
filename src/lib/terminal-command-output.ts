@@ -1,6 +1,12 @@
+export interface ITerminalTextCell {
+  getChars(): string;
+  getWidth(): number;
+}
+
 export interface ITerminalTextLine {
   readonly isWrapped: boolean;
   readonly length: number;
+  getCell?(x: number): ITerminalTextCell | undefined;
   translateToString(trimRight?: boolean, startColumn?: number, endColumn?: number): string;
 }
 
@@ -19,8 +25,20 @@ export interface ITerminalTextRange {
   end: ITerminalPosition;
 }
 
-export interface IPromptBoundary extends ITerminalTextRange {
+export interface IPromptSignature {
   tail: string;
+  multilinePrefix: string | null;
+}
+
+export interface IPromptBoundary extends ITerminalTextRange {
+  signature: IPromptSignature;
+}
+
+interface ILogicalLine {
+  text: string;
+  startLine: number;
+  endLine: number;
+  positionAt(index: number): ITerminalPosition;
 }
 
 const SIMPLE_PROMPT_RE = /^([#$%❯➜]\s)$/;
@@ -31,7 +49,7 @@ const PATH_PROMPT_SUFFIX_RE = /((?:~|\/).*?[#$%>]\s)$/;
 const PATH_PROMPT_WITH_COMMAND_RE = /^((?:~|\/).*?[#$%>]\s)\S/;
 const HOST_PERCENT_PROMPT_SUFFIX_RE = /([\w.-]+%\s)$/;
 const HOST_PERCENT_PROMPT_WITH_COMMAND_RE = /^([\w.-]+%\s)\S/;
-const PATH_ONLY_LINE_RE = /^([\w.-]+@[\w.-]+:(?:~|\/).*|(?:~|\/).*)$/;
+const HOST_PATH_PREFIX_RE = /^([\w.-]+@[\w.-]+:)(?:~|\/)/;
 
 export const findLogicalLineStart = (buffer: ITerminalTextBuffer, line: number): number => {
   let start = Math.max(0, Math.min(line, buffer.length - 1));
@@ -39,17 +57,80 @@ export const findLogicalLineStart = (buffer: ITerminalTextBuffer, line: number):
   return start;
 };
 
-const lineTextToColumn = (
-  buffer: ITerminalTextBuffer,
-  line: number,
-  column: number,
-): string => buffer.getLine(line)?.translateToString(false).slice(0, column) ?? '';
-
-const matchPromptSuffix = (text: string, knownTail?: string): { index: number; tail: string } | null => {
-  if (knownTail && text.endsWith(knownTail)) {
-    return { index: text.length - knownTail.length, tail: knownTail };
+const getTextEndColumn = (line: ITerminalTextLine): number => {
+  if (!line.getCell) return line.translateToString(true).length;
+  let end = 0;
+  for (let column = 0; column < line.length; column++) {
+    const cell = line.getCell(column);
+    if (cell?.getChars()) end = column + Math.max(1, cell.getWidth());
   }
-  const knownHost = knownTail?.match(/^([\w.-]+@[\w.-]+:)/)?.[1];
+  return end;
+};
+
+const readLogicalLine = (
+  buffer: ITerminalTextBuffer,
+  endLine: number,
+  endColumn: number,
+): ILogicalLine => {
+  const startLine = findLogicalLineStart(buffer, endLine);
+  const offsets: Array<{ index: number; position: ITerminalPosition }> = [
+    { index: 0, position: { line: startLine, column: 0 } },
+  ];
+  let text = '';
+
+  for (let lineNumber = startLine; lineNumber <= endLine; lineNumber++) {
+    const line = buffer.getLine(lineNumber);
+    if (!line) continue;
+    const limit = lineNumber === endLine ? endColumn : line.length;
+    if (line.getCell) {
+      for (let column = 0; column < limit; column++) {
+        const cell = line.getCell(column);
+        const chars = cell?.getChars() ?? '';
+        if (!chars) continue;
+        offsets.push({ index: text.length, position: { line: lineNumber, column } });
+        text += chars;
+        offsets.push({
+          index: text.length,
+          position: { line: lineNumber, column: column + Math.max(1, cell?.getWidth() ?? 1) },
+        });
+      }
+    } else {
+      const chunk = line.translateToString(false, 0, limit);
+      for (let index = 0; index <= chunk.length; index++) {
+        offsets.push({ index: text.length + index, position: { line: lineNumber, column: index } });
+      }
+      text += chunk;
+    }
+  }
+
+  return {
+    text,
+    startLine,
+    endLine,
+    positionAt: (index) => {
+      for (let i = offsets.length - 1; i >= 0; i--) {
+        if (offsets[i].index <= index) return offsets[i].position;
+      }
+      return { line: startLine, column: 0 };
+    },
+  };
+};
+
+const readCompleteLogicalLine = (buffer: ITerminalTextBuffer, startLine: number): ILogicalLine => {
+  let endLine = startLine;
+  while (endLine + 1 < buffer.length && buffer.getLine(endLine + 1)?.isWrapped) endLine++;
+  const end = buffer.getLine(endLine);
+  return readLogicalLine(buffer, endLine, end ? getTextEndColumn(end) : 0);
+};
+
+const matchPromptSuffix = (
+  text: string,
+  known?: IPromptSignature,
+): { index: number; tail: string } | null => {
+  if (known?.tail && text.endsWith(known.tail)) {
+    return { index: text.length - known.tail.length, tail: known.tail };
+  }
+  const knownHost = known?.tail.match(/^([\w.-]+@[\w.-]+:)/)?.[1];
   const knownHostIndex = knownHost ? text.lastIndexOf(knownHost) : -1;
   if (knownHostIndex >= 0) {
     const match = HOST_PATH_PROMPT_SUFFIX_RE.exec(text.slice(knownHostIndex));
@@ -60,35 +141,52 @@ const matchPromptSuffix = (text: string, knownTail?: string): { index: number; t
     if (match) return { index: match.index, tail: match[1] };
   }
   const simple = SIMPLE_PROMPT_RE.exec(text);
-  if (simple) return { index: 0, tail: simple[1] };
-  return null;
+  return simple ? { index: 0, tail: simple[1] } : null;
 };
 
 export const looksLikeShellPrompt = (text: string): boolean => matchPromptSuffix(text) !== null;
+
+const findMultilinePrefix = (
+  buffer: ITerminalTextBuffer,
+  promptLine: number,
+  known?: IPromptSignature,
+): { start: ITerminalPosition; identity: string } | null => {
+  if (known && !known.multilinePrefix) return null;
+  if (promptLine <= 0) return null;
+  const previousEndLine = promptLine - 1;
+  const previousEnd = buffer.getLine(previousEndLine);
+  if (!previousEnd) return null;
+  const previous = readLogicalLine(buffer, previousEndLine, getTextEndColumn(previousEnd));
+  const identity = HOST_PATH_PREFIX_RE.exec(previous.text)?.[1];
+  if (!identity) return null;
+  if (known?.multilinePrefix && identity !== known.multilinePrefix) return null;
+  return { start: previous.positionAt(0), identity };
+};
 
 export const findPrimaryPromptBeforeCursor = (
   buffer: ITerminalTextBuffer,
   cursorLine: number,
   cursorColumn: number,
-  knownTail?: string,
+  known?: IPromptSignature,
 ): IPromptBoundary | null => {
-  const current = lineTextToColumn(buffer, cursorLine, cursorColumn);
-  const match = matchPromptSuffix(current, knownTail);
+  const logical = readLogicalLine(buffer, cursorLine, cursorColumn);
+  const match = matchPromptSuffix(logical.text, known);
   if (!match) return null;
 
-  let start = { line: cursorLine, column: match.index };
-  if (SIMPLE_PROMPT_RE.test(match.tail) && cursorLine > 0) {
-    const previous = buffer.getLine(cursorLine - 1);
-    if (previous && !previous.isWrapped) {
-      const pathLine = PATH_ONLY_LINE_RE.exec(previous.translateToString(true));
-      if (pathLine) start = { line: cursorLine - 1, column: pathLine.index };
+  let start = logical.positionAt(match.index);
+  let multilinePrefix: string | null = null;
+  if (SIMPLE_PROMPT_RE.test(match.tail)) {
+    const prefix = findMultilinePrefix(buffer, logical.startLine, known);
+    if (prefix) {
+      start = prefix.start;
+      multilinePrefix = prefix.identity;
     }
   }
 
   return {
     start,
     end: { line: cursorLine, column: cursorColumn },
-    tail: match.tail,
+    signature: { tail: match.tail, multilinePrefix },
   };
 };
 
@@ -96,9 +194,9 @@ const findCommandPrompt = (
   buffer: ITerminalTextBuffer,
   line: number,
 ): IPromptBoundary | null => {
-  const current = buffer.getLine(line);
-  if (!current || current.isWrapped) return null;
-  const text = current.translateToString(true);
+  const firstLine = buffer.getLine(line);
+  if (!firstLine || firstLine.isWrapped) return null;
+  const logical = readCompleteLogicalLine(buffer, line);
 
   for (const pattern of [
     HOST_PATH_PROMPT_WITH_COMMAND_RE,
@@ -106,19 +204,21 @@ const findCommandPrompt = (
     HOST_PERCENT_PROMPT_WITH_COMMAND_RE,
     SIMPLE_PROMPT_WITH_COMMAND_RE,
   ]) {
-    const match = pattern.exec(text);
+    const match = pattern.exec(logical.text);
     if (!match) continue;
-    let start = { line, column: 0 };
-    if (pattern === SIMPLE_PROMPT_WITH_COMMAND_RE && line > 0) {
-      const previous = buffer.getLine(line - 1);
-      const previousText = previous && !previous.isWrapped ? previous.translateToString(true) : '';
-      const pathLine = PATH_ONLY_LINE_RE.exec(previousText);
-      if (pathLine) start = { line: line - 1, column: pathLine.index };
+    let start = logical.positionAt(0);
+    let multilinePrefix: string | null = null;
+    if (pattern === SIMPLE_PROMPT_WITH_COMMAND_RE) {
+      const prefix = findMultilinePrefix(buffer, logical.startLine);
+      if (prefix) {
+        start = prefix.start;
+        multilinePrefix = prefix.identity;
+      }
     }
     return {
       start,
-      end: { line, column: match[1].length },
-      tail: match[1],
+      end: logical.positionAt(match[1].length),
+      signature: { tail: match[1], multilinePrefix },
     };
   }
   return null;
@@ -130,22 +230,24 @@ export const findShellCommandRange = (
   targetColumn = 0,
 ): ITerminalTextRange | null => {
   let commandPrompt: IPromptBoundary | null = null;
-  for (let y = Math.min(targetLine, buffer.length - 1); y >= 0; y--) {
-    commandPrompt = findCommandPrompt(buffer, y);
+  for (let line = Math.min(targetLine, buffer.length - 1); line >= 0; line--) {
+    commandPrompt = findCommandPrompt(buffer, line);
     if (commandPrompt) break;
   }
   if (!commandPrompt) return null;
 
   const finalLine = buffer.length - 1;
-  let end = { line: finalLine, column: buffer.getLine(finalLine)?.length ?? 0 };
-  for (let y = commandPrompt.end.line + 1; y < buffer.length; y++) {
-    const line = buffer.getLine(y);
-    if (!line || line.isWrapped) continue;
-    const boundary = findCommandPrompt(buffer, y) ?? findPrimaryPromptBeforeCursor(
+  const finalBufferLine = buffer.getLine(finalLine);
+  let end = { line: finalLine, column: finalBufferLine ? getTextEndColumn(finalBufferLine) : 0 };
+  for (let line = commandPrompt.end.line + 1; line < buffer.length; line++) {
+    const bufferLine = buffer.getLine(line);
+    if (!bufferLine || bufferLine.isWrapped) continue;
+    const logical = readCompleteLogicalLine(buffer, line);
+    const boundary = findCommandPrompt(buffer, line) ?? findPrimaryPromptBeforeCursor(
       buffer,
-      y,
-      line.translateToString(true).length,
-      commandPrompt.tail,
+      logical.endLine,
+      getTextEndColumn(buffer.getLine(logical.endLine)!),
+      commandPrompt.signature,
     );
     if (boundary && (
       boundary.start.line > commandPrompt.end.line
@@ -156,11 +258,10 @@ export const findShellCommandRange = (
     }
   }
 
-  const target = { line: targetLine, column: targetColumn };
-  const targetAfterStart = target.line > commandPrompt.start.line
-    || (target.line === commandPrompt.start.line && target.column >= commandPrompt.start.column);
-  const targetBeforeEnd = target.line < end.line
-    || (target.line === end.line && target.column < end.column);
+  const targetAfterStart = targetLine > commandPrompt.start.line
+    || (targetLine === commandPrompt.start.line && targetColumn >= commandPrompt.start.column);
+  const targetBeforeEnd = targetLine < end.line
+    || (targetLine === end.line && targetColumn < end.column);
   return targetAfterStart && targetBeforeEnd ? { start: commandPrompt.start, end } : null;
 };
 
@@ -175,11 +276,11 @@ export const serializeTerminalSpan = (
 
   let text = '';
   let hasLine = false;
-  for (let y = first; y <= last; y++) {
-    const line = buffer.getLine(y);
+  for (let lineNumber = first; lineNumber <= last; lineNumber++) {
+    const line = buffer.getLine(lineNumber);
     if (!line) continue;
-    const startColumn = y === first ? range.start.column : 0;
-    const endColumn = y === range.end.line ? range.end.column : undefined;
+    const startColumn = lineNumber === first ? range.start.column : 0;
+    const endColumn = lineNumber === range.end.line ? range.end.column : undefined;
     if (endColumn === 0) break;
     if (hasLine && !line.isWrapped) text += '\n';
     text += line.translateToString(endColumn === undefined, startColumn, endColumn);
@@ -195,5 +296,5 @@ export const serializeTerminalRange = (
   end: number,
 ): string => serializeTerminalSpan(buffer, {
   start: { line: start, column: 0 },
-  end: { line: end, column: buffer.getLine(end)?.length ?? 0 },
+  end: { line: end, column: buffer.getLine(end) ? getTextEndColumn(buffer.getLine(end)!) : 0 },
 });
