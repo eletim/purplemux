@@ -90,6 +90,8 @@
   "copyPaneCopyAll": "전체 복사",
   "copyPaneSuccess": "클립보드에 복사되었습니다",
   "copyPaneCopyFailed": "복사에 실패했습니다",
+  "copyCommandAndOutput": "명령어와 출력 복사",
+  "copyCommandAndOutputUnavailable": "복사할 명령어와 출력이 없습니다",
   "codexNotInstalled": "Codex CLI를 설치하려면: npm i -g @openai/codex 또는 brew install --cask codex",
   "codexHookInstallFailed": "Codex hook 설치 실패. codex 상태가 정확하지 않을 수 있습니다.",
   "codexConfigParseFailed": "~/.codex/config.toml 파싱 실패. purplemux hook만 적용됩니다.",

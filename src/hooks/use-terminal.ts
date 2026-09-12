@@ -1,5 +1,5 @@
 import { useEffect, useRef, useCallback, useState } from "react";
-import { Terminal } from "@xterm/xterm";
+import { Terminal, type IMarker } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 
 import { WebLinksAddon } from "@xterm/addon-web-links";
@@ -12,6 +12,14 @@ import { createMultilineUrlLinkProvider } from "@/lib/multiline-url-link-provide
 import { copyToClipboard } from "@/lib/clipboard";
 import { DEFAULT_LINE_HEIGHT } from "@/lib/terminal-line-height";
 import isElectron from "@/hooks/use-is-electron";
+import {
+  findLogicalLineStart,
+  findPrimaryPromptBeforeCursor,
+  findShellCommandRange,
+  serializeTerminalSpan,
+  type IPromptSignature,
+  type ITerminalTextRange,
+} from '@/lib/terminal-command-output';
 
 interface IUseTerminalOptions {
   theme?: ITerminalThemeColors;
@@ -21,6 +29,15 @@ interface IUseTerminalOptions {
   onResize?: (cols: number, rows: number) => void;
   onTitleChange?: (title: string) => void;
   customKeyEventHandler?: (event: KeyboardEvent) => boolean;
+  trackCommands?: boolean;
+}
+
+interface ITrackedCommand {
+  start: IMarker;
+  startColumn: number;
+  end: { marker: IMarker; column: number } | null;
+  promptSignature: IPromptSignature | undefined;
+  submitted: boolean;
 }
 
 const COPY_TOAST_ID = 'terminal-copy';
@@ -69,7 +86,7 @@ const loadFonts = () => {
   return fontLoadPromise;
 };
 
-const useTerminal = ({ theme, fontSize = DEFAULT_FONT_SIZE, lineHeight = DEFAULT_LINE_HEIGHT, onInput, onResize, onTitleChange, customKeyEventHandler }: IUseTerminalOptions = {}) => {
+const useTerminal = ({ theme, fontSize = DEFAULT_FONT_SIZE, lineHeight = DEFAULT_LINE_HEIGHT, onInput, onResize, onTitleChange, customKeyEventHandler, trackCommands = false }: IUseTerminalOptions = {}) => {
   const [containerNode, setContainerNode] = useState<HTMLDivElement | null>(null);
   const terminalRef = useCallback((node: HTMLDivElement | null) => {
     setContainerNode(node);
@@ -79,13 +96,153 @@ const useTerminal = ({ theme, fontSize = DEFAULT_FONT_SIZE, lineHeight = DEFAULT
   const writeQueueRef = useRef<Uint8Array[]>([]);
   const isWritingRef = useRef(false);
   const [isReady, setIsReady] = useState(false);
+  const trackedCommandsRef = useRef<ITrackedCommand[]>([]);
+  const bracketedPasteRef = useRef(false);
+  const commandCopyTargetRef = useRef<ITrackedCommand | null>(null);
+  const fallbackCopyRangeRef = useRef<ITerminalTextRange | null>(null);
   const t = useTranslations('terminal');
 
-  const callbacksRef = useRef({ theme, fontSize, lineHeight, onInput, onResize, onTitleChange, customKeyEventHandler, t });
+  const callbacksRef = useRef({ theme, fontSize, lineHeight, onInput, onResize, onTitleChange, customKeyEventHandler, trackCommands, t });
 
   useEffect(() => {
-    callbacksRef.current = { theme, fontSize, lineHeight, onInput, onResize, onTitleChange, customKeyEventHandler, t };
-  }, [theme, fontSize, lineHeight, onInput, onResize, onTitleChange, customKeyEventHandler, t]);
+    callbacksRef.current = { theme, fontSize, lineHeight, onInput, onResize, onTitleChange, customKeyEventHandler, trackCommands, t };
+  }, [theme, fontSize, lineHeight, onInput, onResize, onTitleChange, customKeyEventHandler, trackCommands, t]);
+
+  const disposeTrackedCommands = useCallback(() => {
+    for (const command of trackedCommandsRef.current) {
+      command.start.dispose();
+      command.end?.marker.dispose();
+    }
+    trackedCommandsRef.current = [];
+    commandCopyTargetRef.current = null;
+    fallbackCopyRangeRef.current = null;
+    bracketedPasteRef.current = false;
+  }, []);
+
+  const markLine = useCallback((terminal: Terminal, line: number): IMarker | undefined => {
+    const buffer = terminal.buffer.active;
+    return terminal.registerMarker(line - (buffer.baseY + buffer.cursorY));
+  }, []);
+
+  const trackCommandInput = useCallback((data: string) => {
+    if (!callbacksRef.current.trackCommands) return;
+    const terminal = terminalInstance.current;
+    if (!terminal || terminal.buffer.active.type !== 'normal') return;
+
+    let meaningfulInput = false;
+    let submitted = false;
+    for (let i = 0; i < data.length; i++) {
+      if (data.startsWith('\x1b[200~', i)) {
+        bracketedPasteRef.current = true;
+        i += 5;
+        continue;
+      }
+      if (data.startsWith('\x1b[201~', i)) {
+        bracketedPasteRef.current = false;
+        i += 5;
+        continue;
+      }
+      const char = data[i];
+      if ((char === '\r' || char === '\n') && !bracketedPasteRef.current) {
+        submitted = true;
+      } else if (/[^\x00-\x1f\x7f]/.test(char)) {
+        meaningfulInput = true;
+      }
+    }
+
+    const buffer = terminal.buffer.active;
+    const cursorLine = buffer.baseY + buffer.cursorY;
+    const cursorColumn = buffer.cursorX;
+    const commands = trackedCommandsRef.current;
+    let current = commands.at(-1);
+
+    if (meaningfulInput) {
+      const prompt = findPrimaryPromptBeforeCursor(
+        buffer,
+        cursorLine,
+        cursorColumn,
+        current?.promptSignature,
+      );
+      if (!current || (current.submitted && prompt)) {
+        if (current && !current.end && prompt) {
+          const endMarker = markLine(terminal, prompt.start.line);
+          if (endMarker) current.end = { marker: endMarker, column: prompt.start.column };
+        }
+        const startLine = prompt?.start.line ?? findLogicalLineStart(buffer, cursorLine);
+        const start = markLine(terminal, startLine);
+        if (start) {
+          current = {
+            start,
+            startColumn: prompt?.start.column ?? 0,
+            end: null,
+            promptSignature: prompt?.signature,
+            submitted: false,
+          };
+          commands.push(current);
+        }
+        while (commands.length > 50) {
+          const removed = commands.shift();
+          removed?.start.dispose();
+          removed?.end?.marker.dispose();
+        }
+      }
+    }
+    if (submitted && current) current.submitted = true;
+  }, [markLine]);
+
+  const resolveCommandRange = useCallback((terminal: Terminal, command: ITrackedCommand): ITerminalTextRange => {
+    const start = { line: command.start.line, column: command.startColumn };
+    if (command.end) {
+      return { start, end: { line: command.end.marker.line, column: command.end.column } };
+    }
+    const buffer = terminal.buffer.active;
+    const cursorLine = buffer.baseY + buffer.cursorY;
+    const prompt = command.submitted
+      ? findPrimaryPromptBeforeCursor(buffer, cursorLine, buffer.cursorX, command.promptSignature)
+      : null;
+    const end = prompt && (
+      prompt.start.line > start.line
+      || (prompt.start.line === start.line && prompt.start.column > start.column)
+    )
+      ? prompt.start
+      : { line: cursorLine, column: buffer.cursorX };
+    return { start, end };
+  }, []);
+
+  const setCommandCopyTarget = useCallback((clientX: number, clientY: number) => {
+    const terminal = terminalInstance.current;
+    const element = terminal?.element;
+    if (!terminal || !element) return;
+    const rect = element.getBoundingClientRect();
+    const viewportRow = Math.max(0, Math.min(terminal.rows - 1, Math.floor((clientY - rect.top) / rect.height * terminal.rows)));
+    const column = Math.max(0, Math.min(terminal.cols - 1, Math.floor((clientX - rect.left) / rect.width * terminal.cols)));
+    const bufferLine = terminal.buffer.active.viewportY + viewportRow;
+    commandCopyTargetRef.current = [...trackedCommandsRef.current].reverse().find((command) => {
+      const range = resolveCommandRange(terminal, command);
+      const afterStart = bufferLine > range.start.line
+        || (bufferLine === range.start.line && column >= range.start.column);
+      const beforeEnd = bufferLine < range.end.line
+        || (bufferLine === range.end.line && column < range.end.column);
+      return afterStart && beforeEnd;
+    }) ?? null;
+    fallbackCopyRangeRef.current = commandCopyTargetRef.current
+      ? null
+      : findShellCommandRange(terminal.buffer.active, bufferLine, column);
+  }, [resolveCommandRange]);
+
+  const getCommandAndOutput = useCallback((): string => {
+    const terminal = terminalInstance.current;
+    if (!terminal || terminal.buffer.active.type !== 'normal') return '';
+    const targetedCommand = commandCopyTargetRef.current;
+    const fallbackRange = fallbackCopyRangeRef.current;
+    if (!targetedCommand && fallbackRange) {
+      return serializeTerminalSpan(terminal.buffer.active, fallbackRange);
+    }
+    const command = targetedCommand ?? trackedCommandsRef.current.at(-1);
+    if (!command) return '';
+    if (command.start.isDisposed || command.end?.marker.isDisposed) return '';
+    return serializeTerminalSpan(terminal.buffer.active, resolveCommandRange(terminal, command));
+  }, [resolveCommandRange]);
 
   const write = useCallback((data: Uint8Array) => {
     writeQueueRef.current.push(data);
@@ -147,10 +304,11 @@ const useTerminal = ({ theme, fontSize = DEFAULT_FONT_SIZE, lineHeight = DEFAULT
   }, []);
 
   const reset = useCallback(() => {
+    disposeTrackedCommands();
     writeQueueRef.current = [];
     isWritingRef.current = false;
     terminalInstance.current?.reset();
-  }, []);
+  }, [disposeTrackedCommands]);
 
   const focus = useCallback(() => {
     terminalInstance.current?.focus();
@@ -318,11 +476,12 @@ const useTerminal = ({ theme, fontSize = DEFAULT_FONT_SIZE, lineHeight = DEFAULT
       clearTimeout(reFitTimer);
       resizeObserver?.disconnect();
       cleanupTouch?.();
+      disposeTrackedCommands();
       terminalInstance.current?.dispose();
       terminalInstance.current = null;
       fitAddonRef.current = null;
     };
-  }, [containerNode]);
+  }, [containerNode, disposeTrackedCommands]);
 
   useEffect(() => {
     if (terminalInstance.current && theme) {
@@ -339,7 +498,7 @@ const useTerminal = ({ theme, fontSize = DEFAULT_FONT_SIZE, lineHeight = DEFAULT
     callbacksRef.current.onResize?.(terminal.cols, terminal.rows);
   }, [fontSize, lineHeight]);
 
-  return { terminalRef, write, clear, reset, fit, focus, isReady, getBufferText };
+  return { terminalRef, write, clear, reset, fit, focus, isReady, getBufferText, trackCommandInput, setCommandCopyTarget, getCommandAndOutput };
 };
 
 export default useTerminal;

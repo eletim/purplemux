@@ -15,6 +15,7 @@ import { useLayoutStore } from '@/hooks/use-layout';
 import useConfigStore, { type TGitAskProvider } from '@/hooks/use-config-store';
 import useIsMobileDevice from '@/hooks/use-is-mobile-device';
 import { resolveLineHeight } from '@/lib/terminal-line-height';
+import { copyToClipboard } from '@/lib/clipboard';
 import { toCtrlChar } from '@/lib/terminal-keys';
 import TerminalKeyBar from '@/components/features/workspace/terminal-key-bar';
 import { useShallow } from 'zustand/react/shallow';
@@ -60,6 +61,9 @@ interface ITermActions {
   fit: () => { cols: number; rows: number };
   focus: () => void;
   getBufferText: () => string;
+  trackCommandInput: (data: string) => void;
+  setCommandCopyTarget: (clientX: number, clientY: number) => void;
+  getCommandAndOutput: () => string;
 }
 
 interface IWsActions {
@@ -82,6 +86,9 @@ const NOOP_TERM_ACTIONS: ITermActions = {
   fit: () => ({ cols: 80, rows: 24 }),
   focus: () => {},
   getBufferText: () => '',
+  trackCommandInput: () => {},
+  setCommandCopyTarget: () => {},
+  getCommandAndOutput: () => '',
 };
 
 const NOOP_WS_ACTIONS: IWsActions = {
@@ -435,7 +442,7 @@ const PaneContainer = memo(({ paneId, paneNumber }: IPaneContainerProps) => {
     wsActionsRef.current.sendResize(size.cols, size.rows);
   }, [normalizeTerminalSize]);
 
-  const { terminalRef, write, clear, reset, fit, focus, isReady, getBufferText } = useTerminal({
+  const { terminalRef, write, clear, reset, fit, focus, isReady, getBufferText, trackCommandInput, setCommandCopyTarget, getCommandAndOutput } = useTerminal({
     theme: terminalTheme.colors,
     fontSize: (TERMINAL_FONT_SIZES[configFontSize] ?? TERMINAL_FONT_SIZES.normal)[isAgentPanel ? 'claudeCode' : 'normal'],
     lineHeight: resolveLineHeight(configLineHeight, configLineHeightCustom),
@@ -493,7 +500,18 @@ const PaneContainer = memo(({ paneId, paneNumber }: IPaneContainerProps) => {
       fetchAndUpdateCwd();
     },
     customKeyEventHandler: handleCustomKeyEvent,
+    trackCommands: activePanelType === 'terminal',
   });
+
+  const handleCopyCommandAndOutput = useCallback(async () => {
+    const content = termActionsRef.current.getCommandAndOutput();
+    if (!content) {
+      toast.error(t('copyCommandAndOutputUnavailable'));
+      return;
+    }
+    const ok = await copyToClipboard(content);
+    toast[ok ? 'success' : 'error'](t(ok ? 'copyPaneSuccess' : 'copyPaneCopyFailed'), { duration: 1500 });
+  }, [t]);
 
   useEffect(() => {
     clearRef.current = clear;
@@ -546,7 +564,7 @@ const PaneContainer = memo(({ paneId, paneNumber }: IPaneContainerProps) => {
     disconnectReason,
     connect,
     reconnect,
-    sendStdin,
+    sendStdin: sendRawStdin,
     sendWebStdin,
     sendResize,
   } = useTerminalWebSocket({
@@ -572,8 +590,13 @@ const PaneContainer = memo(({ paneId, paneNumber }: IPaneContainerProps) => {
     onSessionEnded: handleSessionEnded,
   });
 
+  const sendStdin = useCallback((data: string) => {
+    termActionsRef.current.trackCommandInput(data);
+    sendRawStdin(data);
+  }, [sendRawStdin]);
+
   useEffect(() => {
-    termActionsRef.current = { write, reset, fit, focus, getBufferText };
+    termActionsRef.current = { write, reset, fit, focus, getBufferText, trackCommandInput, setCommandCopyTarget, getCommandAndOutput };
     wsActionsRef.current = { sendStdin, sendResize };
   });
 
@@ -1348,6 +1371,9 @@ const PaneContainer = memo(({ paneId, paneNumber }: IPaneContainerProps) => {
                   ready ? 'opacity-100' : 'opacity-0',
                   isAgentPanel && 'py-0 pl-2 pr-0.5',
                 )}
+                onCommandContextMenu={activePanelType === 'terminal' ? setCommandCopyTarget : undefined}
+                onCopyCommandAndOutput={activePanelType === 'terminal' ? handleCopyCommandAndOutput : undefined}
+                copyCommandAndOutputLabel={t('copyCommandAndOutput')}
               />
               {showKeyBar && (
                 <TerminalKeyBar

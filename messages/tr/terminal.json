@@ -90,6 +90,8 @@
   "copyPaneCopyAll": "Tümünü kopyala",
   "copyPaneSuccess": "Panoya kopyalandı",
   "copyPaneCopyFailed": "Kopyalama başarısız",
+  "copyCommandAndOutput": "Komutu ve çıktıyı kopyala",
+  "copyCommandAndOutputUnavailable": "Kopyalanacak komut ve çıktı yok",
   "codexNotInstalled": "Install Codex CLI: npm i -g @openai/codex or brew install --cask codex",
   "codexHookInstallFailed": "Codex hook installation failed. State detection may be inaccurate.",
   "codexConfigParseFailed": "Failed to parse ~/.codex/config.toml. Only purplemux hooks applied.",
