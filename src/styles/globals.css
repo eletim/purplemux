@@ -40,10 +40,9 @@
 
 .terminal-prompt-copy-button {
   position: absolute;
-  left: 3px;
+  left: 1px;
   display: flex;
-  width: 12px;
-  min-height: 12px;
+  width: 16px;
   align-items: center;
   justify-content: center;
   border: 0;
@@ -55,9 +54,9 @@
 }
 
 .terminal-prompt-copy-button::before {
-  width: 8px;
-  height: 8px;
-  border: 1px solid color-mix(in srgb, var(--terminal-fg) 72%, transparent);
+  width: 9px;
+  height: 9px;
+  border: 1.5px solid color-mix(in srgb, var(--terminal-fg) 82%, transparent);
   border-radius: 9999px;
   content: '';
 }

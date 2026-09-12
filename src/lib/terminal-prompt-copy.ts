@@ -33,12 +33,15 @@ const findLogicalLineStart = (buffer: ITerminalPromptBuffer, row: number): numbe
 const readLogicalLines = (
   buffer: ITerminalPromptBuffer,
   startRow = 0,
+  endRow = buffer.length,
 ): ILogicalBufferLine[] => {
   const logicalLines: ILogicalBufferLine[] = [];
+  const scanEnd = Math.max(0, Math.min(endRow, buffer.length));
 
   for (let row = findLogicalLineStart(buffer, startRow); row < buffer.length; row++) {
     const line = buffer.getLine(row);
     if (!line) continue;
+    if (row >= scanEnd && !line.isWrapped) break;
     const continuesOnNextRow = buffer.getLine(row + 1)?.isWrapped === true;
     const text = line.translateToString(!continuesOnNextRow);
 
@@ -62,11 +65,72 @@ const readLogicalLines = (
 export const findShellPromptRows = (
   buffer: ITerminalPromptBuffer,
   startRow = 0,
+  endRow = buffer.length,
 ): number[] => (
-  readLogicalLines(buffer, startRow)
+  readLogicalLines(buffer, startRow, endRow)
     .filter((line) => isShellPrompt(line.text))
     .map((line) => line.startRow)
 );
+
+interface ISyncPromptCopyButtonsOptions {
+  gutter: HTMLElement;
+  buffer: ITerminalPromptBuffer;
+  viewportY: number;
+  viewportRows: number;
+  screenTop: number;
+  screenHeight: number;
+  label: string;
+  onCopy: (promptRow: number) => void;
+}
+
+export const syncPromptCopyButtons = ({
+  gutter,
+  buffer,
+  viewportY,
+  viewportRows,
+  screenTop,
+  screenHeight,
+  label,
+  onCopy,
+}: ISyncPromptCopyButtonsOptions): void => {
+  const rowHeight = screenHeight / viewportRows;
+  const viewportEnd = viewportY + viewportRows;
+  const promptRows = rowHeight > 0
+    ? findShellPromptRows(buffer, viewportY, viewportEnd)
+      .filter((row) => row >= viewportY && row < viewportEnd)
+    : [];
+  const visibleRows = new Set(promptRows);
+
+  gutter.querySelectorAll<HTMLButtonElement>('.terminal-prompt-copy-button').forEach((button) => {
+    const row = Number(button.dataset.bufferRow);
+    if (!visibleRows.has(row)) button.remove();
+  });
+
+  for (const row of promptRows) {
+    let button = gutter.querySelector<HTMLButtonElement>(`[data-buffer-row="${row}"]`);
+    if (!button) {
+      button = document.createElement('button');
+      button.type = 'button';
+      button.className = 'terminal-prompt-copy-button';
+      button.dataset.bufferRow = String(row);
+      button.addEventListener('mousedown', (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+      });
+      button.addEventListener('click', (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        onCopy(row);
+      });
+      gutter.appendChild(button);
+    }
+
+    button.setAttribute('aria-label', label);
+    button.title = label;
+    button.style.top = `${screenTop + (row - viewportY) * rowHeight}px`;
+    button.style.height = `${rowHeight}px`;
+  }
+};
 
 export const getPromptBlockText = (
   buffer: ITerminalPromptBuffer,
