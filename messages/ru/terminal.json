@@ -90,6 +90,8 @@
   "copyPaneCopyAll": "Копировать всё",
   "copyPaneSuccess": "Скопировано в буфер обмена",
   "copyPaneCopyFailed": "Не удалось скопировать",
+  "copyCommandAndOutput": "Копировать команду и вывод",
+  "copyCommandAndOutputUnavailable": "Нет команды и вывода для копирования",
   "codexNotInstalled": "Install Codex CLI: npm i -g @openai/codex or brew install --cask codex",
   "codexHookInstallFailed": "Codex hook installation failed. State detection may be inaccurate.",
   "codexConfigParseFailed": "Failed to parse ~/.codex/config.toml. Only purplemux hooks applied.",

@@ -90,6 +90,8 @@
   "copyPaneCopyAll": "全部複製",
   "copyPaneSuccess": "已複製到剪貼簿",
   "copyPaneCopyFailed": "複製失敗",
+  "copyCommandAndOutput": "複製命令和輸出",
+  "copyCommandAndOutputUnavailable": "沒有可複製的命令和輸出",
   "codexNotInstalled": "Install Codex CLI: npm i -g @openai/codex or brew install --cask codex",
   "codexHookInstallFailed": "Codex hook installation failed. State detection may be inaccurate.",
   "codexConfigParseFailed": "Failed to parse ~/.codex/config.toml. Only purplemux hooks applied.",
