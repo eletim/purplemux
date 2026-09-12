@@ -89,6 +89,7 @@
   "copyPaneCaptureFailed": "无法加载终端内容",
   "copyPaneCopyAll": "全部复制",
   "copyPaneSuccess": "已复制到剪贴板",
+  "copyPromptBlockLabel": "复制命令和输出",
   "copyPaneCopyFailed": "复制失败",
   "codexNotInstalled": "Install Codex CLI: npm i -g @openai/codex or brew install --cask codex",
   "codexHookInstallFailed": "Codex hook installation failed. State detection may be inaccurate.",
