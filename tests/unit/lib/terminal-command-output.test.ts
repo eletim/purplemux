@@ -4,6 +4,7 @@ import {
   findPrimaryPromptBeforeCursor,
   findShellCommandRange,
   looksLikeShellPrompt,
+  promptSignatureIncludesPath,
   serializeTerminalRange,
   serializeTerminalSpan,
   shellCommandRangeIncludesPath,
@@ -43,6 +44,17 @@ describe('terminal command output', () => {
     expect(looksLikeShellPrompt('~/repo $ ')).toBe(true);
     expect(looksLikeShellPrompt('~/repo > ')).toBe(false);
     expect(looksLikeShellPrompt('command output')).toBe(false);
+  });
+
+  it('does not mistake slashes in prompt decorations for a CWD', () => {
+    expect(promptSignatureIncludesPath({
+      tail: '(env/foo) $ ',
+      multilinePrefix: null,
+    })).toBe(false);
+    expect(promptSignatureIncludesPath({
+      tail: '[feature/foo] ~/repo $ ',
+      multilinePrefix: null,
+    })).toBe(true);
   });
 
   it('finds a command around clicked output in restored scrollback', () => {

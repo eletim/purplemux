@@ -277,16 +277,51 @@ describe('useTerminal command tracking', () => {
     unmount();
   });
 
-  it('adds the current CWD to a pathless Bash command in restored scrollback', async () => {
-    const { result, terminal, unmount } = await setup('/home/user/repo');
-    setBuffer(terminal, ['$ echo hello', 'hello', '$ '], 2, 2);
+  it('does not assign the current CWD to a historical pathless Bash command', async () => {
+    const { result, terminal, unmount } = await setup('/home/user/current');
+    setBuffer(terminal, ['$ pwd', '/home/user/historical', '$ '], 2, 2);
     terminal.element!.getBoundingClientRect = () => ({
       x: 0, y: 0, top: 0, left: 0, right: 800, bottom: 240,
       width: 800, height: 240, toJSON: () => ({}),
     });
     act(() => result.current.setCommandCopyTarget(10, 15));
 
-    expect(result.current.getCommandAndOutput()).toBe('/home/user/repo\n$ echo hello\nhello');
+    expect(result.current.getCommandAndOutput()).toBe('');
+    unmount();
+  });
+
+  it('copies a restored command whose prompt contains its execution path', async () => {
+    const { result, terminal, unmount } = await setup('/home/user/current');
+    setBuffer(terminal, [
+      'user@host:~/historical$ echo hello',
+      'hello',
+      'user@host:~/current$ ',
+    ], 2, 21);
+    terminal.element!.getBoundingClientRect = () => ({
+      x: 0, y: 0, top: 0, left: 0, right: 800, bottom: 240,
+      width: 800, height: 240, toJSON: () => ({}),
+    });
+    act(() => result.current.setCommandCopyTarget(10, 15));
+
+    expect(result.current.getCommandAndOutput()).toBe(
+      'user@host:~/historical$ echo hello\nhello',
+    );
+    unmount();
+  });
+
+  it('adds captured CWD context to a decorated pathless prompt', async () => {
+    const { result, terminal, unmount } = await setup('/home/user/repo');
+    const prompt = '(env/foo) $ ';
+    setBuffer(terminal, [prompt], 0, prompt.length);
+    act(() => {
+      result.current.trackCommandInput('echo hello');
+      result.current.trackCommandInput('\r');
+    });
+    setBuffer(terminal, [`${prompt}echo hello`, 'hello', prompt], 2, prompt.length);
+
+    expect(result.current.getCommandAndOutput()).toBe(
+      '/home/user/repo\n(env/foo) $ echo hello\nhello',
+    );
     unmount();
   });
 

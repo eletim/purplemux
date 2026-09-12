@@ -251,9 +251,8 @@ const useTerminal = ({ theme, fontSize = DEFAULT_FONT_SIZE, lineHeight = DEFAULT
     const targetedCommand = commandCopyTargetRef.current;
     const fallbackRange = fallbackCopyRangeRef.current;
     if (!targetedCommand && fallbackRange) {
-      const text = serializeTerminalSpan(terminal.buffer.active, fallbackRange);
       const includesPath = shellCommandRangeIncludesPath(terminal.buffer.active, fallbackRange);
-      return currentCwdRef.current && !includesPath ? `${currentCwdRef.current}\n${text}` : text;
+      return includesPath ? serializeTerminalSpan(terminal.buffer.active, fallbackRange) : '';
     }
     const command = targetedCommand ?? trackedCommandsRef.current.at(-1);
     if (!command) return '';
