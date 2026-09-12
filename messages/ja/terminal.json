@@ -89,6 +89,7 @@
   "copyPaneCaptureFailed": "ターミナルの内容を取得できませんでした",
   "copyPaneCopyAll": "すべてコピー",
   "copyPaneSuccess": "クリップボードにコピーしました",
+  "copyPromptBlockLabel": "コマンドと出力をコピー",
   "copyPaneCopyFailed": "コピーに失敗しました",
   "codexNotInstalled": "Install Codex CLI: npm i -g @openai/codex or brew install --cask codex",
   "codexHookInstallFailed": "Codex hook installation failed. State detection may be inaccurate.",

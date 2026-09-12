@@ -1,5 +1,5 @@
 import { useEffect, useRef, useCallback, useState } from "react";
-import { Terminal } from "@xterm/xterm";
+import { Terminal, type IDecoration, type IMarker } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 
 import { WebLinksAddon } from "@xterm/addon-web-links";
@@ -11,6 +11,7 @@ import type { ITerminalThemeColors } from "@/lib/terminal-themes";
 import { createMultilineUrlLinkProvider } from "@/lib/multiline-url-link-provider";
 import { copyToClipboard } from "@/lib/clipboard";
 import { DEFAULT_LINE_HEIGHT } from "@/lib/terminal-line-height";
+import { findShellPromptRows, getPromptBlockText } from "@/lib/terminal-prompt-copy";
 import isElectron from "@/hooks/use-is-electron";
 
 interface IUseTerminalOptions {
@@ -21,6 +22,7 @@ interface IUseTerminalOptions {
   onResize?: (cols: number, rows: number) => void;
   onTitleChange?: (title: string) => void;
   customKeyEventHandler?: (event: KeyboardEvent) => boolean;
+  enablePromptCopy?: boolean;
 }
 
 const COPY_TOAST_ID = 'terminal-copy';
@@ -69,7 +71,7 @@ const loadFonts = () => {
   return fontLoadPromise;
 };
 
-const useTerminal = ({ theme, fontSize = DEFAULT_FONT_SIZE, lineHeight = DEFAULT_LINE_HEIGHT, onInput, onResize, onTitleChange, customKeyEventHandler }: IUseTerminalOptions = {}) => {
+const useTerminal = ({ theme, fontSize = DEFAULT_FONT_SIZE, lineHeight = DEFAULT_LINE_HEIGHT, onInput, onResize, onTitleChange, customKeyEventHandler, enablePromptCopy = false }: IUseTerminalOptions = {}) => {
   const [containerNode, setContainerNode] = useState<HTMLDivElement | null>(null);
   const terminalRef = useCallback((node: HTMLDivElement | null) => {
     setContainerNode(node);
@@ -213,6 +215,88 @@ const useTerminal = ({ theme, fontSize = DEFAULT_FONT_SIZE, lineHeight = DEFAULT
 
       terminal.open(containerNode);
 
+      if (enablePromptCopy && terminal.element) {
+        containerNode.classList.add('terminal-prompt-copy-enabled');
+        const gutter = document.createElement('div');
+        gutter.className = 'terminal-prompt-copy-gutter';
+        gutter.setAttribute('aria-hidden', 'false');
+        terminal.element.appendChild(gutter);
+
+        const promptDecorations = new Set<{
+          marker: IMarker;
+          decoration: IDecoration;
+          button: HTMLButtonElement;
+        }>();
+
+        const addPromptDecoration = (row: number) => {
+          const buffer = terminal.buffer.active;
+          const marker = terminal.registerMarker(row - buffer.baseY - buffer.cursorY);
+          const decoration = terminal.registerDecoration({ marker, layer: 'top' });
+          if (!decoration) {
+            marker.dispose();
+            return;
+          }
+
+          const button = document.createElement('button');
+          button.type = 'button';
+          button.className = 'terminal-prompt-copy-button';
+          button.setAttribute('aria-label', callbacksRef.current.t('copyPromptBlockLabel'));
+          button.title = callbacksRef.current.t('copyPromptBlockLabel');
+          button.addEventListener('mousedown', (event) => {
+            event.preventDefault();
+            event.stopPropagation();
+          });
+          button.addEventListener('click', async (event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            const text = getPromptBlockText(terminal.buffer.active, marker.line);
+            if (!text) return;
+            const ok = await copyToClipboard(text);
+            if (ok) {
+              toast.success(callbacksRef.current.t('copyPaneSuccess'), {
+                id: COPY_TOAST_ID,
+                duration: 1500,
+              });
+            }
+          });
+          gutter.appendChild(button);
+
+          const entry = { marker, decoration, button };
+          promptDecorations.add(entry);
+          decoration.onRender((element) => {
+            element.style.pointerEvents = 'none';
+            button.style.display = element.style.display;
+            button.style.top = element.style.top;
+            button.style.height = element.style.height;
+          });
+          decoration.onDispose(() => {
+            button.remove();
+            promptDecorations.delete(entry);
+          });
+        };
+
+        const refreshPromptDecorations = () => {
+          if (terminal.buffer.active.type !== 'normal') return;
+          const promptRows = new Set(findShellPromptRows(terminal.buffer.active));
+          const decoratedRows = new Set<number>();
+
+          for (const entry of [...promptDecorations]) {
+            if (entry.marker.isDisposed || !promptRows.has(entry.marker.line)) {
+              entry.decoration.dispose();
+            } else {
+              decoratedRows.add(entry.marker.line);
+            }
+          }
+
+          for (const row of promptRows) {
+            if (!decoratedRows.has(row)) addPromptDecoration(row);
+          }
+        };
+
+        terminal.onWriteParsed(refreshPromptDecorations);
+        refreshPromptDecorations();
+      }
+
       terminalInstance.current = terminal;
       fitAddonRef.current = fitAddon;
 
@@ -318,11 +402,12 @@ const useTerminal = ({ theme, fontSize = DEFAULT_FONT_SIZE, lineHeight = DEFAULT
       clearTimeout(reFitTimer);
       resizeObserver?.disconnect();
       cleanupTouch?.();
+      containerNode.classList.remove('terminal-prompt-copy-enabled');
       terminalInstance.current?.dispose();
       terminalInstance.current = null;
       fitAddonRef.current = null;
     };
-  }, [containerNode]);
+  }, [containerNode, enablePromptCopy]);
 
   useEffect(() => {
     if (terminalInstance.current && theme) {
