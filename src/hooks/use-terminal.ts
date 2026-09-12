@@ -14,10 +14,10 @@ import { DEFAULT_LINE_HEIGHT } from "@/lib/terminal-line-height";
 import isElectron from "@/hooks/use-is-electron";
 import {
   findLogicalLineStart,
+  findPrimaryPromptBeforeCursor,
   findShellCommandRange,
-  looksLikeShellPrompt,
-  serializeTerminalRange,
-  type ITerminalLineRange,
+  serializeTerminalSpan,
+  type ITerminalTextRange,
 } from '@/lib/terminal-command-output';
 
 interface IUseTerminalOptions {
@@ -33,7 +33,10 @@ interface IUseTerminalOptions {
 
 interface ITrackedCommand {
   start: IMarker;
-  end: IMarker | null;
+  startColumn: number;
+  end: { marker: IMarker; column: number } | null;
+  promptTail: string;
+  submitted: boolean;
 }
 
 const COPY_TOAST_ID = 'terminal-copy';
@@ -93,9 +96,9 @@ const useTerminal = ({ theme, fontSize = DEFAULT_FONT_SIZE, lineHeight = DEFAULT
   const isWritingRef = useRef(false);
   const [isReady, setIsReady] = useState(false);
   const trackedCommandsRef = useRef<ITrackedCommand[]>([]);
-  const pendingInputRef = useRef(false);
+  const bracketedPasteRef = useRef(false);
   const commandCopyTargetRef = useRef<ITrackedCommand | null>(null);
-  const fallbackCopyRangeRef = useRef<ITerminalLineRange | null>(null);
+  const fallbackCopyRangeRef = useRef<ITerminalTextRange | null>(null);
   const t = useTranslations('terminal');
 
   const callbacksRef = useRef({ theme, fontSize, lineHeight, onInput, onResize, onTitleChange, customKeyEventHandler, trackCommands, t });
@@ -107,12 +110,12 @@ const useTerminal = ({ theme, fontSize = DEFAULT_FONT_SIZE, lineHeight = DEFAULT
   const disposeTrackedCommands = useCallback(() => {
     for (const command of trackedCommandsRef.current) {
       command.start.dispose();
-      command.end?.dispose();
+      command.end?.marker.dispose();
     }
     trackedCommandsRef.current = [];
     commandCopyTargetRef.current = null;
     fallbackCopyRangeRef.current = null;
-    pendingInputRef.current = false;
+    bracketedPasteRef.current = false;
   }, []);
 
   const markLine = useCallback((terminal: Terminal, line: number): IMarker | undefined => {
@@ -125,54 +128,106 @@ const useTerminal = ({ theme, fontSize = DEFAULT_FONT_SIZE, lineHeight = DEFAULT
     const terminal = terminalInstance.current;
     if (!terminal || terminal.buffer.active.type !== 'normal') return;
 
-    for (const part of data.split(/(\r|\n)/)) {
-      if (part === '\r' || part === '\n') {
-        if (!pendingInputRef.current) continue;
-        const buffer = terminal.buffer.active;
-        const cursorLine = buffer.baseY + buffer.cursorY;
-        const startLine = findLogicalLineStart(buffer, cursorLine);
-        const commands = trackedCommandsRef.current;
-        const previous = commands.at(-1);
-        if (previous && !previous.end) previous.end = markLine(terminal, startLine - 1) ?? null;
+    let meaningfulInput = false;
+    let submitted = false;
+    for (let i = 0; i < data.length; i++) {
+      if (data.startsWith('\x1b[200~', i)) {
+        bracketedPasteRef.current = true;
+        i += 5;
+        continue;
+      }
+      if (data.startsWith('\x1b[201~', i)) {
+        bracketedPasteRef.current = false;
+        i += 5;
+        continue;
+      }
+      const char = data[i];
+      if ((char === '\r' || char === '\n') && !bracketedPasteRef.current) {
+        submitted = true;
+      } else if (/[^\x00-\x1f\x7f]/.test(char)) {
+        meaningfulInput = true;
+      }
+    }
+
+    const buffer = terminal.buffer.active;
+    const cursorLine = buffer.baseY + buffer.cursorY;
+    const cursorColumn = buffer.cursorX;
+    const commands = trackedCommandsRef.current;
+    let current = commands.at(-1);
+
+    if (meaningfulInput) {
+      const prompt = findPrimaryPromptBeforeCursor(
+        buffer,
+        cursorLine,
+        cursorColumn,
+        current?.promptTail,
+      );
+      if (!current || (current.submitted && prompt)) {
+        if (current && !current.end && prompt) {
+          const endMarker = markLine(terminal, prompt.start.line);
+          if (endMarker) current.end = { marker: endMarker, column: prompt.start.column };
+        }
+        const startLine = prompt?.start.line ?? findLogicalLineStart(buffer, cursorLine);
         const start = markLine(terminal, startLine);
-        if (start) commands.push({ start, end: null });
+        if (start) {
+          current = {
+            start,
+            startColumn: prompt?.start.column ?? 0,
+            end: null,
+            promptTail: prompt?.tail ?? '',
+            submitted: false,
+          };
+          commands.push(current);
+        }
         while (commands.length > 50) {
           const removed = commands.shift();
           removed?.start.dispose();
-          removed?.end?.dispose();
+          removed?.end?.marker.dispose();
         }
-        pendingInputRef.current = false;
-      } else if (part && /[^\x00-\x1f\x7f]/.test(part)) {
-        pendingInputRef.current = true;
       }
     }
+    if (submitted && current) current.submitted = true;
   }, [markLine]);
 
-  const resolveCommandEnd = useCallback((terminal: Terminal, command: ITrackedCommand): number => {
-    if (command.end) return command.end.line;
+  const resolveCommandRange = useCallback((terminal: Terminal, command: ITrackedCommand): ITerminalTextRange => {
+    const start = { line: command.start.line, column: command.startColumn };
+    if (command.end) {
+      return { start, end: { line: command.end.marker.line, column: command.end.column } };
+    }
     const buffer = terminal.buffer.active;
     const cursorLine = buffer.baseY + buffer.cursorY;
-    const logicalStart = findLogicalLineStart(buffer, cursorLine);
-    const currentLine = serializeTerminalRange(buffer, logicalStart, cursorLine);
-    return logicalStart > command.start.line && looksLikeShellPrompt(currentLine)
-      ? logicalStart - 1
-      : cursorLine;
+    const prompt = command.submitted
+      ? findPrimaryPromptBeforeCursor(buffer, cursorLine, buffer.cursorX, command.promptTail)
+      : null;
+    const end = prompt && (
+      prompt.start.line > start.line
+      || (prompt.start.line === start.line && prompt.start.column > start.column)
+    )
+      ? prompt.start
+      : { line: cursorLine, column: buffer.cursorX };
+    return { start, end };
   }, []);
 
-  const setCommandCopyTarget = useCallback((clientY: number) => {
+  const setCommandCopyTarget = useCallback((clientX: number, clientY: number) => {
     const terminal = terminalInstance.current;
     const element = terminal?.element;
     if (!terminal || !element) return;
     const rect = element.getBoundingClientRect();
     const viewportRow = Math.max(0, Math.min(terminal.rows - 1, Math.floor((clientY - rect.top) / rect.height * terminal.rows)));
+    const column = Math.max(0, Math.min(terminal.cols - 1, Math.floor((clientX - rect.left) / rect.width * terminal.cols)));
     const bufferLine = terminal.buffer.active.viewportY + viewportRow;
-    commandCopyTargetRef.current = [...trackedCommandsRef.current].reverse().find((command) => (
-      bufferLine >= command.start.line && bufferLine <= resolveCommandEnd(terminal, command)
-    )) ?? null;
+    commandCopyTargetRef.current = [...trackedCommandsRef.current].reverse().find((command) => {
+      const range = resolveCommandRange(terminal, command);
+      const afterStart = bufferLine > range.start.line
+        || (bufferLine === range.start.line && column >= range.start.column);
+      const beforeEnd = bufferLine < range.end.line
+        || (bufferLine === range.end.line && column < range.end.column);
+      return afterStart && beforeEnd;
+    }) ?? null;
     fallbackCopyRangeRef.current = commandCopyTargetRef.current
       ? null
-      : findShellCommandRange(terminal.buffer.active, bufferLine);
-  }, [resolveCommandEnd]);
+      : findShellCommandRange(terminal.buffer.active, bufferLine, column);
+  }, [resolveCommandRange]);
 
   const getCommandAndOutput = useCallback((): string => {
     const terminal = terminalInstance.current;
@@ -180,17 +235,13 @@ const useTerminal = ({ theme, fontSize = DEFAULT_FONT_SIZE, lineHeight = DEFAULT
     const targetedCommand = commandCopyTargetRef.current;
     const fallbackRange = fallbackCopyRangeRef.current;
     if (!targetedCommand && fallbackRange) {
-      return serializeTerminalRange(terminal.buffer.active, fallbackRange.start, fallbackRange.end);
+      return serializeTerminalSpan(terminal.buffer.active, fallbackRange);
     }
     const command = targetedCommand ?? trackedCommandsRef.current.at(-1);
     if (!command) return '';
-    if (command.start.isDisposed || command.end?.isDisposed) return '';
-    return serializeTerminalRange(
-      terminal.buffer.active,
-      command.start.line,
-      resolveCommandEnd(terminal, command),
-    );
-  }, [resolveCommandEnd]);
+    if (command.start.isDisposed || command.end?.marker.isDisposed) return '';
+    return serializeTerminalSpan(terminal.buffer.active, resolveCommandRange(terminal, command));
+  }, [resolveCommandRange]);
 
   const write = useCallback((data: Uint8Array) => {
     writeQueueRef.current.push(data);

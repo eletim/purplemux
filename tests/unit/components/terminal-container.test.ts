@@ -27,7 +27,7 @@ describe('TerminalContainer', () => {
 
     const trigger = document.querySelector('[data-slot="context-menu-trigger"]');
     expect(trigger).not.toBeNull();
-    fireEvent.contextMenu(trigger as Element, { clientY: 42 });
-    expect(onContextMenu).toHaveBeenCalledWith(42);
+    fireEvent.contextMenu(trigger as Element, { clientX: 21, clientY: 42 });
+    expect(onContextMenu).toHaveBeenCalledWith(21, 42);
   });
 });

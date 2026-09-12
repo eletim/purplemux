@@ -12,7 +12,7 @@ interface ITerminalContainerProps {
   className?: string;
   minHeight?: number;
   onCopyCommandAndOutput?: () => void;
-  onCommandContextMenu?: (clientY: number) => void;
+  onCommandContextMenu?: (clientX: number, clientY: number) => void;
   copyCommandAndOutputLabel?: string;
 }
 
@@ -39,7 +39,7 @@ const TerminalContainer = forwardRef<HTMLDivElement, ITerminalContainerProps>(
         <ContextMenuTrigger
           render={<div />}
           className={cn(containerClassName, 'select-text')}
-          onContextMenu={(event) => onCommandContextMenu(event.clientY)}
+          onContextMenu={(event) => onCommandContextMenu(event.clientX, event.clientY)}
         >
           {terminal}
         </ContextMenuTrigger>

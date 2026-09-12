@@ -50,7 +50,7 @@ interface ITermActions {
   focus: () => void;
   getBufferText: () => string;
   trackCommandInput: (data: string) => void;
-  setCommandCopyTarget: (clientY: number) => void;
+  setCommandCopyTarget: (clientX: number, clientY: number) => void;
   getCommandAndOutput: () => string;
 }
 
