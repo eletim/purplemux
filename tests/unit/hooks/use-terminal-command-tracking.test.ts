@@ -262,6 +262,32 @@ describe('useTerminal command tracking', () => {
     unmount();
   });
 
+  it('isolates a command submitted while the preceding command is still running', async () => {
+    const { result, terminal, unmount } = await setup('/home/user/repo');
+    setBuffer(terminal, ['$ '], 0, 2);
+    act(() => {
+      result.current.trackCommandInput('cd /tmp');
+      result.current.trackCommandInput('\r');
+    });
+    setBuffer(terminal, ['$ cd /tmp'], 0, 9);
+    act(() => {
+      result.current.trackCommandInput('pwd');
+      result.current.trackCommandInput('\r');
+    });
+    setBuffer(terminal, ['$ cd /tmp', '$ pwd', '/tmp', '$ '], 3, 2);
+    terminal.element!.getBoundingClientRect = () => ({
+      x: 0, y: 0, top: 0, left: 0, right: 800, bottom: 240,
+      width: 800, height: 240, toJSON: () => ({}),
+    });
+
+    act(() => result.current.setCommandCopyTarget(10, 5));
+    expect(result.current.getCommandAndOutput()).toBe('/home/user/repo\n$ cd /tmp');
+
+    act(() => result.current.setCommandCopyTarget(10, 25));
+    expect(result.current.getCommandAndOutput()).toBe('');
+    unmount();
+  });
+
   it('snapshots the title-derived execution CWD for a live pathless Bash prompt', async () => {
     const { result, terminal, unmount } = await setup();
     act(() => terminal.emitTitle('bash|/home/user/one'));

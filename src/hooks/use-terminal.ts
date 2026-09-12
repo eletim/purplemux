@@ -43,6 +43,7 @@ interface ITrackedCommand {
   promptSignature: IPromptSignature | undefined;
   submitted: boolean;
   cwd: string | undefined;
+  queuedSubmissions: number;
 }
 
 const COPY_TOAST_ID = 'terminal-copy';
@@ -103,8 +104,10 @@ const useTerminal = ({ theme, fontSize = DEFAULT_FONT_SIZE, lineHeight = DEFAULT
   const [isReady, setIsReady] = useState(false);
   const trackedCommandsRef = useRef<ITrackedCommand[]>([]);
   const bracketedPasteRef = useRef(false);
+  const typeAheadInputRef = useRef(false);
   const commandCopyTargetRef = useRef<ITrackedCommand | null>(null);
   const fallbackCopyRangeRef = useRef<ITerminalTextRange | null>(null);
+  const fallbackCopyCwdRef = useRef<string | undefined>(undefined);
   const currentCwdRef = useRef(cwd);
   const t = useTranslations('terminal');
 
@@ -126,7 +129,9 @@ const useTerminal = ({ theme, fontSize = DEFAULT_FONT_SIZE, lineHeight = DEFAULT
     trackedCommandsRef.current = [];
     commandCopyTargetRef.current = null;
     fallbackCopyRangeRef.current = null;
+    fallbackCopyCwdRef.current = undefined;
     bracketedPasteRef.current = false;
+    typeAheadInputRef.current = false;
   }, []);
 
   const markLine = useCallback((terminal: Terminal, line: number): IMarker | undefined => {
@@ -177,6 +182,7 @@ const useTerminal = ({ theme, fontSize = DEFAULT_FONT_SIZE, lineHeight = DEFAULT
         prompt.start.line > current.start.line
         || (prompt.start.line === current.start.line && prompt.start.column > current.startColumn)
       ));
+      if (current?.submitted && !prompt) typeAheadInputRef.current = true;
       if (!current || (prompt && (current.submitted || promptIsAfterCurrent))) {
         if (current && !current.end && prompt) {
           const endMarker = markLine(terminal, prompt.start.line);
@@ -192,8 +198,10 @@ const useTerminal = ({ theme, fontSize = DEFAULT_FONT_SIZE, lineHeight = DEFAULT
             promptSignature: prompt?.signature,
             submitted: false,
             cwd: currentCwdRef.current,
+            queuedSubmissions: 0,
           };
           commands.push(current);
+          typeAheadInputRef.current = false;
         }
         while (commands.length > 50) {
           const removed = commands.shift();
@@ -202,7 +210,11 @@ const useTerminal = ({ theme, fontSize = DEFAULT_FONT_SIZE, lineHeight = DEFAULT
         }
       }
     }
-    if (submitted && current) current.submitted = true;
+    if (submitted && current) {
+      if (current.submitted && typeAheadInputRef.current) current.queuedSubmissions++;
+      current.submitted = true;
+      typeAheadInputRef.current = false;
+    }
   }, [markLine]);
 
   const resolveCommandRange = useCallback((terminal: Terminal, command: ITrackedCommand): ITerminalTextRange => {
@@ -232,7 +244,7 @@ const useTerminal = ({ theme, fontSize = DEFAULT_FONT_SIZE, lineHeight = DEFAULT
     const viewportRow = Math.max(0, Math.min(terminal.rows - 1, Math.floor((clientY - rect.top) / rect.height * terminal.rows)));
     const column = Math.max(0, Math.min(terminal.cols - 1, Math.floor((clientX - rect.left) / rect.width * terminal.cols)));
     const bufferLine = terminal.buffer.active.viewportY + viewportRow;
-    commandCopyTargetRef.current = [...trackedCommandsRef.current].reverse().find((command) => {
+    const trackedCommand = [...trackedCommandsRef.current].reverse().find((command) => {
       const range = resolveCommandRange(terminal, command);
       const afterStart = bufferLine > range.start.line
         || (bufferLine === range.start.line && column >= range.start.column);
@@ -240,9 +252,38 @@ const useTerminal = ({ theme, fontSize = DEFAULT_FONT_SIZE, lineHeight = DEFAULT
         || (bufferLine === range.end.line && column < range.end.column);
       return afterStart && beforeEnd;
     }) ?? null;
-    fallbackCopyRangeRef.current = commandCopyTargetRef.current
-      ? null
-      : findShellCommandRange(terminal.buffer.active, bufferLine, column);
+    const parsedRange = findShellCommandRange(terminal.buffer.active, bufferLine, column);
+    const trackedRange = trackedCommand ? resolveCommandRange(terminal, trackedCommand) : null;
+    const parsedStartsWithinTracked = Boolean(trackedRange && parsedRange && (
+      parsedRange.start.line > trackedRange.start.line
+      || (parsedRange.start.line === trackedRange.start.line
+        && parsedRange.start.column >= trackedRange.start.column)
+    ));
+    const parsedEndsWithinTracked = Boolean(trackedRange && parsedRange && (
+      parsedRange.end.line < trackedRange.end.line
+      || (parsedRange.end.line === trackedRange.end.line
+        && parsedRange.end.column <= trackedRange.end.column)
+    ));
+    const parsedIsStrictlySmaller = Boolean(trackedRange && parsedRange && (
+      parsedRange.start.line !== trackedRange.start.line
+      || parsedRange.start.column !== trackedRange.start.column
+      || parsedRange.end.line !== trackedRange.end.line
+      || parsedRange.end.column !== trackedRange.end.column
+    ));
+    const parsedIsMoreSpecific = Boolean(
+      trackedCommand?.queuedSubmissions
+      && parsedStartsWithinTracked
+      && parsedEndsWithinTracked
+      && parsedIsStrictlySmaller
+    );
+
+    commandCopyTargetRef.current = parsedIsMoreSpecific ? null : trackedCommand;
+    fallbackCopyRangeRef.current = parsedIsMoreSpecific || !trackedCommand ? parsedRange : null;
+    fallbackCopyCwdRef.current = parsedIsMoreSpecific
+      && parsedRange?.start.line === trackedRange?.start.line
+      && parsedRange?.start.column === trackedRange?.start.column
+      ? trackedCommand?.cwd
+      : undefined;
   }, [resolveCommandRange]);
 
   const getCommandAndOutput = useCallback((): string => {
@@ -252,7 +293,9 @@ const useTerminal = ({ theme, fontSize = DEFAULT_FONT_SIZE, lineHeight = DEFAULT
     const fallbackRange = fallbackCopyRangeRef.current;
     if (!targetedCommand && fallbackRange) {
       const includesPath = shellCommandRangeIncludesPath(terminal.buffer.active, fallbackRange);
-      return includesPath ? serializeTerminalSpan(terminal.buffer.active, fallbackRange) : '';
+      const text = serializeTerminalSpan(terminal.buffer.active, fallbackRange);
+      if (includesPath) return text;
+      return fallbackCopyCwdRef.current ? `${fallbackCopyCwdRef.current}\n${text}` : '';
     }
     const command = targetedCommand ?? trackedCommandsRef.current.at(-1);
     if (!command) return '';
