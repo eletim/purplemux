@@ -265,4 +265,39 @@ describe('useTerminal command tracking', () => {
     );
     unmount();
   });
+
+  it('tracks path-only multiline prompt structure without confusing pwd output', async () => {
+    const { result, terminal, unmount } = await setup();
+    setBuffer(terminal, ['~/repo', '$ '], 1, 2);
+    act(() => {
+      result.current.trackCommandInput('pwd');
+      result.current.trackCommandInput('\r');
+    });
+    setBuffer(terminal, [
+      '~/repo',
+      '$ pwd',
+      '/home/user/repo',
+      '~/repo',
+      '$ ',
+    ], 4, 2);
+
+    expect(result.current.getCommandAndOutput()).toBe(
+      '~/repo\n$ pwd\n/home/user/repo',
+    );
+    unmount();
+  });
+
+  it('tracks the complete virtualenv-decorated prompt', async () => {
+    const { result, terminal, unmount } = await setup();
+    const prompt = '(venv) user@host:~/repo$ ';
+    setBuffer(terminal, [prompt], 0, prompt.length);
+    act(() => {
+      result.current.trackCommandInput('echo ok');
+      result.current.trackCommandInput('\r');
+    });
+    setBuffer(terminal, [`${prompt}echo ok`, 'ok', prompt], 2, prompt.length);
+
+    expect(result.current.getCommandAndOutput()).toBe(`${prompt}echo ok\nok`);
+    unmount();
+  });
 });

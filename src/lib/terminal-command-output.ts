@@ -43,13 +43,14 @@ interface ILogicalLine {
 
 const SIMPLE_PROMPT_RE = /^([#$%❯➜]\s)$/;
 const SIMPLE_PROMPT_WITH_COMMAND_RE = /^([#$%❯➜]\s)\S/;
-const HOST_PATH_PROMPT_SUFFIX_RE = /([\w.-]+@[\w.-]+:(?:~|\/).*?[#$%>]\s)$/;
-const HOST_PATH_PROMPT_WITH_COMMAND_RE = /^([\w.-]+@[\w.-]+:(?:~|\/).*?[#$%>]\s)\S/;
-const PATH_PROMPT_SUFFIX_RE = /((?:~|\/).*?[#$%>]\s)$/;
-const PATH_PROMPT_WITH_COMMAND_RE = /^((?:~|\/).*?[#$%>]\s)\S/;
+const HOST_PATH_PROMPT_SUFFIX_RE = /([\w.-]+@[\w.-]+:(?:~|\/).*?[#$%>❯➜]\s)$/;
+const HOST_PATH_PROMPT_WITH_COMMAND_RE = /([\w.-]+@[\w.-]+:(?:~|\/).*?[#$%>❯➜]\s)\S/;
+const PATH_PROMPT_SUFFIX_RE = /((?:~|\/).*?[#$%❯➜]\s)$/;
+const PATH_PROMPT_WITH_COMMAND_RE = /((?:~|\/).*?[#$%❯➜]\s)\S/;
 const HOST_PERCENT_PROMPT_SUFFIX_RE = /([\w.-]+%\s)$/;
-const HOST_PERCENT_PROMPT_WITH_COMMAND_RE = /^([\w.-]+%\s)\S/;
+const HOST_PERCENT_PROMPT_WITH_COMMAND_RE = /([\w.-]+%\s)\S/;
 const HOST_PATH_PREFIX_RE = /^([\w.-]+@[\w.-]+:)(?:~|\/)/;
+const PATH_ONLY_PREFIX_RE = /^(?:~|\/).+$/;
 
 export const findLogicalLineStart = (buffer: ITerminalTextBuffer, line: number): number => {
   let start = Math.max(0, Math.min(line, buffer.length - 1));
@@ -130,15 +131,34 @@ const matchPromptSuffix = (
   if (known?.tail && text.endsWith(known.tail)) {
     return { index: text.length - known.tail.length, tail: known.tail };
   }
-  const knownHost = known?.tail.match(/^([\w.-]+@[\w.-]+:)/)?.[1];
-  const knownHostIndex = knownHost ? text.lastIndexOf(knownHost) : -1;
-  if (knownHostIndex >= 0) {
-    const match = HOST_PATH_PROMPT_SUFFIX_RE.exec(text.slice(knownHostIndex));
-    if (match?.index === 0) return { index: knownHostIndex, tail: match[1] };
+  const knownHostMatch = known?.tail.match(/([\w.-]+@[\w.-]+:)/);
+  if (knownHostMatch?.index !== undefined) {
+    const stablePrefix = known!.tail.slice(0, knownHostMatch.index) + knownHostMatch[1];
+    const stablePrefixIndex = text.lastIndexOf(stablePrefix);
+    if (stablePrefixIndex >= 0) {
+      const hostIndex = stablePrefixIndex + stablePrefix.length - knownHostMatch[1].length;
+      const match = HOST_PATH_PROMPT_SUFFIX_RE.exec(text.slice(hostIndex));
+      if (match?.index === 0) {
+        return { index: stablePrefixIndex, tail: text.slice(stablePrefixIndex) };
+      }
+    }
+  }
+  const knownPathMatch = known?.tail.match(/(?:~|\/)/);
+  const knownDecoration = knownPathMatch?.index ? known!.tail.slice(0, knownPathMatch.index) : '';
+  if (knownDecoration) {
+    const decorationIndex = text.lastIndexOf(knownDecoration);
+    if (decorationIndex >= 0) {
+      const match = PATH_PROMPT_SUFFIX_RE.exec(text.slice(decorationIndex + knownDecoration.length));
+      if (match?.index === 0) {
+        return { index: decorationIndex, tail: text.slice(decorationIndex) };
+      }
+    }
   }
   for (const pattern of [HOST_PATH_PROMPT_SUFFIX_RE, PATH_PROMPT_SUFFIX_RE, HOST_PERCENT_PROMPT_SUFFIX_RE]) {
     const match = pattern.exec(text);
-    if (match) return { index: match.index, tail: match[1] };
+    if (match) return known
+      ? { index: match.index, tail: match[1] }
+      : { index: 0, tail: text };
   }
   const simple = SIMPLE_PROMPT_RE.exec(text);
   return simple ? { index: 0, tail: simple[1] } : null;
@@ -157,7 +177,8 @@ const findMultilinePrefix = (
   const previousEnd = buffer.getLine(previousEndLine);
   if (!previousEnd) return null;
   const previous = readLogicalLine(buffer, previousEndLine, getTextEndColumn(previousEnd));
-  const identity = HOST_PATH_PREFIX_RE.exec(previous.text)?.[1];
+  const identity = HOST_PATH_PREFIX_RE.exec(previous.text)?.[1]
+    ?? (PATH_ONLY_PREFIX_RE.test(previous.text) ? 'path-only' : null);
   if (!identity) return null;
   if (known?.multilinePrefix && identity !== known.multilinePrefix) return null;
   return { start: previous.positionAt(0), identity };
@@ -217,8 +238,11 @@ const findCommandPrompt = (
     }
     return {
       start,
-      end: logical.positionAt(match[1].length),
-      signature: { tail: match[1], multilinePrefix },
+      end: logical.positionAt(match.index + match[1].length),
+      signature: {
+        tail: logical.text.slice(0, match.index + match[1].length),
+        multilinePrefix,
+      },
     };
   }
   return null;
@@ -243,12 +267,12 @@ export const findShellCommandRange = (
     const bufferLine = buffer.getLine(line);
     if (!bufferLine || bufferLine.isWrapped) continue;
     const logical = readCompleteLogicalLine(buffer, line);
-    const boundary = findCommandPrompt(buffer, line) ?? findPrimaryPromptBeforeCursor(
+    const boundary = findPrimaryPromptBeforeCursor(
       buffer,
       logical.endLine,
       getTextEndColumn(buffer.getLine(logical.endLine)!),
       commandPrompt.signature,
-    );
+    ) ?? findCommandPrompt(buffer, line);
     if (boundary && (
       boundary.start.line > commandPrompt.end.line
       || boundary.start.column > commandPrompt.end.column

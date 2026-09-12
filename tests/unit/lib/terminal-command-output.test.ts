@@ -39,7 +39,8 @@ describe('terminal command output', () => {
   it('recognizes common bash, zsh, and fish-style prompts', () => {
     expect(looksLikeShellPrompt('eletim@host:~/repo$ ')).toBe(true);
     expect(looksLikeShellPrompt('host% ')).toBe(true);
-    expect(looksLikeShellPrompt('~/repo > ')).toBe(true);
+    expect(looksLikeShellPrompt('~/repo $ ')).toBe(true);
+    expect(looksLikeShellPrompt('~/repo > ')).toBe(false);
     expect(looksLikeShellPrompt('command output')).toBe(false);
   });
 
@@ -188,5 +189,49 @@ describe('terminal command output', () => {
     expect(range && serializeTerminalSpan(value, range)).toBe(
       `${prompt}printf value\n界é`,
     );
+  });
+
+  it('preserves path-only multiline prompts in restored scrollback', () => {
+    const value = buffer([
+      ['~/repo'],
+      ['$ pwd'],
+      ['/home/user/repo'],
+      ['~/repo'],
+      ['$ '],
+    ]);
+    const range = findShellCommandRange(value, 2);
+
+    expect(range && serializeTerminalSpan(value, range)).toBe(
+      '~/repo\n$ pwd\n/home/user/repo',
+    );
+  });
+
+  it('preserves complete virtualenv-decorated prompts', () => {
+    const prompt = '(venv) user@host:~/repo$ ';
+    const value = buffer([
+      [`${prompt}echo ok`],
+      ['ok'],
+      [prompt],
+    ]);
+    const range = findShellCommandRange(value, 1);
+
+    expect(range && serializeTerminalSpan(value, range)).toBe(
+      `${prompt}echo ok\nok`,
+    );
+  });
+
+  it('does not classify path-like redirect output as a command prompt', () => {
+    const value = buffer([
+      ['user@host:~/repo$ inspect'],
+      ['/tmp/source > destination'],
+      ['done'],
+      ['user@host:~/repo$ '],
+    ]);
+    const range = findShellCommandRange(value, 2);
+
+    expect(range && serializeTerminalSpan(value, range)).toBe(
+      'user@host:~/repo$ inspect\n/tmp/source > destination\ndone',
+    );
+    expect(findShellCommandRange(value, 1)).toEqual(range);
   });
 });
