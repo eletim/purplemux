@@ -18,6 +18,13 @@ export const parseCurrentCommand = (raw: string): string | null => {
   return null;
 };
 
+export const parseCurrentWorkingDirectory = (raw: string): string | null => {
+  const pipeIdx = raw.indexOf('|');
+  if (pipeIdx <= 0) return null;
+  const cwd = raw.slice(pipeIdx + 1);
+  return cwd || null;
+};
+
 export const isShellProcess = (raw: string): boolean => {
   const cmd = parseCurrentCommand(raw);
   return cmd !== null && SHELL_NAMES.has(cmd);

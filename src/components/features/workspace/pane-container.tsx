@@ -501,6 +501,7 @@ const PaneContainer = memo(({ paneId, paneNumber }: IPaneContainerProps) => {
     },
     customKeyEventHandler: handleCustomKeyEvent,
     trackCommands: activePanelType === 'terminal',
+    cwd: activeTabCwd || activeTab?.cwd,
   });
 
   const handleCopyCommandAndOutput = useCallback(async () => {

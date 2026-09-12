@@ -12,11 +12,14 @@ import { createMultilineUrlLinkProvider } from "@/lib/multiline-url-link-provide
 import { copyToClipboard } from "@/lib/clipboard";
 import { DEFAULT_LINE_HEIGHT } from "@/lib/terminal-line-height";
 import isElectron from "@/hooks/use-is-electron";
+import { parseCurrentWorkingDirectory } from '@/lib/tab-title';
 import {
   findLogicalLineStart,
   findPrimaryPromptBeforeCursor,
   findShellCommandRange,
+  promptSignatureIncludesPath,
   serializeTerminalSpan,
+  shellCommandRangeIncludesPath,
   type IPromptSignature,
   type ITerminalTextRange,
 } from '@/lib/terminal-command-output';
@@ -30,6 +33,7 @@ interface IUseTerminalOptions {
   onTitleChange?: (title: string) => void;
   customKeyEventHandler?: (event: KeyboardEvent) => boolean;
   trackCommands?: boolean;
+  cwd?: string;
 }
 
 interface ITrackedCommand {
@@ -38,6 +42,7 @@ interface ITrackedCommand {
   end: { marker: IMarker; column: number } | null;
   promptSignature: IPromptSignature | undefined;
   submitted: boolean;
+  cwd: string | undefined;
 }
 
 const COPY_TOAST_ID = 'terminal-copy';
@@ -86,7 +91,7 @@ const loadFonts = () => {
   return fontLoadPromise;
 };
 
-const useTerminal = ({ theme, fontSize = DEFAULT_FONT_SIZE, lineHeight = DEFAULT_LINE_HEIGHT, onInput, onResize, onTitleChange, customKeyEventHandler, trackCommands = false }: IUseTerminalOptions = {}) => {
+const useTerminal = ({ theme, fontSize = DEFAULT_FONT_SIZE, lineHeight = DEFAULT_LINE_HEIGHT, onInput, onResize, onTitleChange, customKeyEventHandler, trackCommands = false, cwd }: IUseTerminalOptions = {}) => {
   const [containerNode, setContainerNode] = useState<HTMLDivElement | null>(null);
   const terminalRef = useCallback((node: HTMLDivElement | null) => {
     setContainerNode(node);
@@ -100,6 +105,7 @@ const useTerminal = ({ theme, fontSize = DEFAULT_FONT_SIZE, lineHeight = DEFAULT
   const bracketedPasteRef = useRef(false);
   const commandCopyTargetRef = useRef<ITrackedCommand | null>(null);
   const fallbackCopyRangeRef = useRef<ITerminalTextRange | null>(null);
+  const currentCwdRef = useRef(cwd);
   const t = useTranslations('terminal');
 
   const callbacksRef = useRef({ theme, fontSize, lineHeight, onInput, onResize, onTitleChange, customKeyEventHandler, trackCommands, t });
@@ -107,6 +113,10 @@ const useTerminal = ({ theme, fontSize = DEFAULT_FONT_SIZE, lineHeight = DEFAULT
   useEffect(() => {
     callbacksRef.current = { theme, fontSize, lineHeight, onInput, onResize, onTitleChange, customKeyEventHandler, trackCommands, t };
   }, [theme, fontSize, lineHeight, onInput, onResize, onTitleChange, customKeyEventHandler, trackCommands, t]);
+
+  useEffect(() => {
+    currentCwdRef.current = cwd;
+  }, [cwd]);
 
   const disposeTrackedCommands = useCallback(() => {
     for (const command of trackedCommandsRef.current) {
@@ -163,7 +173,11 @@ const useTerminal = ({ theme, fontSize = DEFAULT_FONT_SIZE, lineHeight = DEFAULT
         cursorColumn,
         current?.promptSignature,
       );
-      if (!current || (current.submitted && prompt)) {
+      const promptIsAfterCurrent = Boolean(current && prompt && (
+        prompt.start.line > current.start.line
+        || (prompt.start.line === current.start.line && prompt.start.column > current.startColumn)
+      ));
+      if (!current || (prompt && (current.submitted || promptIsAfterCurrent))) {
         if (current && !current.end && prompt) {
           const endMarker = markLine(terminal, prompt.start.line);
           if (endMarker) current.end = { marker: endMarker, column: prompt.start.column };
@@ -177,6 +191,7 @@ const useTerminal = ({ theme, fontSize = DEFAULT_FONT_SIZE, lineHeight = DEFAULT
             end: null,
             promptSignature: prompt?.signature,
             submitted: false,
+            cwd: currentCwdRef.current,
           };
           commands.push(current);
         }
@@ -236,12 +251,17 @@ const useTerminal = ({ theme, fontSize = DEFAULT_FONT_SIZE, lineHeight = DEFAULT
     const targetedCommand = commandCopyTargetRef.current;
     const fallbackRange = fallbackCopyRangeRef.current;
     if (!targetedCommand && fallbackRange) {
-      return serializeTerminalSpan(terminal.buffer.active, fallbackRange);
+      const text = serializeTerminalSpan(terminal.buffer.active, fallbackRange);
+      const includesPath = shellCommandRangeIncludesPath(terminal.buffer.active, fallbackRange);
+      return currentCwdRef.current && !includesPath ? `${currentCwdRef.current}\n${text}` : text;
     }
     const command = targetedCommand ?? trackedCommandsRef.current.at(-1);
     if (!command) return '';
     if (command.start.isDisposed || command.end?.marker.isDisposed) return '';
-    return serializeTerminalSpan(terminal.buffer.active, resolveCommandRange(terminal, command));
+    const text = serializeTerminalSpan(terminal.buffer.active, resolveCommandRange(terminal, command));
+    return command.cwd && !promptSignatureIncludesPath(command.promptSignature)
+      ? `${command.cwd}\n${text}`
+      : text;
   }, [resolveCommandRange]);
 
   const write = useCallback((data: Uint8Array) => {
@@ -380,6 +400,7 @@ const useTerminal = ({ theme, fontSize = DEFAULT_FONT_SIZE, lineHeight = DEFAULT
       });
 
       terminal.onTitleChange((title) => {
+        currentCwdRef.current = parseCurrentWorkingDirectory(title) ?? currentCwdRef.current;
         callbacksRef.current.onTitleChange?.(title);
       });
 

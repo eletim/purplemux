@@ -8,10 +8,13 @@ interface IFakeLine {
   text: string;
   isWrapped: boolean;
   length: number;
+  getCell: (x: number) => { getChars: () => string; getWidth: () => number } | undefined;
   translateToString: (trimRight?: boolean, startColumn?: number, endColumn?: number) => string;
 }
 
 interface IFakeTerminal {
+  element: HTMLElement | null;
+  emitTitle: (title: string) => void;
   buffer: {
     active: {
       length: number;
@@ -31,6 +34,7 @@ vi.mock('@xterm/xterm', () => ({
     element: HTMLElement | null = null;
     options: Record<string, unknown>;
     unicode = { activeVersion: '' };
+    titleChangeHandler: ((title: string) => void) | null = null;
     buffer = {
       active: {
         type: 'normal' as const,
@@ -52,7 +56,11 @@ vi.mock('@xterm/xterm', () => ({
     registerLinkProvider() { return { dispose() {} }; }
     open(element: HTMLElement) { this.element = element; }
     onData() { return { dispose() {} }; }
-    onTitleChange() { return { dispose() {} }; }
+    onTitleChange(callback: (title: string) => void) {
+      this.titleChangeHandler = callback;
+      return { dispose() {} };
+    }
+    emitTitle(title: string) { this.titleChangeHandler?.(title); }
     attachCustomKeyEventHandler() {}
     registerMarker(offset = 0) {
       let disposed = false;
@@ -90,6 +98,9 @@ const setBuffer = (
       text,
       isWrapped,
       length: text.length,
+      getCell: (x) => x < text.length
+        ? { getChars: () => text[x], getWidth: () => 1 }
+        : undefined,
       translateToString: (trimRight = false, start = 0, end) => {
         const value = trimRight ? text.trimEnd() : text;
         return value.slice(start, end);
@@ -102,8 +113,11 @@ const setBuffer = (
   terminal.buffer.active.getLine = (y) => lines[y];
 };
 
-const setup = async () => {
-  const rendered = renderHook(() => useTerminal({ trackCommands: true }));
+const setup = async (cwd?: string) => {
+  const rendered = renderHook(
+    ({ currentCwd }) => useTerminal({ trackCommands: true, cwd: currentCwd }),
+    { initialProps: { currentCwd: cwd } },
+  );
   act(() => rendered.result.current.terminalRef(document.createElement('div')));
   await waitFor(() => expect(rendered.result.current.isReady).toBe(true));
   return { ...rendered, terminal: mocks.terminals.at(-1)! };
@@ -218,7 +232,7 @@ describe('useTerminal command tracking', () => {
   });
 
   it('keeps path output before a plain Bash prompt', async () => {
-    const { result, terminal, unmount } = await setup();
+    const { result, terminal, unmount } = await setup('/home/user/repo');
     setBuffer(terminal, ['$ '], 0, 2);
     act(() => {
       result.current.trackCommandInput('pwd');
@@ -226,7 +240,53 @@ describe('useTerminal command tracking', () => {
     });
     setBuffer(terminal, ['$ pwd', '/home/user/repo', '$ '], 2, 2);
 
-    expect(result.current.getCommandAndOutput()).toBe('$ pwd\n/home/user/repo');
+    expect(result.current.getCommandAndOutput()).toBe('/home/user/repo\n$ pwd\n/home/user/repo');
+    unmount();
+  });
+
+  it('starts a new command after Ctrl+C cancels unsubmitted input', async () => {
+    const { result, terminal, unmount } = await setup();
+    setBuffer(terminal, ['$ '], 0, 2);
+    act(() => {
+      result.current.trackCommandInput('echo canceled');
+      result.current.trackCommandInput('\x03');
+    });
+    setBuffer(terminal, ['$ echo canceled', '^C', '$ '], 2, 2);
+    act(() => {
+      result.current.trackCommandInput('echo next');
+      result.current.trackCommandInput('\r');
+    });
+    setBuffer(terminal, ['$ echo canceled', '^C', '$ echo next', 'next', '$ '], 4, 2);
+
+    expect(result.current.getCommandAndOutput()).toBe('$ echo next\nnext');
+    unmount();
+  });
+
+  it('snapshots the title-derived execution CWD for a live pathless Bash prompt', async () => {
+    const { result, terminal, unmount } = await setup();
+    act(() => terminal.emitTitle('bash|/home/user/one'));
+    setBuffer(terminal, ['$ '], 0, 2);
+    act(() => {
+      result.current.trackCommandInput('echo hello');
+      result.current.trackCommandInput('\r');
+    });
+    act(() => terminal.emitTitle('bash|/home/user/two'));
+    setBuffer(terminal, ['$ echo hello', 'hello', '$ '], 2, 2);
+
+    expect(result.current.getCommandAndOutput()).toBe('/home/user/one\n$ echo hello\nhello');
+    unmount();
+  });
+
+  it('adds the current CWD to a pathless Bash command in restored scrollback', async () => {
+    const { result, terminal, unmount } = await setup('/home/user/repo');
+    setBuffer(terminal, ['$ echo hello', 'hello', '$ '], 2, 2);
+    terminal.element!.getBoundingClientRect = () => ({
+      x: 0, y: 0, top: 0, left: 0, right: 800, bottom: 240,
+      width: 800, height: 240, toJSON: () => ({}),
+    });
+    act(() => result.current.setCommandCopyTarget(10, 15));
+
+    expect(result.current.getCommandAndOutput()).toBe('/home/user/repo\n$ echo hello\nhello');
     unmount();
   });
 

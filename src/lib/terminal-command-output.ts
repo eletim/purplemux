@@ -52,6 +52,9 @@ const HOST_PERCENT_PROMPT_WITH_COMMAND_RE = /([\w.-]+%\s)\S/;
 const HOST_PATH_PREFIX_RE = /^([\w.-]+@[\w.-]+:)(?:~|\/)/;
 const PATH_ONLY_PREFIX_RE = /^(?:~|\/).+$/;
 
+export const promptSignatureIncludesPath = (signature?: IPromptSignature): boolean =>
+  Boolean(signature && (signature.multilinePrefix !== null || /(?:~|\/)/.test(signature.tail)));
+
 export const findLogicalLineStart = (buffer: ITerminalTextBuffer, line: number): number => {
   let start = Math.max(0, Math.min(line, buffer.length - 1));
   while (start > 0 && buffer.getLine(start)?.isWrapped) start--;
@@ -246,6 +249,19 @@ const findCommandPrompt = (
     };
   }
   return null;
+};
+
+export const shellCommandRangeIncludesPath = (
+  buffer: ITerminalTextBuffer,
+  range: ITerminalTextRange,
+): boolean => {
+  for (let line = range.start.line; line <= range.end.line; line++) {
+    const prompt = findCommandPrompt(buffer, line);
+    if (!prompt) continue;
+    if (prompt.start.line !== range.start.line || prompt.start.column !== range.start.column) return false;
+    return promptSignatureIncludesPath(prompt.signature);
+  }
+  return false;
 };
 
 export const findShellCommandRange = (

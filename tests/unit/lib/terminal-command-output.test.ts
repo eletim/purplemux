@@ -6,6 +6,7 @@ import {
   looksLikeShellPrompt,
   serializeTerminalRange,
   serializeTerminalSpan,
+  shellCommandRangeIncludesPath,
   type ITerminalTextBuffer,
 } from '@/lib/terminal-command-output';
 
@@ -137,6 +138,7 @@ describe('terminal command output', () => {
     expect(range && serializeTerminalSpan(value, range)).toBe(
       '$ pwd\n/home/user/repo',
     );
+    expect(range && shellCommandRangeIncludesPath(value, range)).toBe(false);
   });
 
   it('reconstructs wrapped initial and subsequent prompts', () => {
@@ -204,6 +206,7 @@ describe('terminal command output', () => {
     expect(range && serializeTerminalSpan(value, range)).toBe(
       '~/repo\n$ pwd\n/home/user/repo',
     );
+    expect(range && shellCommandRangeIncludesPath(value, range)).toBe(true);
   });
 
   it('preserves complete virtualenv-decorated prompts', () => {

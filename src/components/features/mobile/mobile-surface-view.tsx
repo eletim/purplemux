@@ -311,6 +311,7 @@ const MobileSurfaceView = ({
     },
     customKeyEventHandler: handleCustomKeyEvent,
     trackCommands: panelType === 'terminal',
+    cwd: activeTabCwd || activeTab?.cwd,
   });
 
   const handleCopyCommandAndOutput = useCallback(async () => {
