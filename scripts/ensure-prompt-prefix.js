@@ -3,7 +3,7 @@
 const fs = require('node:fs/promises');
 const os = require('node:os');
 const path = require('node:path');
-const readline = require('node:readline/promises');
+const readline = require('node:readline');
 
 const configDirectory = path.join(os.homedir(), '.purplemux');
 const configPath = path.join(configDirectory, 'config.json');
@@ -17,6 +17,24 @@ const readConfig = async () => {
   }
 };
 
+const askForConfirmation = async () => {
+  const input = readline.createInterface({ input: process.stdin, output: process.stdout });
+  return new Promise((resolve) => {
+    let settled = false;
+    input.once('close', () => {
+      if (settled) return;
+      settled = true;
+      resolve(null);
+    });
+    input.question('Use this prompt prefix? [Y/n] ', (answer) => {
+      if (settled) return;
+      settled = true;
+      resolve(answer);
+      input.close();
+    });
+  });
+};
+
 const main = async () => {
   const config = await readConfig();
   if (typeof config.promptPrefix === 'string' && config.promptPrefix.length > 0) return;
@@ -24,12 +42,9 @@ const main = async () => {
   const candidate = `${os.userInfo().username}@${os.hostname()}:`;
   process.stdout.write(`Prompt prefix: ${candidate}\n`);
 
-  const input = readline.createInterface({ input: process.stdin, output: process.stdout });
-  let answer;
-  try {
-    answer = await input.question('Use this prompt prefix? [Y/n] ');
-  } finally {
-    input.close();
+  const answer = await askForConfirmation();
+  if (answer === null) {
+    throw new Error('Prompt prefix confirmation requires input. Run start.sh interactively or set promptPrefix in ~/.purplemux/config.json.');
   }
 
   if (answer.trim() && !/^y(?:es)?$/i.test(answer.trim())) return;

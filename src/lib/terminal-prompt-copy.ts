@@ -14,8 +14,11 @@ interface ILogicalBufferLine {
   text: string;
 }
 
+const normalizePromptCandidate = (text: string): string => text
+  .replace(/^[\s\u200B\u200C\u200D\uFEFF]+/, '');
+
 export const isShellPrompt = (text: string, promptPrefix: string): boolean =>
-  promptPrefix.length > 0 && text.startsWith(promptPrefix);
+  promptPrefix.length > 0 && normalizePromptCandidate(text).startsWith(promptPrefix);
 
 const findLogicalLineStart = (buffer: ITerminalPromptBuffer, row: number): number => {
   let startRow = Math.max(0, Math.min(row, buffer.length - 1));

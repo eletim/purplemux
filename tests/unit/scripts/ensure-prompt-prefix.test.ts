@@ -71,4 +71,14 @@ describe('ensure-prompt-prefix', () => {
     expect(result.status).toBe(0);
     expect(fs.existsSync(path.join(home, '.purplemux', 'config.json'))).toBe(false);
   });
+
+  it('fails explicitly when stdin closes before confirmation', () => {
+    const home = createHome();
+
+    const result = runScript(home);
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain('Prompt prefix confirmation requires input.');
+    expect(fs.existsSync(path.join(home, '.purplemux', 'config.json'))).toBe(false);
+  });
 });

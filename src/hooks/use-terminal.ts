@@ -81,14 +81,19 @@ const useTerminal = ({ theme, fontSize = DEFAULT_FONT_SIZE, lineHeight = DEFAULT
   const fitAddonRef = useRef<FitAddon | null>(null);
   const writeQueueRef = useRef<Uint8Array[]>([]);
   const isWritingRef = useRef(false);
+  const promptCopySyncRef = useRef<() => void>(() => {});
   const [isReady, setIsReady] = useState(false);
   const t = useTranslations('terminal');
 
-  const callbacksRef = useRef({ theme, fontSize, lineHeight, onInput, onResize, onTitleChange, customKeyEventHandler, t });
+  const callbacksRef = useRef({ theme, fontSize, lineHeight, onInput, onResize, onTitleChange, customKeyEventHandler, promptPrefix, t });
 
   useEffect(() => {
-    callbacksRef.current = { theme, fontSize, lineHeight, onInput, onResize, onTitleChange, customKeyEventHandler, t };
-  }, [theme, fontSize, lineHeight, onInput, onResize, onTitleChange, customKeyEventHandler, t]);
+    callbacksRef.current = { theme, fontSize, lineHeight, onInput, onResize, onTitleChange, customKeyEventHandler, promptPrefix, t };
+  }, [theme, fontSize, lineHeight, onInput, onResize, onTitleChange, customKeyEventHandler, promptPrefix, t]);
+
+  useEffect(() => {
+    promptCopySyncRef.current();
+  }, [promptPrefix]);
 
   useEffect(() => {
     const label = t('copyPromptBlockLabel');
@@ -226,7 +231,7 @@ const useTerminal = ({ theme, fontSize = DEFAULT_FONT_SIZE, lineHeight = DEFAULT
 
       terminal.open(containerNode);
 
-      if (enablePromptCopy && promptPrefix && terminal.element) {
+      if (enablePromptCopy && terminal.element) {
         containerNode.classList.add('terminal-prompt-copy-enabled');
         const gutter = document.createElement('div');
         gutter.className = 'terminal-prompt-copy-gutter';
@@ -235,7 +240,7 @@ const useTerminal = ({ theme, fontSize = DEFAULT_FONT_SIZE, lineHeight = DEFAULT
 
         const copyPromptBlock = async (row: number) => {
           const buffer = terminal.buffer.active;
-          const text = getPromptBlockText(buffer, row, promptPrefix);
+          const text = getPromptBlockText(buffer, row, callbacksRef.current.promptPrefix);
           if (!text) return;
           const ok = await copyToClipboard(text);
           if (ok) {
@@ -262,7 +267,7 @@ const useTerminal = ({ theme, fontSize = DEFAULT_FONT_SIZE, lineHeight = DEFAULT
             screenHeight: screenRect.height,
             label: callbacksRef.current.t('copyPromptBlockLabel'),
             onCopy: copyPromptBlock,
-            promptPrefix,
+            promptPrefix: callbacksRef.current.promptPrefix,
           });
         };
 
@@ -270,6 +275,7 @@ const useTerminal = ({ theme, fontSize = DEFAULT_FONT_SIZE, lineHeight = DEFAULT
           if (promptCopyRaf) return;
           promptCopyRaf = requestAnimationFrame(syncPromptButtons);
         };
+        promptCopySyncRef.current = schedulePromptButtonSync;
 
         terminal.onScroll(schedulePromptButtonSync);
         terminal.onResize(schedulePromptButtonSync);
@@ -393,13 +399,14 @@ const useTerminal = ({ theme, fontSize = DEFAULT_FONT_SIZE, lineHeight = DEFAULT
       clearTimeout(reFitTimer);
       resizeObserver?.disconnect();
       promptCopyResizeObserver?.disconnect();
+      promptCopySyncRef.current = () => {};
       cleanupTouch?.();
       containerNode.classList.remove('terminal-prompt-copy-enabled');
       terminalInstance.current?.dispose();
       terminalInstance.current = null;
       fitAddonRef.current = null;
     };
-  }, [containerNode, enablePromptCopy, promptPrefix]);
+  }, [containerNode, enablePromptCopy]);
 
   useEffect(() => {
     if (terminalInstance.current && theme) {

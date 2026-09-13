@@ -34,8 +34,8 @@ describe('terminal prompt copy boundaries', () => {
     expect(isShellPrompt('eletim@E-ryzen:~$', PROMPT_PREFIX)).toBe(true);
     expect(isShellPrompt('eletim@E-ryzen:/srv/app# command', PROMPT_PREFIX)).toBe(true);
     expect(isShellPrompt('root@server:/srv/app#', PROMPT_PREFIX)).toBe(false);
-    expect(isShellPrompt('  eletim@E-ryzen:~$ pnpm test', PROMPT_PREFIX)).toBe(false);
-    expect(isShellPrompt('\u200beletim@E-ryzen:~$ pnpm test', PROMPT_PREFIX)).toBe(false);
+    expect(isShellPrompt('  eletim@E-ryzen:~$ pnpm test', PROMPT_PREFIX)).toBe(true);
+    expect(isShellPrompt('\u200beletim@E-ryzen:~$ pnpm test', PROMPT_PREFIX)).toBe(true);
     expect(isShellPrompt('eletim@E-ryzen:~$', '')).toBe(false);
     expect(isShellPrompt('build output: 100% done', PROMPT_PREFIX)).toBe(false);
   });
@@ -165,7 +165,7 @@ describe('terminal prompt copy boundaries', () => {
       const gutter = document.createElement('div');
       const buffer = createBuffer([
         'plain output',
-        'eletim@E-ryzen:~$ printf hello',
+        '  \u200beletim@E-ryzen:~$ printf hello',
         'hello',
       ], type);
       const copied: string[] = [];
@@ -194,7 +194,7 @@ describe('terminal prompt copy boundaries', () => {
       expect(mouseDown.defaultPrevented).toBe(true);
       expect(gutterMouseDown).not.toHaveBeenCalled();
       button?.click();
-      expect(copied).toEqual(['eletim@E-ryzen:~$ printf hello\nhello']);
+      expect(copied).toEqual(['  \u200beletim@E-ryzen:~$ printf hello\nhello']);
     },
   );
 
