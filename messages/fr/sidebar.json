@@ -16,5 +16,11 @@
   "removeFromGroup": "Retirer du groupe",
   "ungrouped": "Non groupé",
   "defaultGroupName": "Nouveau groupe",
-  "emptyGroup": "(vide)"
+  "emptyGroup": "(vide)",
+  "cleanupEmptyWorkspaces": "Nettoyer les espaces vides ({count})",
+  "cleanupEmptyTitle": "Supprimer les espaces vides",
+  "cleanupEmptyConfirm": "Supprimer {count} espaces de travail sans onglet actif ? Chaque espace sera revérifié avant sa suppression.",
+  "cleanupResultTitle": "Résultat du nettoyage",
+  "cleanupDeleted": "Supprimés : {count}",
+  "cleanupRemaining": "Restants : {count}"
 }

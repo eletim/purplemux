@@ -16,5 +16,11 @@
   "removeFromGroup": "Gruptan çıkar",
   "ungrouped": "Gruplanmamış",
   "defaultGroupName": "Yeni Grup",
-  "emptyGroup": "(boş)"
+  "emptyGroup": "(boş)",
+  "cleanupEmptyWorkspaces": "Boş çalışma alanlarını temizle ({count})",
+  "cleanupEmptyTitle": "Boş çalışma alanlarını sil",
+  "cleanupEmptyConfirm": "Çalışan sekmesi olmayan {count} çalışma alanı silinsin mi? Her çalışma alanı silinmeden önce tekrar kontrol edilir.",
+  "cleanupResultTitle": "Çalışma alanı temizleme sonucu",
+  "cleanupDeleted": "Silinen: {count}",
+  "cleanupRemaining": "Kalan: {count}"
 }

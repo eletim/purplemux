@@ -20,6 +20,7 @@ import type { ICreateLayoutOptions } from '@/lib/layout-store';
 import { listProviders } from '@/lib/providers/registry';
 import { getVisuallyOrderedWorkspaces } from '@/lib/workspace-order';
 import type { IWorkspace, IWorkspaceGroup, IWorkspacesData, ILayoutData } from '@/types/terminal';
+import type { TDeleteWorkspaceIfEmptyResult } from '@/types/workspace-cleanup';
 
 const log = createLogger('workspace');
 
@@ -359,17 +360,6 @@ export const deleteWorkspace = async (workspaceId: string): Promise<boolean> =>
     log.info(`Deleted: ${workspaceId} (${ws.name})`);
     return true;
   });
-
-export type TDeleteWorkspaceIfEmptyResult =
-  | { workspaceId: string; status: 'deleted'; deleted: true }
-  | { workspaceId: string; status: 'absent'; deleted: false }
-  | {
-    workspaceId: string;
-    status: 'not-empty';
-    deleted: false;
-    tabCount: number;
-    sessionCount: number;
-  };
 
 /** Public automation deletion semantics. Unlike the UI delete operation, this
  * never terminates tabs or sessions. The layout lock keeps the precondition

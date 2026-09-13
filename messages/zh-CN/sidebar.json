@@ -16,5 +16,11 @@
   "removeFromGroup": "从分组中移除",
   "ungrouped": "未分组",
   "defaultGroupName": "新建分组",
-  "emptyGroup": "（空）"
+  "emptyGroup": "（空）",
+  "cleanupEmptyWorkspaces": "清理空工作区（{count}）",
+  "cleanupEmptyTitle": "删除空工作区",
+  "cleanupEmptyConfirm": "要删除 {count} 个没有运行中标签页的工作区吗？删除前会再次检查每个工作区。",
+  "cleanupResultTitle": "工作区清理结果",
+  "cleanupDeleted": "已删除：{count}",
+  "cleanupRemaining": "剩余：{count}"
 }
