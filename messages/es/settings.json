@@ -53,6 +53,8 @@
     "themeDescription": "Selecciona los temas de color del terminal para cada modo.",
     "keyBar": "Barra de teclas rápidas",
     "keyBarDescription": "Muestra una barra de teclas en pantalla (Tab, Esc, Ctrl, flechas) bajo la terminal; útil en dispositivos táctiles.",
+    "promptPrefix": "Prefijo para copiar prompts",
+    "promptPrefixDescription": "Las líneas que empiecen con este texto mostrarán un botón de copia. Déjalo vacío para desactivarlo.",
     "keyBarOptions": {
       "auto": "Automático",
       "always": "Siempre",

@@ -50,7 +50,6 @@ import IconRenderer from '@/components/features/settings/icon-renderer';
 import SidebarRateLimits from '@/components/layout/sidebar-rate-limits';
 import isElectron from '@/hooks/use-is-electron';
 import { getEmptyWorkspaceIds } from '@/lib/workspace-cleanup';
-import type { IWorkspaceCleanupResponse } from '@/types/workspace-cleanup';
 
 const MIN_WIDTH = 160;
 const MAX_WIDTH = 480;
@@ -274,17 +273,12 @@ const Sidebar = () => {
     setCleanupConfirmOpen(false);
     setIsCleaning(true);
     try {
-      const response = await fetch('/api/workspace/cleanup-empty', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ workspaceIds: targets.map((workspace) => workspace.id) }),
-      });
-      if (!response.ok) throw new Error('Workspace cleanup failed');
-      await response.json() as IWorkspaceCleanupResponse;
+      await useWorkspaceStore.getState().cleanupEmptyWorkspaces(
+        targets.map((workspace) => workspace.id),
+      );
     } catch {
       // Reconciliation below still reports the authoritative current state.
     } finally {
-      await useWorkspaceStore.getState().fetchWorkspaces();
       const remainingIds = new Set(
         useWorkspaceStore.getState().workspaces.map((workspace) => workspace.id),
       );

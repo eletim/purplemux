@@ -53,6 +53,8 @@
     "themeDescription": "Sélectionnez les thèmes de couleurs du terminal pour chaque mode.",
     "keyBar": "Barre de touches",
     "keyBarDescription": "Affiche une barre de touches à l'écran (Tab, Esc, Ctrl, flèches) sous le terminal ; pratique sur les appareils tactiles.",
+    "promptPrefix": "Préfixe de copie des invites",
+    "promptPrefixDescription": "Les lignes commençant par ce texte affichent un bouton de copie. Laissez vide pour désactiver la fonction.",
     "keyBarOptions": {
       "auto": "Auto",
       "always": "Toujours",

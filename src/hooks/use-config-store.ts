@@ -86,6 +86,7 @@ interface IConfigState {
   setLineHeight: (lineHeight: string) => void;
   setLineHeightCustom: (value: number) => void;
   setTerminalKeyBar: (value: TTerminalKeyBar) => void;
+  setPromptPrefix: (value: string) => void;
   setSystemResourcesEnabled: (enabled: boolean) => void;
   setNetworkAccess: (value: TNetworkAccess) => void;
 }
@@ -278,6 +279,12 @@ const useConfigStore = create<IConfigState>((set, get) => ({
     if (get().terminalKeyBar === value) return;
     set({ terminalKeyBar: value });
     saveConfig({ terminalKeyBar: value });
+  },
+
+  setPromptPrefix: (value) => {
+    if (get().promptPrefix === value) return;
+    set({ promptPrefix: value });
+    saveConfig({ promptPrefix: value });
   },
 
   setSystemResourcesEnabled: (enabled) => {

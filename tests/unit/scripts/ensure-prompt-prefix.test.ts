@@ -15,7 +15,11 @@ const createHome = (): string => {
 
 const runScript = (home: string, input = '') => spawnSync(process.execPath, [script], {
   encoding: 'utf8',
-  env: { ...process.env, HOME: home },
+  env: {
+    ...process.env,
+    HOME: home,
+    ...(input ? { PURPLEMUX_FORCE_PROMPT: '1' } : {}),
+  },
   input,
 });
 
@@ -80,22 +84,39 @@ describe('ensure-prompt-prefix', () => {
     });
   });
 
-  it('does not save a rejected candidate', () => {
+  it('persists a rejected candidate as a durable opt-out', () => {
     const home = createHome();
 
     const result = runScript(home, 'n\n');
 
     expect(result.status).toBe(0);
-    expect(fs.existsSync(path.join(home, '.purplemux', 'config.json'))).toBe(false);
+    const configPath = path.join(home, '.purplemux', 'config.json');
+    expect(JSON.parse(fs.readFileSync(configPath, 'utf8'))).toMatchObject({
+      promptPrefix: '',
+      updatedAt: expect.any(String),
+    });
+    expect(runScript(home).stdout).toBe('');
   });
 
-  it('fails explicitly when stdin closes before confirmation', () => {
+  it('does not block startup when stdin closes before confirmation', () => {
     const home = createHome();
 
     const result = runScript(home);
 
-    expect(result.status).toBe(1);
-    expect(result.stderr).toContain('Prompt prefix confirmation requires input.');
+    expect(result.status).toBe(0);
+    expect(result.stderr).toBe('');
     expect(fs.existsSync(path.join(home, '.purplemux', 'config.json'))).toBe(false);
+  });
+
+  it('treats a saved empty prefix as configured', () => {
+    const home = createHome();
+    const configDirectory = path.join(home, '.purplemux');
+    fs.mkdirSync(configDirectory);
+    fs.writeFileSync(path.join(configDirectory, 'config.json'), JSON.stringify({ promptPrefix: '' }));
+
+    const result = runScript(home);
+
+    expect(result.status).toBe(0);
+    expect(result.stdout).toBe('');
   });
 });

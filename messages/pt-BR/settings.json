@@ -53,6 +53,8 @@
     "themeDescription": "Selecione temas de cores do terminal para cada modo.",
     "keyBar": "Barra de teclas de atalho",
     "keyBarDescription": "Mostra uma barra de teclas na tela (Tab, Esc, Ctrl, setas) abaixo do terminal — útil em dispositivos de toque.",
+    "promptPrefix": "Prefixo para copiar prompts",
+    "promptPrefixDescription": "Linhas iniciadas com este texto recebem um botão de cópia. Deixe vazio para desativar.",
     "keyBarOptions": {
       "auto": "Automático",
       "always": "Sempre",

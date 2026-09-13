@@ -41,6 +41,7 @@ interface IWorkspaceState {
   syncWorkspaces: () => Promise<void>;
   createWorkspace: (directory: string, name?: string, resumeSessionId?: string, panelType?: TPanelType) => Promise<IWorkspace | null>;
   deleteWorkspace: (workspaceId: string) => Promise<boolean>;
+  cleanupEmptyWorkspaces: (workspaceIds: string[]) => Promise<void>;
   removeWorkspace: (workspaceId: string) => void;
   markPendingDelete: (workspaceId: string) => void;
   unmarkPendingDelete: (workspaceId: string) => void;
@@ -264,6 +265,29 @@ const useWorkspaceStore = create<IWorkspaceState>((set, get) => ({
     } catch {
       toast.error(t('workspace', 'deleteFailed'));
       return false;
+    }
+  },
+
+  cleanupEmptyWorkspaces: async (workspaceIds) => {
+    if (workspaceIds.length === 0) return;
+    bumpMutationFence();
+    set((state) => ({
+      pendingDeleteIds: new Set([...state.pendingDeleteIds, ...workspaceIds]),
+    }));
+    try {
+      const res = await fetch('/api/workspace/cleanup-empty', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ workspaceIds }),
+      });
+      if (!res.ok) throw new Error();
+    } finally {
+      await get().fetchWorkspaces();
+      set((state) => {
+        const pendingDeleteIds = new Set(state.pendingDeleteIds);
+        workspaceIds.forEach((workspaceId) => pendingDeleteIds.delete(workspaceId));
+        return { pendingDeleteIds };
+      });
     }
   },
 

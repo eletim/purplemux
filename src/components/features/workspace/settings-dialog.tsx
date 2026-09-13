@@ -469,6 +469,8 @@ const TerminalTab = () => {
   const { mode, themeIds, setTerminalTheme, themes } = useTerminalTheme();
   const keyBarMode = useConfigStore((s) => s.terminalKeyBar);
   const setKeyBarMode = useConfigStore((s) => s.setTerminalKeyBar);
+  const promptPrefix = useConfigStore((s) => s.promptPrefix);
+  const setPromptPrefix = useConfigStore((s) => s.setPromptPrefix);
 
   const darkThemes = themes.filter((th) => th.variant === 'dark');
   const lightThemes = themes.filter((th) => th.variant === 'light');
@@ -506,6 +508,23 @@ const TerminalTab = () => {
             </Button>
           ))}
         </ButtonGroup>
+      </div>
+
+      <div className="space-y-3 border-t pt-6">
+        <div>
+          <p className="text-sm font-medium">{t('promptPrefix')}</p>
+          <p className="text-sm text-muted-foreground">{t('promptPrefixDescription')}</p>
+        </div>
+        <Input
+          key={promptPrefix}
+          defaultValue={promptPrefix}
+          onBlur={(event) => setPromptPrefix(event.target.value)}
+          onKeyDown={(event) => {
+            if (event.key === 'Enter') event.currentTarget.blur();
+          }}
+          placeholder="user@host:"
+          aria-label={t('promptPrefix')}
+        />
       </div>
     </div>
   );

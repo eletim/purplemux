@@ -36,24 +36,24 @@ const askForConfirmation = async () => {
 
 const main = async () => {
   const config = await readConfig();
-  if (typeof config.promptPrefix === 'string' && config.promptPrefix.length > 0) return;
+  if (typeof config.promptPrefix === 'string') return;
+  if (!process.stdin.isTTY && process.env.PURPLEMUX_FORCE_PROMPT !== '1') return;
 
   const candidate = `${os.userInfo().username}@${os.hostname()}:`;
   process.stdout.write(`Prompt prefix: ${candidate}\n`);
 
   const answer = await askForConfirmation();
-  if (answer === null) {
-    throw new Error('Prompt prefix confirmation requires input. Run start.sh interactively or set promptPrefix in ~/.purplemux/config.json.');
-  }
+  // A convenience prompt must never prevent service/CI launches from starting.
+  if (answer === null) return;
 
-  if (answer.trim() && !/^y(?:es)?$/i.test(answer.trim())) return;
+  const accepted = !answer.trim() || /^y(?:es)?$/i.test(answer.trim());
 
   await fs.mkdir(configDirectory, { recursive: true });
   const temporaryPath = `${configPath}.tmp`;
   try {
     await fs.writeFile(
       temporaryPath,
-      `${JSON.stringify({ ...config, promptPrefix: candidate, updatedAt: new Date().toISOString() }, null, 2)}\n`,
+      `${JSON.stringify({ ...config, promptPrefix: accepted ? candidate : '', updatedAt: new Date().toISOString() }, null, 2)}\n`,
       { mode: 0o600 },
     );
     await fs.rename(temporaryPath, configPath);
