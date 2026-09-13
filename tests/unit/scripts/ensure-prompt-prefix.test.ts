@@ -63,6 +63,23 @@ describe('ensure-prompt-prefix', () => {
     });
   });
 
+  it('tolerates malformed config and persists the accepted prefix', () => {
+    const home = createHome();
+    const candidate = `${os.userInfo().username}@${os.hostname()}:`;
+    const configDirectory = path.join(home, '.purplemux');
+    const configPath = path.join(configDirectory, 'config.json');
+    fs.mkdirSync(configDirectory);
+    fs.writeFileSync(configPath, '{ invalid json');
+
+    const result = runScript(home, '\n');
+
+    expect(result.status).toBe(0);
+    expect(JSON.parse(fs.readFileSync(configPath, 'utf8'))).toMatchObject({
+      promptPrefix: candidate,
+      updatedAt: expect.any(String),
+    });
+  });
+
   it('does not save a rejected candidate', () => {
     const home = createHome();
 

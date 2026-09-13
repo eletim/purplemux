@@ -11,9 +11,8 @@ const configPath = path.join(configDirectory, 'config.json');
 const readConfig = async () => {
   try {
     return JSON.parse(await fs.readFile(configPath, 'utf8'));
-  } catch (error) {
-    if (error && error.code === 'ENOENT') return {};
-    throw error;
+  } catch {
+    return {};
   }
 };
 
