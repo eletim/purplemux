@@ -27,6 +27,7 @@ const runStartScript = ({
   const toolBinDirectory = path.join(directory, 'tool-bin');
   const globalBinDirectory = path.join(directory, 'bin');
   const logPath = path.join(directory, 'commands.log');
+  const promptLogPath = path.join(directory, 'prompt-prefix.log');
   fs.mkdirSync(toolBinDirectory);
   fs.mkdirSync(globalBinDirectory);
 
@@ -36,6 +37,8 @@ if [[ \"\${1:-}\" == \"-p\" ]]; then
   printf '%s\\n' '0.4.6'
 elif [[ \"\${1:-}\" == \"scripts/build-fingerprint.js\" && \"\${2:-}\" == \"check\" ]]; then
   [[ \"\${BUILD_CHECK:-fresh}\" == \"fresh\" ]]
+elif [[ \"\${1:-}\" == \"scripts/ensure-prompt-prefix.js\" ]]; then
+  printf 'checked\n' > "$PROMPT_LOG"
 else
   exit 64
 fi
@@ -73,6 +76,7 @@ printf '%s\\n' '${cliVersion}'
       COMMAND_LOG: logPath,
       FAIL_COMMAND: failCommand,
       GLOBAL_BIN: globalBinDirectory,
+      PROMPT_LOG: promptLogPath,
       PATH: `${toolBinDirectory}:/usr/bin:/bin`,
       PNPM_HOME: directory,
     },
@@ -81,6 +85,7 @@ printf '%s\\n' '${cliVersion}'
   return {
     ...result,
     commands: fs.existsSync(logPath) ? fs.readFileSync(logPath, 'utf8') : '',
+    promptPrefixChecked: fs.existsSync(promptLogPath),
   };
 };
 
@@ -95,6 +100,7 @@ describe('start.sh', () => {
     const result = runStartScript();
 
     expect(result.status).toBe(0);
+    expect(result.promptPrefixChecked).toBe(true);
     expect(result.stdout).toContain('Adding pnpm global bin to PATH for this launch:');
     expect(result.commands).not.toContain('pnpm config');
     expect(result.commands).not.toContain('pnpm bin');

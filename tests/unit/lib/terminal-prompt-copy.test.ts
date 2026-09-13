@@ -10,6 +10,8 @@ import {
   type ITerminalPromptLine,
 } from '@/lib/terminal-prompt-copy';
 
+const PROMPT_PREFIX = 'eletim@E-ryzen:';
+
 const createBuffer = (
   rows: Array<string | { text: string; wrapped: boolean }>,
   type: 'normal' | 'alternate' = 'normal',
@@ -28,18 +30,14 @@ const createBuffer = (
 });
 
 describe('terminal prompt copy boundaries', () => {
-  it('recognizes common prompt forms without matching ordinary output', () => {
-    expect(isShellPrompt('eletim@E-ryzen:~$')).toBe(true);
-    expect(isShellPrompt('eletim@E-ryzen:~$ pnpm test')).toBe(true);
-    expect(isShellPrompt('root@server:/srv/app#')).toBe(true);
-    expect(isShellPrompt('~/purplemux % git status')).toBe(true);
-    expect(isShellPrompt('$ echo hello')).toBe(true);
-    expect(isShellPrompt('  eletim@E-ryzen:~$ pnpm test')).toBe(true);
-    expect(isShellPrompt('\u200beletim@E-ryzen:~$ pnpm test')).toBe(true);
-    expect(isShellPrompt('# a comment from a displayed config file')).toBe(false);
-    expect(isShellPrompt('# Markdown heading')).toBe(false);
-    expect(isShellPrompt('build output: 100% done')).toBe(false);
-    expect(isShellPrompt('https://example.com/$value')).toBe(false);
+  it('matches only the configured prompt prefix at the start of the line', () => {
+    expect(isShellPrompt('eletim@E-ryzen:~$', PROMPT_PREFIX)).toBe(true);
+    expect(isShellPrompt('eletim@E-ryzen:/srv/app# command', PROMPT_PREFIX)).toBe(true);
+    expect(isShellPrompt('root@server:/srv/app#', PROMPT_PREFIX)).toBe(false);
+    expect(isShellPrompt('  eletim@E-ryzen:~$ pnpm test', PROMPT_PREFIX)).toBe(true);
+    expect(isShellPrompt('\u200beletim@E-ryzen:~$ pnpm test', PROMPT_PREFIX)).toBe(true);
+    expect(isShellPrompt('eletim@E-ryzen:~$', '')).toBe(false);
+    expect(isShellPrompt('build output: 100% done', PROMPT_PREFIX)).toBe(false);
   });
 
   it('finds prompt rows from the complete buffer', () => {
@@ -50,7 +48,7 @@ describe('terminal prompt copy boundaries', () => {
       'eletim@E-ryzen:~/purplemux$ second',
     ]);
 
-    expect(findShellPromptRows(buffer)).toEqual([1, 3]);
+    expect(findShellPromptRows(buffer, PROMPT_PREFIX)).toEqual([1, 3]);
   });
 
   it('limits prompt detection to the requested tail of the buffer', () => {
@@ -61,7 +59,7 @@ describe('terminal prompt copy boundaries', () => {
       'recent output',
     ]);
 
-    expect(findShellPromptRows(buffer, 2)).toEqual([2]);
+    expect(findShellPromptRows(buffer, PROMPT_PREFIX, 2)).toEqual([2]);
   });
 
   it('does not read the stable prefix during a tail scan', () => {
@@ -76,7 +74,7 @@ describe('terminal prompt copy boundaries', () => {
       },
     };
 
-    expect(findShellPromptRows(buffer, 4975)).toEqual([4998]);
+    expect(findShellPromptRows(buffer, PROMPT_PREFIX, 4975)).toEqual([4998]);
     expect(reads).toBeLessThan(100);
   });
 
@@ -88,8 +86,8 @@ describe('terminal prompt copy boundaries', () => {
       '/home/eletim',
     ]);
 
-    expect(getPromptBlockText(buffer, 0)).toBe('eletim@E-ryzen:~$ printf hello\nhello');
-    expect(getPromptBlockText(buffer, 2)).toBe('eletim@E-ryzen:~$ pwd\n/home/eletim');
+    expect(getPromptBlockText(buffer, 0, PROMPT_PREFIX)).toBe('eletim@E-ryzen:~$ printf hello\nhello');
+    expect(getPromptBlockText(buffer, 2, PROMPT_PREFIX)).toBe('eletim@E-ryzen:~$ pwd\n/home/eletim');
   });
 
   it('keeps hash-led comments inside command output', () => {
@@ -100,7 +98,7 @@ describe('terminal prompt copy boundaries', () => {
       'eletim@E-ryzen:~$ next-command',
     ]);
 
-    expect(getPromptBlockText(buffer, 0)).toBe(
+    expect(getPromptBlockText(buffer, 0, PROMPT_PREFIX)).toBe(
       'eletim@E-ryzen:~$ cat config.yml\n# generated configuration\nenabled: true',
     );
   });
@@ -115,14 +113,14 @@ describe('terminal prompt copy boundaries', () => {
       '',
     ]);
 
-    expect(findShellPromptRows(buffer)).toEqual([0]);
-    expect(getPromptBlockText(buffer, 0)).toBe(
+    expect(findShellPromptRows(buffer, PROMPT_PREFIX)).toEqual([0]);
+    expect(getPromptBlockText(buffer, 0, PROMPT_PREFIX)).toBe(
       'eletim@E-ryzen:~$ printf a-very-long-value\na-very-long-value',
     );
   });
 
   it('rejects a row that is not a prompt boundary', () => {
-    expect(getPromptBlockText(createBuffer(['plain output']), 0)).toBeNull();
+    expect(getPromptBlockText(createBuffer(['plain output']), 0, PROMPT_PREFIX)).toBeNull();
   });
 
   it('creates positioned buttons only for prompts in the viewport', () => {
@@ -146,6 +144,7 @@ describe('terminal prompt copy boundaries', () => {
       screenHeight: 60,
       label: 'Copy command block',
       onCopy,
+      promptPrefix: PROMPT_PREFIX,
     });
 
     const buttons = [...gutter.querySelectorAll<HTMLButtonElement>('.terminal-prompt-copy-button')];
@@ -180,9 +179,10 @@ describe('terminal prompt copy boundaries', () => {
         screenHeight: 60,
         label: 'Copy command block',
         onCopy: (row) => {
-          const text = getPromptBlockText(buffer, row);
+          const text = getPromptBlockText(buffer, row, PROMPT_PREFIX);
           if (text) copied.push(text);
         },
+        promptPrefix: PROMPT_PREFIX,
       });
 
       const button = gutter.querySelector<HTMLButtonElement>('.terminal-prompt-copy-button');
@@ -219,6 +219,7 @@ describe('terminal prompt copy boundaries', () => {
         screenHeight,
         label: 'Copy command block',
         onCopy,
+        promptPrefix: PROMPT_PREFIX,
       });
     };
 

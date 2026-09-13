@@ -23,6 +23,7 @@ interface IUseTerminalOptions {
   onTitleChange?: (title: string) => void;
   customKeyEventHandler?: (event: KeyboardEvent) => boolean;
   enablePromptCopy?: boolean;
+  promptPrefix?: string;
 }
 
 const COPY_TOAST_ID = 'terminal-copy';
@@ -71,7 +72,7 @@ const loadFonts = () => {
   return fontLoadPromise;
 };
 
-const useTerminal = ({ theme, fontSize = DEFAULT_FONT_SIZE, lineHeight = DEFAULT_LINE_HEIGHT, onInput, onResize, onTitleChange, customKeyEventHandler, enablePromptCopy = false }: IUseTerminalOptions = {}) => {
+const useTerminal = ({ theme, fontSize = DEFAULT_FONT_SIZE, lineHeight = DEFAULT_LINE_HEIGHT, onInput, onResize, onTitleChange, customKeyEventHandler, enablePromptCopy = false, promptPrefix = '' }: IUseTerminalOptions = {}) => {
   const [containerNode, setContainerNode] = useState<HTMLDivElement | null>(null);
   const terminalRef = useCallback((node: HTMLDivElement | null) => {
     setContainerNode(node);
@@ -80,14 +81,19 @@ const useTerminal = ({ theme, fontSize = DEFAULT_FONT_SIZE, lineHeight = DEFAULT
   const fitAddonRef = useRef<FitAddon | null>(null);
   const writeQueueRef = useRef<Uint8Array[]>([]);
   const isWritingRef = useRef(false);
+  const promptCopySyncRef = useRef<() => void>(() => {});
   const [isReady, setIsReady] = useState(false);
   const t = useTranslations('terminal');
 
-  const callbacksRef = useRef({ theme, fontSize, lineHeight, onInput, onResize, onTitleChange, customKeyEventHandler, t });
+  const callbacksRef = useRef({ theme, fontSize, lineHeight, onInput, onResize, onTitleChange, customKeyEventHandler, promptPrefix, t });
 
   useEffect(() => {
-    callbacksRef.current = { theme, fontSize, lineHeight, onInput, onResize, onTitleChange, customKeyEventHandler, t };
-  }, [theme, fontSize, lineHeight, onInput, onResize, onTitleChange, customKeyEventHandler, t]);
+    callbacksRef.current = { theme, fontSize, lineHeight, onInput, onResize, onTitleChange, customKeyEventHandler, promptPrefix, t };
+  }, [theme, fontSize, lineHeight, onInput, onResize, onTitleChange, customKeyEventHandler, promptPrefix, t]);
+
+  useEffect(() => {
+    promptCopySyncRef.current();
+  }, [promptPrefix]);
 
   useEffect(() => {
     const label = t('copyPromptBlockLabel');
@@ -234,7 +240,7 @@ const useTerminal = ({ theme, fontSize = DEFAULT_FONT_SIZE, lineHeight = DEFAULT
 
         const copyPromptBlock = async (row: number) => {
           const buffer = terminal.buffer.active;
-          const text = getPromptBlockText(buffer, row);
+          const text = getPromptBlockText(buffer, row, callbacksRef.current.promptPrefix);
           if (!text) return;
           const ok = await copyToClipboard(text);
           if (ok) {
@@ -261,6 +267,7 @@ const useTerminal = ({ theme, fontSize = DEFAULT_FONT_SIZE, lineHeight = DEFAULT
             screenHeight: screenRect.height,
             label: callbacksRef.current.t('copyPromptBlockLabel'),
             onCopy: copyPromptBlock,
+            promptPrefix: callbacksRef.current.promptPrefix,
           });
         };
 
@@ -268,6 +275,7 @@ const useTerminal = ({ theme, fontSize = DEFAULT_FONT_SIZE, lineHeight = DEFAULT
           if (promptCopyRaf) return;
           promptCopyRaf = requestAnimationFrame(syncPromptButtons);
         };
+        promptCopySyncRef.current = schedulePromptButtonSync;
 
         terminal.onScroll(schedulePromptButtonSync);
         terminal.onResize(schedulePromptButtonSync);
@@ -391,6 +399,7 @@ const useTerminal = ({ theme, fontSize = DEFAULT_FONT_SIZE, lineHeight = DEFAULT
       clearTimeout(reFitTimer);
       resizeObserver?.disconnect();
       promptCopyResizeObserver?.disconnect();
+      promptCopySyncRef.current = () => {};
       cleanupTouch?.();
       containerNode.classList.remove('terminal-prompt-copy-enabled');
       terminalInstance.current?.dispose();

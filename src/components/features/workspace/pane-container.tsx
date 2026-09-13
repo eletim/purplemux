@@ -145,6 +145,7 @@ const PaneContainer = memo(({ paneId, paneNumber }: IPaneContainerProps) => {
   const configLineHeight = useConfigStore((s) => s.lineHeight);
   const configLineHeightCustom = useConfigStore((s) => s.lineHeightCustom);
   const keyBarMode = useConfigStore((s) => s.terminalKeyBar);
+  const promptPrefix = useConfigStore((s) => s.promptPrefix);
   const isTouchDevice = useIsMobileDevice();
   const claudeShowTerminal = useConfigStore((s) => s.claudeShowTerminal);
 
@@ -437,6 +438,7 @@ const PaneContainer = memo(({ paneId, paneNumber }: IPaneContainerProps) => {
 
   const { terminalRef, write, clear, reset, fit, focus, isReady, getBufferText } = useTerminal({
     enablePromptCopy: true,
+    promptPrefix,
     theme: terminalTheme.colors,
     fontSize: (TERMINAL_FONT_SIZES[configFontSize] ?? TERMINAL_FONT_SIZES.normal)[isAgentPanel ? 'claudeCode' : 'normal'],
     lineHeight: resolveLineHeight(configLineHeight, configLineHeightCustom),

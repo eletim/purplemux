@@ -129,6 +129,7 @@ const MobileSurfaceView = ({
   const { theme: terminalTheme } = useTerminalTheme();
   const configLineHeight = useConfigStore((s) => s.lineHeight);
   const configLineHeightCustom = useConfigStore((s) => s.lineHeightCustom);
+  const promptPrefix = useConfigStore((s) => s.promptPrefix);
   const [hasEverConnected, setHasEverConnected] = useState(false);
   const [isCreating, setIsCreating] = useState(false);
   const [showTerminal, setShowTerminal] = useState(true);
@@ -245,6 +246,7 @@ const MobileSurfaceView = ({
 
   const { terminalRef, write, clear, reset, fit, focus, isReady, getBufferText } = useTerminal({
     enablePromptCopy: true,
+    promptPrefix,
     theme: terminalTheme.colors,
     fontSize: isAgentPanel ? undefined : MOBILE_FONT_SIZE,
     lineHeight: resolveLineHeight(configLineHeight, configLineHeightCustom),
