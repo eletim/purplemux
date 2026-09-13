@@ -16,5 +16,11 @@
   "removeFromGroup": "從群組移除",
   "ungrouped": "未分群",
   "defaultGroupName": "新增群組",
-  "emptyGroup": "（空）"
+  "emptyGroup": "（空）",
+  "cleanupEmptyWorkspaces": "清理空白工作區（{count}）",
+  "cleanupEmptyTitle": "刪除空白工作區",
+  "cleanupEmptyConfirm": "要刪除 {count} 個沒有執行中分頁的工作區嗎？刪除前會再次檢查每個工作區。",
+  "cleanupResultTitle": "工作區清理結果",
+  "cleanupDeleted": "已刪除：{count}",
+  "cleanupRemaining": "剩餘：{count}"
 }

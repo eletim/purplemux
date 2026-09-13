@@ -16,5 +16,11 @@
   "removeFromGroup": "グループから外す",
   "ungrouped": "未グループ化",
   "defaultGroupName": "新規グループ",
-  "emptyGroup": "（空）"
+  "emptyGroup": "（空）",
+  "cleanupEmptyWorkspaces": "空のワークスペースを整理（{count}件）",
+  "cleanupEmptyTitle": "空のワークスペースを削除",
+  "cleanupEmptyConfirm": "稼働中のタブがないワークスペース{count}件を削除しますか？削除前に各ワークスペースを再確認します。",
+  "cleanupResultTitle": "ワークスペース整理結果",
+  "cleanupDeleted": "削除成功：{count}件",
+  "cleanupRemaining": "残存：{count}件"
 }

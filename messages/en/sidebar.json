@@ -16,5 +16,11 @@
   "removeFromGroup": "Remove from group",
   "ungrouped": "Ungrouped",
   "defaultGroupName": "New Group",
-  "emptyGroup": "(empty)"
+  "emptyGroup": "(empty)",
+  "cleanupEmptyWorkspaces": "Clean up empty workspaces ({count})",
+  "cleanupEmptyTitle": "Delete empty workspaces",
+  "cleanupEmptyConfirm": "Delete {count} workspaces with no running tabs? Each workspace will be checked again before deletion.",
+  "cleanupResultTitle": "Workspace cleanup result",
+  "cleanupDeleted": "Deleted: {count}",
+  "cleanupRemaining": "Remaining: {count}"
 }
