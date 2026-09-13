@@ -35,6 +35,7 @@ export interface IConfigInitialData {
   lineHeight?: string;
   lineHeightCustom?: number;
   terminalKeyBar?: TTerminalKeyBar;
+  promptPrefix?: string;
   systemResourcesEnabled?: boolean;
   networkAccess?: TNetworkAccess;
   hostEnvLocked?: boolean;
@@ -60,6 +61,7 @@ interface IConfigState {
   lineHeight: string;
   lineHeightCustom: number;
   terminalKeyBar: TTerminalKeyBar;
+  promptPrefix: string;
   systemResourcesEnabled: boolean;
   networkAccess: TNetworkAccess;
   hostEnvLocked: boolean;
@@ -107,6 +109,7 @@ const initialConfig = {
   lineHeight: 'normal',
   lineHeightCustom: DEFAULT_LINE_HEIGHT,
   terminalKeyBar: 'auto' as TTerminalKeyBar,
+  promptPrefix: '',
   systemResourcesEnabled: false,
   networkAccess: 'all' as TNetworkAccess,
   hostEnvLocked: false,
@@ -142,6 +145,7 @@ const useConfigStore = create<IConfigState>((set, get) => ({
   lineHeight: initialConfig.lineHeight,
   lineHeightCustom: initialConfig.lineHeightCustom,
   terminalKeyBar: initialConfig.terminalKeyBar,
+  promptPrefix: initialConfig.promptPrefix,
   systemResourcesEnabled: initialConfig.systemResourcesEnabled,
   networkAccess: initialConfig.networkAccess,
   hostEnvLocked: initialConfig.hostEnvLocked,
@@ -167,6 +171,7 @@ const useConfigStore = create<IConfigState>((set, get) => ({
       lineHeight: data.lineHeight ?? 'normal',
       lineHeightCustom: data.lineHeightCustom ?? DEFAULT_LINE_HEIGHT,
       terminalKeyBar: data.terminalKeyBar ?? 'auto',
+      promptPrefix: data.promptPrefix ?? '',
       systemResourcesEnabled: data.systemResourcesEnabled ?? false,
       networkAccess: data.networkAccess ?? 'all',
       hostEnvLocked: data.hostEnvLocked ?? false,

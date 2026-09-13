@@ -38,6 +38,8 @@ esac
 # Keep pnpm's global install target aligned with the process-local PATH entry.
 export PNPM_CONFIG_GLOBAL_BIN_DIR="$pnpm_global_bin"
 
+node scripts/ensure-prompt-prefix.js
+
 if [[ ! -x node_modules/.bin/next || ! -x node_modules/.bin/tsx ]]; then
   echo "[purplemux] Installing source dependencies..."
   pnpm install --frozen-lockfile

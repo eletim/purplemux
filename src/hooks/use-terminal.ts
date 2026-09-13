@@ -23,6 +23,7 @@ interface IUseTerminalOptions {
   onTitleChange?: (title: string) => void;
   customKeyEventHandler?: (event: KeyboardEvent) => boolean;
   enablePromptCopy?: boolean;
+  promptPrefix?: string;
 }
 
 const COPY_TOAST_ID = 'terminal-copy';
@@ -71,7 +72,7 @@ const loadFonts = () => {
   return fontLoadPromise;
 };
 
-const useTerminal = ({ theme, fontSize = DEFAULT_FONT_SIZE, lineHeight = DEFAULT_LINE_HEIGHT, onInput, onResize, onTitleChange, customKeyEventHandler, enablePromptCopy = false }: IUseTerminalOptions = {}) => {
+const useTerminal = ({ theme, fontSize = DEFAULT_FONT_SIZE, lineHeight = DEFAULT_LINE_HEIGHT, onInput, onResize, onTitleChange, customKeyEventHandler, enablePromptCopy = false, promptPrefix = '' }: IUseTerminalOptions = {}) => {
   const [containerNode, setContainerNode] = useState<HTMLDivElement | null>(null);
   const terminalRef = useCallback((node: HTMLDivElement | null) => {
     setContainerNode(node);
@@ -225,7 +226,7 @@ const useTerminal = ({ theme, fontSize = DEFAULT_FONT_SIZE, lineHeight = DEFAULT
 
       terminal.open(containerNode);
 
-      if (enablePromptCopy && terminal.element) {
+      if (enablePromptCopy && promptPrefix && terminal.element) {
         containerNode.classList.add('terminal-prompt-copy-enabled');
         const gutter = document.createElement('div');
         gutter.className = 'terminal-prompt-copy-gutter';
@@ -234,7 +235,7 @@ const useTerminal = ({ theme, fontSize = DEFAULT_FONT_SIZE, lineHeight = DEFAULT
 
         const copyPromptBlock = async (row: number) => {
           const buffer = terminal.buffer.active;
-          const text = getPromptBlockText(buffer, row);
+          const text = getPromptBlockText(buffer, row, promptPrefix);
           if (!text) return;
           const ok = await copyToClipboard(text);
           if (ok) {
@@ -261,6 +262,7 @@ const useTerminal = ({ theme, fontSize = DEFAULT_FONT_SIZE, lineHeight = DEFAULT
             screenHeight: screenRect.height,
             label: callbacksRef.current.t('copyPromptBlockLabel'),
             onCopy: copyPromptBlock,
+            promptPrefix,
           });
         };
 
@@ -397,7 +399,7 @@ const useTerminal = ({ theme, fontSize = DEFAULT_FONT_SIZE, lineHeight = DEFAULT
       terminalInstance.current = null;
       fitAddonRef.current = null;
     };
-  }, [containerNode, enablePromptCopy]);
+  }, [containerNode, enablePromptCopy, promptPrefix]);
 
   useEffect(() => {
     if (terminalInstance.current && theme) {
