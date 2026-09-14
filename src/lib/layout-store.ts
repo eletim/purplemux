@@ -307,16 +307,35 @@ export interface ICreateLayoutOptions {
   panelType?: TPanelType;
 }
 
-export const createDefaultLayout = async (wsId: string, cwd: string, options?: ICreateLayoutOptions): Promise<ILayoutData> => {
+export interface ICreateDefaultLayoutResult {
+  layout: ILayoutData;
+  initialTab: ITab;
+}
+
+export const createDefaultLayoutWithInitialTab = async (
+  wsId: string,
+  cwd: string,
+  options?: ICreateLayoutOptions,
+): Promise<ICreateDefaultLayoutResult> => {
   const { pane, tab } = createDefaultPaneNode(wsId, cwd);
   if (options?.panelType) tab.panelType = options.panelType;
   await createSession(tab.sessionName, 80, 24, cwd);
   return {
-    root: pane,
-    activePaneId: pane.id,
-    updatedAt: new Date().toISOString(),
+    layout: {
+      root: pane,
+      activePaneId: pane.id,
+      updatedAt: new Date().toISOString(),
+    },
+    initialTab: tab,
   };
 };
+
+export const createDefaultLayout = async (
+  wsId: string,
+  cwd: string,
+  options?: ICreateLayoutOptions,
+): Promise<ILayoutData> =>
+  (await createDefaultLayoutWithInitialTab(wsId, cwd, options)).layout;
 
 export const getLayout = async (wsId: string, defaultCwd?: string): Promise<ILayoutData> =>
   withLock(async () => {

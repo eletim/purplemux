@@ -1,10 +1,10 @@
 import { checkAgentAvailabilityForPanelType, toAgentAvailabilityError } from '@/lib/agent-availability';
-import { collectAllTabs, readLayoutFile, resolveLayoutFile, updateTabAgentSessionId } from '@/lib/layout-store';
+import { updateTabAgentSessionId } from '@/lib/layout-store';
 import { createLogger } from '@/lib/logger';
 import { getProviderByPanelType } from '@/lib/providers';
 import { getStatusManager } from '@/lib/status-manager';
 import { sendKeys } from '@/lib/tmux';
-import { createWorkspace } from '@/lib/workspace-store';
+import { createWorkspaceWithInitialTab } from '@/lib/workspace-store';
 import type { IWorkspace, TPanelType } from '@/types/terminal';
 import type { ITabStatusEntry } from '@/types/status';
 
@@ -51,10 +51,7 @@ interface IWorkspaceStatusRuntime {
 }
 
 export interface IWorkspaceRuntimeDependencies {
-  createWorkspace: typeof createWorkspace;
-  readLayoutFile: typeof readLayoutFile;
-  resolveLayoutFile: typeof resolveLayoutFile;
-  collectAllTabs: typeof collectAllTabs;
+  createWorkspace: typeof createWorkspaceWithInitialTab;
   updateTabAgentSessionId: typeof updateTabAgentSessionId;
   getProviderByPanelType: typeof getProviderByPanelType;
   checkAgentAvailabilityForPanelType: typeof checkAgentAvailabilityForPanelType;
@@ -63,10 +60,7 @@ export interface IWorkspaceRuntimeDependencies {
 }
 
 const defaultDependencies: IWorkspaceRuntimeDependencies = {
-  createWorkspace,
-  readLayoutFile,
-  resolveLayoutFile,
-  collectAllTabs,
+  createWorkspace: createWorkspaceWithInitialTab,
   updateTabAgentSessionId,
   getProviderByPanelType,
   checkAgentAvailabilityForPanelType,
@@ -96,24 +90,15 @@ export const createWorkspaceRuntime = async (
   }
 
   const layoutOptions = provider ? { panelType: provider.panelType } : undefined;
-  const workspace = await dependencies.createWorkspace(
+  const { workspace, initialTab: defaultTab } = await dependencies.createWorkspace(
     options.directory,
     options.name,
     layoutOptions,
   );
 
-  const layout = await dependencies.readLayoutFile(
-    dependencies.resolveLayoutFile(workspace.id),
-  );
-  const defaultTab = layout ? dependencies.collectAllTabs(layout.root)[0] : null;
-
-  if (!defaultTab) {
-    throw new Error('Created workspace is missing its initial tab');
-  }
-
   const tabProvider = dependencies.getProviderByPanelType(defaultTab.panelType);
 
-  if (options.resumeSessionId && provider && defaultTab) {
+  if (options.resumeSessionId && provider) {
     provider.writeSessionId(defaultTab, options.resumeSessionId);
     await dependencies.updateTabAgentSessionId(
       defaultTab.sessionName,
@@ -136,7 +121,7 @@ export const createWorkspaceRuntime = async (
     });
   }
 
-  if (options.resumeSessionId && provider && defaultTab) {
+  if (options.resumeSessionId && provider) {
     const resumeSessionId = options.resumeSessionId;
     setTimeout(async () => {
       try {

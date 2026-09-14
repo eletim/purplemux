@@ -37,10 +37,7 @@ const makeDependencies = () => {
     markAgentLaunch: vi.fn(),
   };
   const dependencies = {
-    createWorkspace: vi.fn(async () => workspace),
-    readLayoutFile: vi.fn(async () => layout),
-    resolveLayoutFile: vi.fn((workspaceId: string) => `/layouts/${workspaceId}.json`),
-    collectAllTabs: vi.fn(() => [initialTab]),
+    createWorkspace: vi.fn(async () => ({ workspace, initialTab })),
     updateTabAgentSessionId: vi.fn(async () => undefined),
     getProviderByPanelType: vi.fn(() => null),
     checkAgentAvailabilityForPanelType: vi.fn(async () => ({ ok: true as const, provider: null })),
@@ -76,7 +73,6 @@ describe('createWorkspaceRuntime', () => {
       'Requested name',
       undefined,
     );
-    expect(dependencies.readLayoutFile).toHaveBeenCalledWith('/layouts/ws-created.json');
     expect(statusManager.registerTab).toHaveBeenCalledWith(initialTab.id, {
       cliState: 'inactive',
       workspaceId: workspace.id,
@@ -102,7 +98,8 @@ describe('createWorkspaceRuntime', () => {
       buildResumeCommand: vi.fn(async () => 'codex resume session-1'),
     } as unknown as IAgentProvider;
     vi.mocked(dependencies.getProviderByPanelType).mockReturnValue(provider);
-    vi.mocked(dependencies.collectAllTabs).mockReturnValue([{ ...initialTab, panelType: 'codex-cli' }]);
+    const agentTab = { ...initialTab, panelType: 'codex-cli' as const };
+    vi.mocked(dependencies.createWorkspace).mockResolvedValue({ workspace, initialTab: agentTab });
 
     const result = await createWorkspaceRuntime({
       directory: '/requested/cwd',
@@ -141,12 +138,38 @@ describe('createWorkspaceRuntime', () => {
     vi.useRealTimers();
   });
 
-  it('fails the mutation response when the created layout has no initial tab identity', async () => {
-    const { dependencies } = makeDependencies();
-    vi.mocked(dependencies.collectAllTabs).mockReturnValue([]);
+  it('keeps the mutation-created tab identity when the persisted layout changes before the response', async () => {
+    const { dependencies, statusManager } = makeDependencies();
+    const replacementTab: ITab = {
+      ...initialTab,
+      id: 'tab-replacement',
+      sessionName: 'pmux-ws-created-pane-1-tab-replacement',
+    };
+    layout.root = {
+      type: 'pane',
+      id: 'pane-1',
+      tabs: [initialTab],
+      activeTabId: initialTab.id,
+    };
+    vi.mocked(dependencies.createWorkspace).mockImplementation(async () => {
+      layout.root = {
+        type: 'pane',
+        id: 'pane-1',
+        tabs: [replacementTab],
+        activeTabId: replacementTab.id,
+      };
+      return { workspace, initialTab };
+    });
 
-    await expect(createWorkspaceRuntime({
+    const result = await createWorkspaceRuntime({
       directory: '/requested/cwd',
-    }, dependencies)).rejects.toThrow('Created workspace is missing its initial tab');
+    }, dependencies);
+
+    expect(layout.root.type === 'pane' && layout.root.tabs[0]).toBe(replacementTab);
+    expect(result.initialTab.tabId).toBe(initialTab.id);
+    expect(statusManager.registerTab).toHaveBeenCalledWith(
+      initialTab.id,
+      expect.objectContaining({ tmuxSession: initialTab.sessionName }),
+    );
   });
 });
