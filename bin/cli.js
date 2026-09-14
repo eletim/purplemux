@@ -409,6 +409,7 @@ Commands:
   workspaces                               List workspaces
   workspace create --cwd PATH [--name NAME]
                                            Create a workspace and print its JSON
+                                           Contract: workspace create response includes initialTab
   workspace delete -w WS --if-empty        Delete an empty workspace and print its JSON result
   tab list [-w WS]                         List tabs (optionally scoped to workspace)
   tab create -w WS [-n NAME] [-t TYPE]     Create a tab in workspace (type: terminal | claude-code | codex-cli | agent-sessions | web-browser | diff)

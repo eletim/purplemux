@@ -210,5 +210,6 @@ describe('purplemux workspace create command', () => {
   it('documents workspace create in help output', async () => {
     const result = await execFileAsync(process.execPath, [cliPath, 'help']);
     expect(result.stdout).toContain('workspace create --cwd PATH [--name NAME]');
+    expect(result.stdout).toContain('workspace create response includes initialTab');
   });
 });
