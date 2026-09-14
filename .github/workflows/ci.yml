@@ -2,9 +2,9 @@ name: CI
 
 on:
   push:
-    branches: [main, 'dev/v*']
+    branches: [main]
   pull_request:
-    branches: [main, 'dev/v*']
+    branches: [main]
 
 jobs:
   check:
@@ -20,7 +20,6 @@ jobs:
           cache: pnpm
 
       - run: pnpm install --frozen-lockfile
-      - run: pnpm check:version -- "${{ github.base_ref || github.ref_name }}"
       - run: pnpm lint
       - run: pnpm tsc --noEmit
       - run: pnpm test

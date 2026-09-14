@@ -1,0 +1,14 @@
+name: Version Contract
+
+on:
+  push:
+    branches: ['dev/v*']
+  pull_request:
+    branches: ['dev/v*']
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - run: node scripts/check-version.mjs "${{ github.base_ref || github.ref_name }}"
