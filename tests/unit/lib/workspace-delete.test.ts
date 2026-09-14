@@ -7,12 +7,14 @@ const mocks = vi.hoisted(() => ({
   sessions: [] as string[],
   listSessionsForSafetyCheck: vi.fn<() => Promise<string[]>>(),
   createSession: vi.fn(async () => undefined),
+  killSession: vi.fn(async () => undefined),
 }));
 
 vi.mock('@/lib/tmux', async (importOriginal) => ({
   ...await importOriginal<typeof import('@/lib/tmux')>(),
   listSessionsForSafetyCheck: mocks.listSessionsForSafetyCheck,
   createSession: mocks.createSession,
+  killSession: mocks.killSession,
 }));
 vi.mock('@/lib/sync-server', () => ({ broadcastSync: vi.fn() }));
 
@@ -56,6 +58,9 @@ beforeEach(async () => {
   mocks.listSessionsForSafetyCheck.mockReset();
   mocks.listSessionsForSafetyCheck.mockImplementation(async () => mocks.sessions);
   mocks.createSession.mockClear();
+  mocks.killSession.mockClear();
+  const { setLayoutReconciler } = await import('@/lib/layout-store');
+  setLayoutReconciler(null);
   await fs.rm(path.join(tempHome, '.purplemux'), { recursive: true, force: true });
 });
 
@@ -179,5 +184,43 @@ describe('deleteWorkspaceIfEmpty', () => {
       workspaceId: 'ws-missing', status: 'absent', deleted: false,
     });
     await expect(fs.access(path.join(base, 'workspaces', 'ws-other', 'layout.json'))).resolves.toBeUndefined();
+  });
+});
+
+describe('deleteWorkspace', () => {
+  it('serializes status registration with unconditional workspace deletion', async () => {
+    await seed(nonEmptyLayout);
+    const runtimeTabIds = new Set<string>();
+    let enterRegistration!: () => void;
+    let releaseRegistration!: () => void;
+    const registrationEntered = new Promise<void>((resolve) => { enterRegistration = resolve; });
+    const registrationRelease = new Promise<void>((resolve) => { releaseRegistration = resolve; });
+
+    const { deleteWorkspace } = await import('@/lib/workspace-store');
+    const { runWithExistingTab, setLayoutReconciler } = await import('@/lib/layout-store');
+    setLayoutReconciler({
+      reconcileWorkspaceTabs: () => undefined,
+      removeWorkspaceTabs: (workspaceId) => {
+        if (workspaceId === 'ws-target') runtimeTabIds.clear();
+      },
+      syncAgentSessionId: () => undefined,
+    });
+
+    const registration = runWithExistingTab('ws-target', 'tab-1', async (tab) => {
+      enterRegistration();
+      await registrationRelease;
+      runtimeTabIds.add(tab.id);
+    });
+    await registrationEntered;
+
+    const deletion = deleteWorkspace('ws-target');
+    await vi.waitFor(() => expect(mocks.killSession).toHaveBeenCalledWith(nonEmptyLayout.root.tabs[0].sessionName));
+    expect(runtimeTabIds).toEqual(new Set());
+
+    releaseRegistration();
+    await expect(registration).resolves.toBe(true);
+    await expect(deletion).resolves.toBe(true);
+    expect(runtimeTabIds).toEqual(new Set());
+    setLayoutReconciler(null);
   });
 });

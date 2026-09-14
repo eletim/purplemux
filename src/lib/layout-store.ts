@@ -65,6 +65,16 @@ export interface IEmptyWorkspaceLayoutResult {
   sessionCount: number;
 }
 
+const removeLayoutFileUnlocked = async (wsId: string): Promise<void> => {
+  await fs.rm(resolveLayoutDir(wsId), { recursive: true, force: true });
+  clearLayoutCache(wsId);
+  const reconciler = g.__ptLayoutReconciler;
+  if (reconciler) {
+    reconciler.removeWorkspaceTabs(wsId);
+  }
+  broadcastSync({ type: 'layout', workspaceId: wsId });
+};
+
 const readLayoutForSafetyCheck = async (wsId: string): Promise<ILayoutData> => {
   const filePath = resolveLayoutFile(wsId);
   let raw: string;
@@ -101,7 +111,7 @@ export const removeWorkspaceLayoutIfEmpty = async (
     }
 
     await commit();
-    await removeLayoutFile(wsId);
+    await removeLayoutFileUnlocked(wsId);
     return { empty: true, tabCount: 0, sessionCount: 0 };
   });
 
@@ -168,13 +178,13 @@ export const readExistingLayout = async (wsId: string): Promise<ILayoutData | nu
 export const runWithExistingTab = async (
   wsId: string,
   tabId: string,
-  callback: (tab: ITab) => void,
+  callback: (tab: ITab) => void | Promise<void>,
 ): Promise<boolean> =>
   withLock(async () => {
     const layout = await readLayoutFile(resolveLayoutFile(wsId));
     const tab = layout ? collectAllTabs(layout.root).find((candidate) => candidate.id === tabId) : null;
     if (!tab) return false;
-    callback(tab);
+    await callback(tab);
     return true;
   });
 
@@ -212,15 +222,8 @@ export const writeLayoutFile = async (data: ILayoutData, filePath: string): Prom
   }
 };
 
-export const removeLayoutFile = async (wsId: string): Promise<void> => {
-  await fs.rm(resolveLayoutDir(wsId), { recursive: true, force: true });
-  clearLayoutCache(wsId);
-  const reconciler = g.__ptLayoutReconciler;
-  if (reconciler) {
-    reconciler.removeWorkspaceTabs(wsId);
-  }
-  broadcastSync({ type: 'layout', workspaceId: wsId });
-};
+export const removeLayoutFile = async (wsId: string): Promise<void> =>
+  withLock(() => removeLayoutFileUnlocked(wsId));
 
 export const clearLayoutCache = (wsId: string): void => {
   const filePath = resolveLayoutFile(wsId);
