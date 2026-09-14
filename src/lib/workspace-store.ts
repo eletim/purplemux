@@ -2,7 +2,7 @@ import fs from 'fs/promises';
 import path from 'path';
 import os from 'os';
 import { nanoid } from 'nanoid';
-import { listSessions, killSession } from '@/lib/tmux';
+import { listSessions } from '@/lib/tmux';
 import { createLogger } from '@/lib/logger';
 import { broadcastSync } from '@/lib/sync-server';
 import {
@@ -10,7 +10,7 @@ import {
   writeLayoutFile,
   resolveLayoutDir,
   resolveLayoutFile,
-  removeLayoutFile,
+  removeWorkspaceLayout,
   crossCheckWorkspaceLayout,
   collectAllTabs,
   createDefaultLayout,
@@ -361,23 +361,10 @@ export const deleteWorkspace = async (workspaceId: string): Promise<boolean> =>
 
     const ws = data.workspaces[idx];
 
-    const layout = await readLayoutFile(resolveLayoutFile(workspaceId));
-    if (layout) {
-      const tabs = collectAllTabs(layout.root);
-      for (const tab of tabs) {
-        try {
-          await killSession(tab.sessionName);
-        } catch {}
-      }
-    }
-
-    try {
-      await removeLayoutFile(workspaceId);
-    } catch {}
-
-    data.workspaces.splice(idx, 1);
-
-    await writeWorkspacesFile(data);
+    await removeWorkspaceLayout(workspaceId, async () => {
+      data.workspaces.splice(idx, 1);
+      await writeWorkspacesFile(data);
+    });
     log.info(`Deleted: ${workspaceId} (${ws.name})`);
     return true;
   });

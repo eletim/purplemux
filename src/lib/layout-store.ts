@@ -91,6 +91,31 @@ const readLayoutForSafetyCheck = async (wsId: string): Promise<ILayoutData> => {
 };
 
 /**
+ * Hold the layout mutation lock from the authoritative layout read through
+ * session teardown, the caller's metadata commit, and layout/status removal.
+ */
+export const removeWorkspaceLayout = async (
+  wsId: string,
+  commit: () => Promise<void>,
+): Promise<void> =>
+  withLock(async () => {
+    const layout = await readLayoutFile(resolveLayoutFile(wsId));
+    if (layout) {
+      for (const tab of collectAllTabs(layout.root)) {
+        try {
+          await killSession(tab.sessionName);
+        } catch {}
+      }
+    }
+
+    await commit();
+
+    try {
+      await removeLayoutFileUnlocked(wsId);
+    } catch {}
+  });
+
+/**
  * Hold the layout mutation lock from the emptiness check through the caller's
  * metadata commit. This prevents a tab from being registered between those
  * two operations.
