@@ -15,7 +15,7 @@ const handler = async (req: NextApiRequest, res: NextApiResponse) => {
       directory && typeof directory === 'string' ? directory : os.homedir();
 
     try {
-      const workspace = await createWorkspaceRuntime({
+      const { workspace } = await createWorkspaceRuntime({
         directory: resolvedDirectory,
         name,
         resumeSessionId,

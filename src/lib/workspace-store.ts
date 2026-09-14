@@ -14,12 +14,13 @@ import {
   crossCheckWorkspaceLayout,
   collectAllTabs,
   createDefaultLayout,
+  createDefaultLayoutWithInitialTab,
   removeWorkspaceLayoutIfEmpty,
 } from '@/lib/layout-store';
 import type { ICreateLayoutOptions } from '@/lib/layout-store';
 import { listProviders } from '@/lib/providers/registry';
 import { getVisuallyOrderedWorkspaces } from '@/lib/workspace-order';
-import type { IWorkspace, IWorkspaceGroup, IWorkspacesData, ILayoutData } from '@/types/terminal';
+import type { IWorkspace, IWorkspaceGroup, IWorkspacesData, ILayoutData, ITab } from '@/types/terminal';
 import type { TDeleteWorkspaceIfEmptyResult } from '@/types/workspace-cleanup';
 
 const log = createLogger('workspace');
@@ -301,7 +302,16 @@ export const getWorkspaceById = async (wsId: string): Promise<IWorkspace | undef
   return data?.workspaces.find((w) => w.id === wsId);
 };
 
-export const createWorkspace = async (directory: string, name?: string, layoutOptions?: ICreateLayoutOptions): Promise<IWorkspace> =>
+export interface ICreateWorkspaceResult {
+  workspace: IWorkspace;
+  initialTab: ITab;
+}
+
+export const createWorkspaceWithInitialTab = async (
+  directory: string,
+  name?: string,
+  layoutOptions?: ICreateLayoutOptions,
+): Promise<ICreateWorkspaceResult> =>
   withLock(async () => {
     let stat;
     try {
@@ -319,7 +329,11 @@ export const createWorkspace = async (directory: string, name?: string, layoutOp
     const wsId = `ws-${nanoid(6)}`;
     const wsName = name?.trim() || nextWorkspaceName(data.workspaces);
 
-    const layout = await createDefaultLayout(wsId, directory, layoutOptions);
+    const { layout, initialTab } = await createDefaultLayoutWithInitialTab(
+      wsId,
+      directory,
+      layoutOptions,
+    );
     await fs.mkdir(resolveLayoutDir(wsId), { recursive: true });
     await writeLayoutFile(layout, resolveLayoutFile(wsId));
 
@@ -329,8 +343,15 @@ export const createWorkspace = async (directory: string, name?: string, layoutOp
     await writeWorkspacePrompts(workspace);
 
     log.debug(`Created: ${wsId} (${wsName}, ${directory})`);
-    return workspace;
+    return { workspace, initialTab };
   });
+
+export const createWorkspace = async (
+  directory: string,
+  name?: string,
+  layoutOptions?: ICreateLayoutOptions,
+): Promise<IWorkspace> =>
+  (await createWorkspaceWithInitialTab(directory, name, layoutOptions)).workspace;
 
 export const deleteWorkspace = async (workspaceId: string): Promise<boolean> =>
   withLock(async () => {

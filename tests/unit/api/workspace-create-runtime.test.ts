@@ -26,6 +26,14 @@ const workspace = {
   directories: ['/absolute/cwd'],
 };
 
+const initialTab = {
+  tabId: 'tab-initial',
+  workspaceId: workspace.id,
+  name: '',
+  panelType: 'terminal',
+  agentProviderId: null,
+};
+
 const makeResponse = () => {
   const response = {
     statusCode: 200,
@@ -59,7 +67,7 @@ describe('workspace creation API entry points', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.verifyCliToken.mockReturnValue(true);
-    mocks.createWorkspaceRuntime.mockResolvedValue(workspace);
+    mocks.createWorkspaceRuntime.mockResolvedValue({ workspace, initialTab });
     mocks.getWorkspaces.mockResolvedValue({ workspaces: [workspace] });
   });
 
@@ -97,7 +105,7 @@ describe('workspace creation API entry points', () => {
       name: 'CLI name',
     });
     expect(res.statusCode).toBe(201);
-    expect(res.body).toEqual(workspace);
+    expect(res.body).toEqual({ ...workspace, initialTab });
   });
 
   it('uses existing naming semantics when the optional name is omitted', async () => {
