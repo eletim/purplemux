@@ -165,6 +165,19 @@ export const readLayoutFile = async (filePath: string): Promise<ILayoutData | nu
 export const readExistingLayout = async (wsId: string): Promise<ILayoutData | null> =>
   readLayoutFileInternal(resolveLayoutFile(wsId), false);
 
+export const runWithExistingTab = async (
+  wsId: string,
+  tabId: string,
+  callback: (tab: ITab) => void,
+): Promise<boolean> =>
+  withLock(async () => {
+    const layout = await readLayoutFile(resolveLayoutFile(wsId));
+    const tab = layout ? collectAllTabs(layout.root).find((candidate) => candidate.id === tabId) : null;
+    if (!tab) return false;
+    callback(tab);
+    return true;
+  });
+
 const extractWsIdFromPath = (filePath: string): string | null => {
   const match = filePath.match(/workspaces\/(ws-[^/]+)\//);
   return match?.[1] ?? null;

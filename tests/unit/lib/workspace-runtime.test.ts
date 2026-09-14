@@ -32,19 +32,24 @@ const layout: ILayoutData = {
 };
 
 const makeDependencies = () => {
+  const runtimeTabIds = new Set<string>();
   const statusManager = {
-    registerTab: vi.fn(),
+    registerTab: vi.fn((tabId: string) => { runtimeTabIds.add(tabId); }),
     markAgentLaunch: vi.fn(),
   };
   const dependencies = {
     createWorkspace: vi.fn(async () => ({ workspace, initialTab })),
+    runWithExistingTab: vi.fn(async (_workspaceId: string, _tabId: string, callback: (tab: ITab) => void) => {
+      callback(initialTab);
+      return true;
+    }),
     updateTabAgentSessionId: vi.fn(async () => undefined),
     getProviderByPanelType: vi.fn(() => null),
     checkAgentAvailabilityForPanelType: vi.fn(async () => ({ ok: true as const, provider: null })),
     getStatusManager: vi.fn(() => statusManager),
     sendKeys: vi.fn(async () => undefined),
   } as unknown as IWorkspaceRuntimeDependencies;
-  return { dependencies, statusManager };
+  return { dependencies, statusManager, runtimeTabIds };
 };
 
 describe('createWorkspaceRuntime', () => {
@@ -100,6 +105,10 @@ describe('createWorkspaceRuntime', () => {
     vi.mocked(dependencies.getProviderByPanelType).mockReturnValue(provider);
     const agentTab = { ...initialTab, panelType: 'codex-cli' as const };
     vi.mocked(dependencies.createWorkspace).mockResolvedValue({ workspace, initialTab: agentTab });
+    vi.mocked(dependencies.runWithExistingTab).mockImplementation(async (_workspaceId, _tabId, callback) => {
+      callback(agentTab);
+      return true;
+    });
 
     const result = await createWorkspaceRuntime({
       directory: '/requested/cwd',
@@ -139,7 +148,7 @@ describe('createWorkspaceRuntime', () => {
   });
 
   it('keeps the mutation-created tab identity when the persisted layout changes before the response', async () => {
-    const { dependencies, statusManager } = makeDependencies();
+    const { dependencies, runtimeTabIds } = makeDependencies();
     const replacementTab: ITab = {
       ...initialTab,
       id: 'tab-replacement',
@@ -160,6 +169,15 @@ describe('createWorkspaceRuntime', () => {
       };
       return { workspace, initialTab };
     });
+    runtimeTabIds.add(replacementTab.id);
+    vi.mocked(dependencies.runWithExistingTab).mockImplementation(async (_workspaceId, tabId, callback) => {
+      const currentTab = layout.root.type === 'pane'
+        ? layout.root.tabs.find((tab) => tab.id === tabId)
+        : undefined;
+      if (!currentTab) return false;
+      callback(currentTab);
+      return true;
+    });
 
     const result = await createWorkspaceRuntime({
       directory: '/requested/cwd',
@@ -167,9 +185,6 @@ describe('createWorkspaceRuntime', () => {
 
     expect(layout.root.type === 'pane' && layout.root.tabs[0]).toBe(replacementTab);
     expect(result.initialTab.tabId).toBe(initialTab.id);
-    expect(statusManager.registerTab).toHaveBeenCalledWith(
-      initialTab.id,
-      expect.objectContaining({ tmuxSession: initialTab.sessionName }),
-    );
+    expect(runtimeTabIds).toEqual(new Set([replacementTab.id]));
   });
 });

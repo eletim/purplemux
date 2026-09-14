@@ -1,5 +1,5 @@
 import { checkAgentAvailabilityForPanelType, toAgentAvailabilityError } from '@/lib/agent-availability';
-import { updateTabAgentSessionId } from '@/lib/layout-store';
+import { runWithExistingTab, updateTabAgentSessionId } from '@/lib/layout-store';
 import { createLogger } from '@/lib/logger';
 import { getProviderByPanelType } from '@/lib/providers';
 import { getStatusManager } from '@/lib/status-manager';
@@ -52,6 +52,7 @@ interface IWorkspaceStatusRuntime {
 
 export interface IWorkspaceRuntimeDependencies {
   createWorkspace: typeof createWorkspaceWithInitialTab;
+  runWithExistingTab: typeof runWithExistingTab;
   updateTabAgentSessionId: typeof updateTabAgentSessionId;
   getProviderByPanelType: typeof getProviderByPanelType;
   checkAgentAvailabilityForPanelType: typeof checkAgentAvailabilityForPanelType;
@@ -61,6 +62,7 @@ export interface IWorkspaceRuntimeDependencies {
 
 const defaultDependencies: IWorkspaceRuntimeDependencies = {
   createWorkspace: createWorkspaceWithInitialTab,
+  runWithExistingTab,
   updateTabAgentSessionId,
   getProviderByPanelType,
   checkAgentAvailabilityForPanelType,
@@ -107,21 +109,27 @@ export const createWorkspaceRuntime = async (
     );
   }
 
-  if (defaultTab.panelType !== 'web-browser') {
-    dependencies.getStatusManager().registerTab(defaultTab.id, {
-      cliState: 'inactive',
-      workspaceId: workspace.id,
-      tabName: defaultTab.name,
-      tmuxSession: defaultTab.sessionName,
-      panelType: defaultTab.panelType,
-      agentProviderId: tabProvider?.id,
-      agentSessionId: tabProvider?.readSessionId(defaultTab) ?? null,
-      lastEvent: null,
-      eventSeq: 0,
-    });
-  }
+  const initialTabPresent = await dependencies.runWithExistingTab(
+    workspace.id,
+    defaultTab.id,
+    (currentTab) => {
+      if (currentTab.panelType === 'web-browser') return;
+      const currentProvider = dependencies.getProviderByPanelType(currentTab.panelType);
+      dependencies.getStatusManager().registerTab(currentTab.id, {
+        cliState: 'inactive',
+        workspaceId: workspace.id,
+        tabName: currentTab.name,
+        tmuxSession: currentTab.sessionName,
+        panelType: currentTab.panelType,
+        agentProviderId: currentProvider?.id,
+        agentSessionId: currentProvider?.readSessionId(currentTab) ?? null,
+        lastEvent: null,
+        eventSeq: 0,
+      });
+    },
+  );
 
-  if (options.resumeSessionId && provider) {
+  if (options.resumeSessionId && provider && initialTabPresent) {
     const resumeSessionId = options.resumeSessionId;
     setTimeout(async () => {
       try {
