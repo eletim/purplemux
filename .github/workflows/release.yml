@@ -27,14 +27,8 @@ jobs:
       - run: pnpm tsc --noEmit
       - run: pnpm test
 
-      - name: Verify tag matches package.json version
-        run: |
-          TAG_VERSION="${GITHUB_REF_NAME#v}"
-          PKG_VERSION=$(node -p "require('./package.json').version")
-          if [ "$TAG_VERSION" != "$PKG_VERSION" ]; then
-            echo "Tag v$TAG_VERSION does not match package.json version $PKG_VERSION" >&2
-            exit 1
-          fi
+      - name: Verify version contract
+        run: pnpm check:version -- "$GITHUB_REF_NAME"
 
   publish-npm:
     needs: check
