@@ -61,7 +61,16 @@ describe('createWorkspaceRuntime', () => {
       name: 'Requested name',
     }, dependencies);
 
-    expect(result).toBe(workspace);
+    expect(result).toEqual({
+      workspace,
+      initialTab: {
+        tabId: initialTab.id,
+        workspaceId: workspace.id,
+        name: initialTab.name,
+        panelType: 'terminal',
+        agentProviderId: null,
+      },
+    });
     expect(dependencies.createWorkspace).toHaveBeenCalledWith(
       '/requested/cwd',
       'Requested name',
@@ -95,11 +104,19 @@ describe('createWorkspaceRuntime', () => {
     vi.mocked(dependencies.getProviderByPanelType).mockReturnValue(provider);
     vi.mocked(dependencies.collectAllTabs).mockReturnValue([{ ...initialTab, panelType: 'codex-cli' }]);
 
-    await createWorkspaceRuntime({
+    const result = await createWorkspaceRuntime({
       directory: '/requested/cwd',
       resumeSessionId: 'session-1',
       panelType: 'codex-cli',
     }, dependencies);
+
+    expect(result.initialTab).toEqual({
+      tabId: initialTab.id,
+      workspaceId: workspace.id,
+      name: initialTab.name,
+      panelType: 'codex-cli',
+      agentProviderId: 'codex',
+    });
 
     expect(dependencies.checkAgentAvailabilityForPanelType).toHaveBeenCalledWith('codex-cli');
     expect(dependencies.createWorkspace).toHaveBeenCalledWith(
@@ -122,5 +139,14 @@ describe('createWorkspaceRuntime', () => {
     );
     expect(statusManager.markAgentLaunch).toHaveBeenCalledWith(initialTab.id);
     vi.useRealTimers();
+  });
+
+  it('fails the mutation response when the created layout has no initial tab identity', async () => {
+    const { dependencies } = makeDependencies();
+    vi.mocked(dependencies.collectAllTabs).mockReturnValue([]);
+
+    await expect(createWorkspaceRuntime({
+      directory: '/requested/cwd',
+    }, dependencies)).rejects.toThrow('Created workspace is missing its initial tab');
   });
 });

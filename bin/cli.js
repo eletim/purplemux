@@ -84,6 +84,16 @@ const isWorkspace = (value) =>
   && Array.isArray(value.directories)
   && value.directories.every((directory) => typeof directory === 'string');
 
+const isInitialTab = (value, workspaceId) =>
+  value
+  && typeof value === 'object'
+  && typeof value.tabId === 'string'
+  && value.tabId.startsWith('tab-')
+  && value.workspaceId === workspaceId
+  && typeof value.name === 'string'
+  && typeof value.panelType === 'string'
+  && (typeof value.agentProviderId === 'string' || value.agentProviderId === null);
+
 const workspaceCreateOutcomeUnknown = (reason) => {
   die(`workspace creation outcome unknown; do not retry automatically (${reason})`);
 };
@@ -116,7 +126,7 @@ const createWorkspace = async (data) => {
     }
     die(message);
   }
-  if (!isWorkspace(body)) {
+  if (!isWorkspace(body) || !isInitialTab(body.initialTab, body.id)) {
     workspaceCreateOutcomeUnknown('invalid workspace response');
   }
   return body;

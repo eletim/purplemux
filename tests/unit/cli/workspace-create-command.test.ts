@@ -64,6 +64,13 @@ describe('purplemux workspace create command', () => {
       id: 'ws-created',
       name: 'Workspace 7',
       directories: ['/absolute/cwd'],
+      initialTab: {
+        tabId: 'tab-initial',
+        workspaceId: 'ws-created',
+        name: '',
+        panelType: 'terminal',
+        agentProviderId: null,
+      },
     };
     const { port, requests } = await startServer(201, workspace);
 
@@ -84,7 +91,18 @@ describe('purplemux workspace create command', () => {
   });
 
   it('passes an optional name', async () => {
-    const workspace = { id: 'ws-created', name: 'Named', directories: ['/absolute/cwd'] };
+    const workspace = {
+      id: 'ws-created',
+      name: 'Named',
+      directories: ['/absolute/cwd'],
+      initialTab: {
+        tabId: 'tab-initial',
+        workspaceId: 'ws-created',
+        name: '',
+        panelType: 'terminal',
+        agentProviderId: null,
+      },
+    };
     const { port, requests } = await startServer(201, workspace);
     await execFileAsync(
       process.execPath,
@@ -121,6 +139,23 @@ describe('purplemux workspace create command', () => {
 
   it('rejects a malformed success response', async () => {
     const { port } = await startServer(201, { ok: true });
+    await expect(execFileAsync(
+      process.execPath,
+      [cliPath, 'workspace', 'create', '--cwd', '/absolute/cwd'],
+      { env: envFor(port) },
+    )).rejects.toMatchObject({
+      code: 1,
+      stdout: '',
+      stderr: 'error: workspace creation outcome unknown; do not retry automatically (invalid workspace response)\n',
+    });
+  });
+
+  it('rejects a legacy success response without the authoritative initial tab', async () => {
+    const { port } = await startServer(201, {
+      id: 'ws-created',
+      name: 'Workspace 7',
+      directories: ['/absolute/cwd'],
+    });
     await expect(execFileAsync(
       process.execPath,
       [cliPath, 'workspace', 'create', '--cwd', '/absolute/cwd'],

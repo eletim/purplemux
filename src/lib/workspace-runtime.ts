@@ -32,6 +32,19 @@ export interface ICreateWorkspaceRuntimeOptions {
   panelType?: TPanelType;
 }
 
+export interface IInitialWorkspaceTab {
+  tabId: string;
+  workspaceId: string;
+  name: string;
+  panelType: TPanelType;
+  agentProviderId: string | null;
+}
+
+export interface ICreateWorkspaceRuntimeResult {
+  workspace: IWorkspace;
+  initialTab: IInitialWorkspaceTab;
+}
+
 interface IWorkspaceStatusRuntime {
   registerTab(tabId: string, entry: ITabStatusEntry): void;
   markAgentLaunch(tabId: string): void;
@@ -64,7 +77,7 @@ const defaultDependencies: IWorkspaceRuntimeDependencies = {
 export const createWorkspaceRuntime = async (
   options: ICreateWorkspaceRuntimeOptions,
   dependencies: IWorkspaceRuntimeDependencies = defaultDependencies,
-): Promise<IWorkspace> => {
+): Promise<ICreateWorkspaceRuntimeResult> => {
   const provider = options.resumeSessionId
     ? dependencies.getProviderByPanelType(options.panelType ?? 'claude-code')
     : null;
@@ -94,6 +107,12 @@ export const createWorkspaceRuntime = async (
   );
   const defaultTab = layout ? dependencies.collectAllTabs(layout.root)[0] : null;
 
+  if (!defaultTab) {
+    throw new Error('Created workspace is missing its initial tab');
+  }
+
+  const tabProvider = dependencies.getProviderByPanelType(defaultTab.panelType);
+
   if (options.resumeSessionId && provider && defaultTab) {
     provider.writeSessionId(defaultTab, options.resumeSessionId);
     await dependencies.updateTabAgentSessionId(
@@ -103,8 +122,7 @@ export const createWorkspaceRuntime = async (
     );
   }
 
-  if (defaultTab && defaultTab.panelType !== 'web-browser') {
-    const tabProvider = dependencies.getProviderByPanelType(defaultTab.panelType);
+  if (defaultTab.panelType !== 'web-browser') {
     dependencies.getStatusManager().registerTab(defaultTab.id, {
       cliState: 'inactive',
       workspaceId: workspace.id,
@@ -134,7 +152,16 @@ export const createWorkspaceRuntime = async (
     }, SHELL_READY_DELAY_MS);
   }
 
-  return workspace;
+  return {
+    workspace,
+    initialTab: {
+      tabId: defaultTab.id,
+      workspaceId: workspace.id,
+      name: defaultTab.name,
+      panelType: defaultTab.panelType ?? 'terminal',
+      agentProviderId: tabProvider?.id ?? null,
+    },
+  };
 };
 
 export const getWorkspaceRuntimeHttpError = (
