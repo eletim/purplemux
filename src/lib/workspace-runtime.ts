@@ -2,6 +2,7 @@ import { checkAgentAvailabilityForPanelType, toAgentAvailabilityError } from '@/
 import { runWithExistingTab, updateTabAgentSessionId } from '@/lib/layout-store';
 import { createLogger } from '@/lib/logger';
 import { getProviderByPanelType } from '@/lib/providers';
+import { registerExistingRuntimeTab } from '@/lib/runtime-tab-registration';
 import { getStatusManager } from '@/lib/status-manager';
 import { sendKeys } from '@/lib/tmux';
 import { createWorkspaceWithInitialTab } from '@/lib/workspace-store';
@@ -109,24 +110,10 @@ export const createWorkspaceRuntime = async (
     );
   }
 
-  const initialTabPresent = await dependencies.runWithExistingTab(
+  const initialTabPresent = await registerExistingRuntimeTab(
     workspace.id,
     defaultTab.id,
-    (currentTab) => {
-      if (currentTab.panelType === 'web-browser') return;
-      const currentProvider = dependencies.getProviderByPanelType(currentTab.panelType);
-      dependencies.getStatusManager().registerTab(currentTab.id, {
-        cliState: 'inactive',
-        workspaceId: workspace.id,
-        tabName: currentTab.name,
-        tmuxSession: currentTab.sessionName,
-        panelType: currentTab.panelType,
-        agentProviderId: currentProvider?.id,
-        agentSessionId: currentProvider?.readSessionId(currentTab) ?? null,
-        lastEvent: null,
-        eventSeq: 0,
-      });
-    },
+    dependencies,
   );
 
   if (options.resumeSessionId && provider && initialTabPresent) {

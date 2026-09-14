@@ -1,7 +1,7 @@
 import fs from 'fs/promises';
 import path from 'path';
 import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { ILayoutData } from '@/types/terminal';
+import type { ILayoutData, ITab, IWorkspace } from '@/types/terminal';
 
 const mocks = vi.hoisted(() => ({
   home: `/tmp/purplemux-layout-close-lock-${process.pid}`,
@@ -27,12 +27,15 @@ vi.mock('@/lib/tmux', async (importOriginal) => ({
 vi.mock('@/lib/sync-server', () => ({ broadcastSync: vi.fn() }));
 
 import {
+  addTabToPane,
   clearLayoutCache,
+  getLayout,
   removeTabFromPane,
   resolveLayoutFile,
   restartTabSession,
   runWithExistingTab,
 } from '@/lib/layout-store';
+import { createTabRuntime, type ITabRuntimeDependencies } from '@/lib/tab-runtime';
 
 const workspaceId = 'ws-close-lock';
 
@@ -124,5 +127,61 @@ describe('removeTabFromPane serialization', () => {
     await expect(close).resolves.toBe(true);
     await expect(guardedRegistration).resolves.toBe(false);
     expect(register).not.toHaveBeenCalled();
+  });
+
+  it('does not leave runtime status when close wins after createTabRuntime persists the tab', async () => {
+    await writeLayout({
+      root: {
+        type: 'pane',
+        id: 'pane-1',
+        tabs: [],
+        activeTabId: null,
+      },
+      activePaneId: 'pane-1',
+      updatedAt: '2026-09-14T00:00:00.000Z',
+    });
+
+    const workspace: IWorkspace = {
+      id: workspaceId,
+      name: 'Close race',
+      directories: ['/workspace'],
+    };
+    let createdTab!: ITab;
+    let reportTabCreated!: () => void;
+    let finishAdd!: () => void;
+    const tabCreated = new Promise<void>((resolve) => { reportTabCreated = resolve; });
+    const addFinished = new Promise<void>((resolve) => { finishAdd = resolve; });
+    const registerTab = vi.fn();
+    const dependencies: ITabRuntimeDependencies = {
+      getWorkspaceById: vi.fn(async () => workspace),
+      getLayout,
+      checkAgentAvailabilityForPanelType: vi.fn(async () => ({ ok: true as const, provider: null })),
+      addTabToPane: async (...args) => {
+        createdTab = (await addTabToPane(...args))!;
+        reportTabCreated();
+        await addFinished;
+        return createdTab;
+      },
+      removeTabFromPane,
+      runWithExistingTab,
+      updateTabAgentSessionId: vi.fn(async () => undefined),
+      getProviderByPanelType: vi.fn(() => null),
+      getStatusManager: () => ({
+        registerTab,
+        markAgentLaunch: vi.fn(),
+        removeTab: vi.fn(),
+      }),
+      sendKeys: vi.fn(async () => undefined),
+    };
+
+    const creation = createTabRuntime({ workspaceId, panelType: 'terminal' }, dependencies);
+    await tabCreated;
+
+    await expect(removeTabFromPane(workspaceId, 'pane-1', createdTab.id)).resolves.toBe(true);
+    finishAdd();
+
+    await expect(creation).resolves.toMatchObject({ tab: { id: createdTab.id } });
+    expect(registerTab).not.toHaveBeenCalled();
+    await expect(runWithExistingTab(workspaceId, createdTab.id, vi.fn())).resolves.toBe(false);
   });
 });
