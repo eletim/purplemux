@@ -58,6 +58,9 @@ All subcommands require a running server. They read the port from `~/.purplemux/
 | `purplemux tab result -w WS TAB_ID` | Capture the tab pane's current content |
 | `purplemux tab close -w WS TAB_ID` | Close a tab |
 | `purplemux tab browser ...` | Drive a `web-browser` tab (Electron only) |
+| `purplemux ext-review create --socket PATH --session SESSION --window @ID [--window @ID ...]` | Create an explicit external review |
+| `purplemux ext-review get ID` | Validate and read a review definition |
+| `purplemux ext-review delete ID` | Delete only a review definition |
 | `purplemux api-guide` | Print the full HTTP API reference |
 | `purplemux help` | Show usage |
 
@@ -68,6 +71,33 @@ Output is JSON unless noted. `--workspace` and `-w` are interchangeable.
 `purplemux workspace delete -w WS --if-empty` asks the server to check and delete the workspace in one atomic operation. It never closes tabs or kills sessions: close those first. The JSON `status` is `deleted` for a new deletion, `absent` when the desired final state already held, or `not-empty` when the workspace was left unchanged. `not-empty` exits with status 2.
 
 If a transport failure or server error makes the mutation outcome uncertain, reconcile with `purplemux workspaces`. Direct HTTP clients can use `GET /api/cli/workspaces/<workspaceId>` for an exact `present` or `absent` result. Do not inspect `~/.purplemux` files or tmux state as an external lifecycle contract.
+
+### External review (0.5.0)
+
+Observe known external tmux windows in your browser without importing them into a Workspace. Supply an absolute socket path, an exact session name or quoted `$sessionId`, and each explicit `@windowId`:
+
+```bash
+purplemux ext-review create --socket /absolute/known/tmux/socket --session '$2' --window @1 --window @3
+purplemux ext-review get REVIEW_ID
+purplemux ext-review delete REVIEW_ID
+```
+
+Replace these selectors with targets you already know. Socket symlinks and the PurpleMux-owned `purple` socket are rejected. Repeat `--window` for each unique target; there is no CLI `list`, discovery, or target-update command.
+
+Creation prints one JSON document containing the persisted definition's `id` and an absolute browser `url`. Scripts can parse those fields directly. Open that URL in an authenticated browser to view the approved windows. `/ext-review` lists persisted definitions, including unavailable ones, and offers manual creation, Open, and Delete. Get prints the definition as JSON; delete prints `{"deleted":true}` on success.
+
+The observation boundary is fixed and read-only. You see live current-screen snapshots, not lossless output history. Input, paste, send-keys, kill, rename, and external terminal resize are unavailable; resizing your browser changes only the local renderer. Socket/server/session/window identities are frozen at creation, so newly added windows never enter the allowlist. Missing or replaced targets become unavailable rather than being recreated or substituted. To change targets, explicitly create a new definition.
+
+Reviews neither adopt nor own external resources. Their definitions and targets are excluded from Workspace ownership, discovery, and cleanup. Validation never starts a tmux server. Deleting a Review removes only its definition, even when targets are unavailable; it sends no tmux commands and leaves external sessions, windows, and panes running.
+
+The lifecycle API accepts a CLI token or authenticated browser session cookie:
+
+| Endpoint | Request / response |
+|---|---|
+| `POST /api/cli/ext-reviews` | Body: `{"socketPath":"/absolute/known/tmux/socket","session":"$2","windowTargets":["@1","@3"]}`. HTTP 201 returns the definition with `id` and relative `url: "/ext-review/<id>"`; the CLI makes the URL absolute. Invalid targets return 400. |
+| `GET /api/cli/ext-reviews` | `{"reviews":[...]}` lists persisted definitions, including unavailable ones. |
+| `GET /api/cli/ext-reviews/<reviewId>` | Returns the validated definition without `url`; missing definitions return 404, unavailable or changed targets return 409. |
+| `DELETE /api/cli/ext-reviews/<reviewId>` | `{"deleted":true}` on success; missing definitions return 404. Definition-only deletion. |
 
 ### `tab create` panel types
 

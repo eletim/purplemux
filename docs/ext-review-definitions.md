@@ -1,4 +1,4 @@
-# External review definitions
+# External review definitions (PurpleMux 0.5.0)
 
 External review definitions are stored in `~/.purplemux/ext-reviews.json`, independently of Workspaces and tabs. They do not adopt or own external tmux resources.
 
