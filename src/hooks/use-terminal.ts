@@ -201,6 +201,7 @@ const useTerminal = ({ readOnly = false, theme, fontSize = DEFAULT_FONT_SIZE, li
         allowProposedApi: true,
         macOptionIsMeta: true,
         disableStdin: readOnly,
+        windowOptions: { setWinSizeChars: readOnly },
         theme: callbacksRef.current.theme,
         linkHandler: {
           activate: (_event, text) => openExternalUrl(text),
