@@ -1,7 +1,7 @@
 import type { IncomingMessage } from 'http';
 import { WebSocket } from 'ws';
 import { loadExtReviewDefinition } from '@/lib/ext-review-store';
-import { captureExtReviewWindow, resolveExtReviewTargets } from '@/lib/ext-review-tmux';
+import { captureExtReviewWindow, ExtReviewSnapshotRaceError, resolveExtReviewTargets } from '@/lib/ext-review-tmux';
 import { extReviewObservers } from '@/lib/ext-review-observation-resources';
 import { encodeStdout, MSG_HEARTBEAT } from '@/lib/terminal-protocol';
 
@@ -69,10 +69,14 @@ export const handleExtReviewObservation = async (ws: WebSocket, request: Incomin
       } else {
         await resolveExtReviewTargets(review, abort.signal);
       }
-      if (!stopped) timer = setTimeout(() => { void poll(); }, 250);
-    } catch {
-      stop(1011, 'Frozen review targets are unavailable');
+    } catch (error) {
+      if (!(error instanceof ExtReviewSnapshotRaceError)) {
+        stop(1011, 'Frozen review targets are unavailable');
+        return;
+      }
+      // Discard the inconsistent frame; the next poll revalidates from scratch.
     }
+    if (!stopped) timer = setTimeout(() => { void poll(); }, 250);
   };
   await poll();
 };

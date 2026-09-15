@@ -6,6 +6,8 @@ import type { ICreateExtReview, IExtReview } from '@/types/ext-review';
 
 const execFile = promisify(execFileCallback);
 export class ExtReviewError extends Error {}
+/** A valid frozen target changed its visible layout while the snapshot was read. */
+export class ExtReviewSnapshotRaceError extends Error {}
 
 export const validateExtReviewInput = (input: ICreateExtReview): void => {
   if (!input || typeof input.socketPath !== 'string' || !path.isAbsolute(input.socketPath)
@@ -135,6 +137,6 @@ export const captureExtReviewWindow = async (review: IExtReview, windowId: strin
   }
   // Do not publish a snapshot if identities or pane membership changed mid-read.
   await resolveExtReviewTargets(review, signal);
-  if (await list() !== before) throw new ExtReviewError('Frozen window panes changed during observation');
+  if (await list() !== before) throw new ExtReviewSnapshotRaceError('Frozen window panes changed during observation');
   return `${screen}\x1b[0m\x1b[H`;
 };

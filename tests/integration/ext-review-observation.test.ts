@@ -165,8 +165,13 @@ process.stdout.write(execFileSync(${JSON.stringify(realTmux)}, process.argv.slic
     connected.forEach((client) => expect(client.frames.filter((frame) => frame[0] === MSG_STDOUT)).toHaveLength(1));
   });
 
-  it('rejects a snapshot when zoom visibility changes during capture', async () => {
-    tmux('split-window', '-d', '-t', '$0:@0', 'sleep 300');
+  it('discards a mid-capture zoom race and continues with correct subsequent snapshots', async () => {
+    tmux('respawn-pane', '-k', '-t', '$0:@0.%0', 'echo FIRST_PANE; sleep 300');
+    tmux('split-window', '-d', '-t', '$0:@0', 'echo SECOND_PANE; sleep 300');
+    await vi.waitFor(() => {
+      expect(tmux('capture-pane', '-p', '-t', '%0')).toContain('FIRST_PANE');
+      expect(tmux('capture-pane', '-p', '-t', '%2')).toContain('SECOND_PANE');
+    });
     const bin = path.join(directory, 'zoom-bin');
     await fs.mkdir(bin);
     await fs.writeFile(path.join(bin, 'tmux'), `#!${process.execPath}
@@ -182,8 +187,16 @@ if (args.includes('capture-pane') && !fs.existsSync(marker)) {
 `, { mode: 0o700 });
     vi.stubEnv('PATH', `${bin}:${process.env.PATH}`);
     const client = await connect();
-    await vi.waitFor(() => expect(client.closed()?.code).toBe(1011), { timeout: 3000 });
+    await Promise.all(handlers);
     expect(text(client.frames)).toBe('');
+    expect(client.closed()).toBeUndefined();
+    await vi.waitFor(() => expect(text(client.frames)).toContain('FIRST_PANE'), { timeout: 3000 });
+    expect(text(client.frames)).not.toContain('SECOND_PANE');
+    expect(text(client.frames)).toContain('\x1b[8;30;90t');
+    expect(client.ws.readyState).toBe(WebSocket.OPEN);
+    tmux('resize-pane', '-Z', '-t', '%0');
+    await vi.waitFor(() => expect(text(client.frames)).toContain('SECOND_PANE'), { timeout: 3000 });
+    expect(client.closed()).toBeUndefined();
   });
 
   it('still validates frozen targets while output is backpressured', async () => {
