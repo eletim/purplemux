@@ -4,6 +4,7 @@ import path from 'path';
 import { nanoid } from 'nanoid';
 import { freezeExtReviewTargets, resolveExtReviewTargets } from '@/lib/ext-review-tmux';
 import type { ICreateExtReview, IExtReview } from '@/types/ext-review';
+import { stopExtReviewObservations } from '@/lib/ext-review-observation-resources';
 
 const file = path.join(os.homedir(), '.purplemux', 'ext-reviews.json');
 const globalStore = globalThis as typeof globalThis & { __purplemuxExtReviewLock?: Promise<void> };
@@ -52,5 +53,6 @@ export const deleteExtReview = (id: string): Promise<boolean> => withLock(async 
   const remaining = reviews.filter((review) => review.id !== id);
   if (remaining.length === reviews.length) return false;
   await write(remaining);
+  stopExtReviewObservations(id);
   return true;
 });

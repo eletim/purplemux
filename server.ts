@@ -8,6 +8,8 @@ import next from 'next';
 import { WebSocketServer } from 'ws';
 import { verifySessionToken, SESSION_COOKIE, extractCookie } from './src/lib/auth';
 import { handleConnection, gracefulShutdown } from './src/lib/terminal-server';
+import { handleExtReviewObservation } from './src/lib/ext-review-observation';
+import { stopExtReviewObservations } from './src/lib/ext-review-observation-resources';
 import { handleInstallConnection, gracefulInstallShutdown } from './src/lib/install-server';
 import { handleTimelineConnection, gracefulTimelineShutdown } from './src/lib/timeline-server';
 import { handleSyncConnection, gracefulSyncShutdown } from './src/lib/sync-server';
@@ -39,11 +41,13 @@ const verifyWebSocketAuth = async (request: IncomingMessage): Promise<boolean> =
   return !!(await verifySessionToken(value));
 };
 
-const WS_PATHS = new Set(['/api/terminal', '/api/timeline', '/api/sync', '/api/status', '/api/install']);
+const WS_PATHS = new Set(['/api/terminal', '/api/ext-review-terminal', '/api/timeline', '/api/sync', '/api/status', '/api/install']);
 
 const createWsServers = () => {
   const wss = new WebSocketServer({ noServer: true });
   wss.on('connection', handleConnection);
+  const reviewWss = new WebSocketServer({ noServer: true, maxPayload: 4096 });
+  reviewWss.on('connection', handleExtReviewObservation);
 
   const timelineWss = new WebSocketServer({ noServer: true });
   timelineWss.on('connection', handleTimelineConnection);
@@ -57,11 +61,11 @@ const createWsServers = () => {
   const installWss = new WebSocketServer({ noServer: true });
   installWss.on('connection', handleInstallConnection);
 
-  return { wss, timelineWss, syncWss, statusWss, installWss };
+  return { wss, reviewWss, timelineWss, syncWss, statusWss, installWss };
 };
 
 const handleWsUpgrade = (
-  { wss, timelineWss, syncWss, statusWss, installWss }: ReturnType<typeof createWsServers>,
+  { wss, reviewWss, timelineWss, syncWss, statusWss, installWss }: ReturnType<typeof createWsServers>,
   request: IncomingMessage,
   socket: import('stream').Duplex,
   head: Buffer,
@@ -73,6 +77,10 @@ const handleWsUpgrade = (
     const sessionId = url.searchParams.get('session');
     wss.handleUpgrade(request, socket, head, (ws) => {
       wss.emit('connection', ws, request, sessionId);
+    });
+  } else if (url.pathname === '/api/ext-review-terminal') {
+    reviewWss.handleUpgrade(request, socket, head, (ws) => {
+      reviewWss.emit('connection', ws, request);
     });
   } else if (url.pathname === '/api/timeline') {
     timelineWss.handleUpgrade(request, socket, head, (ws) => {
@@ -96,6 +104,7 @@ const handleWsUpgrade = (
 const NO_AUTH_WS_PATHS = new Set(['/api/install']);
 
 const shutdownWs = async () => {
+  stopExtReviewObservations();
   gracefulTimelineShutdown();
   gracefulSyncShutdown();
   gracefulStatusShutdown();

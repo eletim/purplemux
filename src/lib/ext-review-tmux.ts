@@ -91,3 +91,34 @@ export const resolveExtReviewTargets = async (review: IExtReview): Promise<IExtR
     throw new ExtReviewError('External review targets are unavailable');
   }
 };
+
+/** Capture only panes in one frozen window. No attach, buffers, resize or input. */
+export const captureExtReviewWindow = async (review: IExtReview, windowId: string,
+  signal?: AbortSignal): Promise<string> => {
+  if (!review.windowIds.includes(windowId)) throw new ExtReviewError('Window is not approved');
+  await resolveExtReviewTargets(review);
+  const target = `${review.sessionId}:${windowId}`;
+  const run = async (args: string[]) => (await execFile('tmux', ['-N', '-S', review.socketPath, ...args],
+    { timeout: 5000, maxBuffer: 4 * 1024 * 1024, signal })).stdout;
+  const list = () => run(['list-panes', '-t', target, '-F',
+    '#{session_id}\t#{window_id}\t#{pane_id}\t#{pane_left}\t#{pane_top}\t#{pane_width}\t#{pane_height}']);
+  const before = await list();
+  const panes = before.trim().split('\n').map((line) => line.split('\t'));
+  if (panes.some(([session, window, pane, ...geometry]) => session !== review.sessionId
+    || window !== windowId || !/^%\d+$/.test(pane) || geometry.length !== 4
+    || geometry.some((value) => !/^\d+$/.test(value)))) {
+    throw new ExtReviewError('Frozen window panes are unavailable');
+  }
+  let screen = '\x1b[?25l\x1b[0m\x1b[2J\x1b[H';
+  for (const [, , pane, left, top, , height] of panes) {
+    const content = await run(['capture-pane', '-p', '-e', '-N', '-t', `${target}.${pane}`]);
+    const lines = content.split('\n').slice(0, Number(height));
+    lines.forEach((line, row) => {
+      screen += `\x1b[${Number(top) + row + 1};${Number(left) + 1}H\x1b[0m${line}`;
+    });
+  }
+  // Do not publish a snapshot if identities or pane membership changed mid-read.
+  await resolveExtReviewTargets(review);
+  if (await list() !== before) throw new ExtReviewError('Frozen window panes changed during observation');
+  return `${screen}\x1b[0m\x1b[H`;
+};
