@@ -131,6 +131,24 @@ purplemux tab create -w WS -t agent-sessions
 purplemux workspace delete -w WS --if-empty
 ```
 
+### External review (PurpleMux 0.5.0)
+
+View known external tmux windows in an authenticated browser:
+
+```bash
+purplemux ext-review create --socket /absolute/known/tmux/socket --session '$2' --window @1 --window @3
+purplemux ext-review get REVIEW_ID
+purplemux ext-review delete REVIEW_ID
+```
+
+Use your own known absolute socket path, exact session name or quoted `$sessionId`, and explicit `@windowId` values; repeat `--window` for each target. Creation prints JSON with machine-readable `id` and absolute browser `url`. Open that URL to view approved windows, or visit `/ext-review` to list definitions and manually create, open, or delete them.
+
+Observation is fixed and read-only: live current-screen snapshots, with no input, paste, send-keys, kill, rename, or external resize. Browser resizing affects only the local viewer. Added windows never enter the frozen allowlist; missing or replaced targets become unavailable and are never recreated or substituted. Changing targets requires an explicit new definition.
+
+Reviews are excluded from Workspace ownership, discovery, and cleanup. They do not discover targets, adopt external sessions, or start a tmux server. Delete removes only the definition, even if unavailable, and sends no tmux commands; external sessions, windows, and panes remain running. Socket symlinks and the PurpleMux-owned `purple` socket are rejected.
+
+See the [CLI reference](landing-src/docs/cli-reference.md), `purplemux api-guide`, and [external review technical notes](docs/ext-review-definitions.md) for the lifecycle API and observation details.
+
 ### Run from source
 
 ```bash

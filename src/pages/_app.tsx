@@ -118,7 +118,7 @@ const ElectronTitlebar = ({ isElectron }: { isElectron: boolean }) => {
   );
 };
 
-export default function App({ Component, pageProps }: TAppPropsWithLayout) {
+export default function App({ Component, pageProps, router }: TAppPropsWithLayout) {
   const storeHydrated = useRef(false);
   if (!storeHydrated.current && pageProps.initialWorkspace) {
     storeHydrated.current = true;
@@ -202,7 +202,7 @@ export default function App({ Component, pageProps }: TAppPropsWithLayout) {
           <TerminalThemeSync />
           <FontSizeSync />
           <CustomCssSync />
-          <AgentStatusProvider />
+          {!(router.pathname === '/ext-review' || router.pathname.startsWith('/ext-review/')) && <AgentStatusProvider />}
           <ThemedToaster />
         </main>
       </ThemeProvider>
