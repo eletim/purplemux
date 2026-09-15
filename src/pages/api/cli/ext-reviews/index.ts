@@ -1,5 +1,6 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { verifyCliToken } from '@/lib/cli-token';
+import { verifyRequestSession } from '@/lib/auth';
 import { createExtReview, listExtReviews } from '@/lib/ext-review-store';
 import { ExtReviewError } from '@/lib/ext-review-tmux';
 
@@ -8,10 +9,12 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     res.setHeader('Allow', 'GET, POST');
     return res.status(405).json({ error: 'Method not allowed' });
   }
-  if (!verifyCliToken(req)) return res.status(403).json({ error: 'Forbidden' });
+  const authed = verifyCliToken(req) || (await verifyRequestSession(req.headers.cookie));
+  if (!authed) return res.status(403).json({ error: 'Forbidden' });
   try {
     if (req.method === 'GET') return res.status(200).json({ reviews: await listExtReviews() });
-    return res.status(201).json(await createExtReview(req.body));
+    const review = await createExtReview(req.body);
+    return res.status(201).json({ ...review, url: `/ext-review/${review.id}` });
   } catch (error) {
     return res.status(error instanceof ExtReviewError ? 400 : 500)
       .json({ error: error instanceof ExtReviewError ? error.message : 'Failed to access review definitions' });
