@@ -16,5 +16,11 @@
   "removeFromGroup": "Убрать из группы",
   "ungrouped": "Без группы",
   "defaultGroupName": "Новая группа",
-  "emptyGroup": "(пусто)"
+  "emptyGroup": "(пусто)",
+  "cleanupEmptyWorkspaces": "Очистить пустые пространства ({count})",
+  "cleanupEmptyTitle": "Удалить пустые пространства",
+  "cleanupEmptyConfirm": "Удалить рабочие пространства без запущенных вкладок: {count}? Перед удалением каждое пространство будет проверено повторно.",
+  "cleanupResultTitle": "Результат очистки",
+  "cleanupDeleted": "Удалено: {count}",
+  "cleanupRemaining": "Осталось: {count}"
 }

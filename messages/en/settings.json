@@ -53,6 +53,8 @@
     "themeDescription": "Select terminal color themes for each mode.",
     "keyBar": "Shortcut Key Bar",
     "keyBarDescription": "Show an on-screen key bar (Tab, Esc, Ctrl, arrows) below the terminal — handy on touch devices.",
+    "promptPrefix": "Prompt Copy Prefix",
+    "promptPrefixDescription": "Lines beginning with this text get a prompt-copy button. Leave empty to disable prompt copy.",
     "keyBarOptions": {
       "auto": "Auto",
       "always": "Always",

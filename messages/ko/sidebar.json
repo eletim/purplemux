@@ -16,5 +16,11 @@
   "removeFromGroup": "그룹에서 제거",
   "ungrouped": "그룹 없음",
   "defaultGroupName": "새 그룹",
-  "emptyGroup": "(비어 있음)"
+  "emptyGroup": "(비어 있음)",
+  "cleanupEmptyWorkspaces": "빈 Workspace 정리 ({count}개)",
+  "cleanupEmptyTitle": "빈 Workspace 삭제",
+  "cleanupEmptyConfirm": "실행 중인 탭이 없는 Workspace {count}개를 삭제하시겠습니까? 삭제 전에 각 Workspace를 다시 확인합니다.",
+  "cleanupResultTitle": "Workspace 정리 결과",
+  "cleanupDeleted": "삭제됨: {count}개",
+  "cleanupRemaining": "남음: {count}개"
 }

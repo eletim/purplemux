@@ -16,5 +16,11 @@
   "removeFromGroup": "Aus Gruppe entfernen",
   "ungrouped": "Nicht gruppiert",
   "defaultGroupName": "Neue Gruppe",
-  "emptyGroup": "(leer)"
+  "emptyGroup": "(leer)",
+  "cleanupEmptyWorkspaces": "Leere Arbeitsbereiche bereinigen ({count})",
+  "cleanupEmptyTitle": "Leere Arbeitsbereiche löschen",
+  "cleanupEmptyConfirm": "{count} Arbeitsbereiche ohne laufende Tabs löschen? Jeder Arbeitsbereich wird vor dem Löschen erneut geprüft.",
+  "cleanupResultTitle": "Ergebnis der Bereinigung",
+  "cleanupDeleted": "Gelöscht: {count}",
+  "cleanupRemaining": "Verblieben: {count}"
 }

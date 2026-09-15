@@ -14,21 +14,11 @@ interface ILogicalBufferLine {
   text: string;
 }
 
-const HOST_PATH_PROMPT_RE = /^(?:\([^)]+\)\s*)?[\w.-]+@[\w.-]+:(?:~|\/).*?[#$%>❯➜](?:\s|$)/;
-const PATH_PROMPT_RE = /^(?:~|\/)[^\r\n]*?[#$%>❯➜](?:\s|$)/;
-const SIMPLE_PROMPT_RE = /^[$%❯➜](?:\s|$)/;
-
 const normalizePromptCandidate = (text: string): string => text
   .replace(/^[\s\u200B\u200C\u200D\uFEFF]+/, '');
 
-export const isShellPrompt = (text: string): boolean => {
-  const candidate = normalizePromptCandidate(text);
-  return (
-    HOST_PATH_PROMPT_RE.test(candidate)
-    || PATH_PROMPT_RE.test(candidate)
-    || SIMPLE_PROMPT_RE.test(candidate)
-  );
-};
+export const isShellPrompt = (text: string, promptPrefix: string): boolean =>
+  promptPrefix.length > 0 && normalizePromptCandidate(text).startsWith(promptPrefix);
 
 const findLogicalLineStart = (buffer: ITerminalPromptBuffer, row: number): number => {
   let startRow = Math.max(0, Math.min(row, buffer.length - 1));
@@ -70,11 +60,12 @@ const readLogicalLines = (
 
 export const findShellPromptRows = (
   buffer: ITerminalPromptBuffer,
+  promptPrefix: string,
   startRow = 0,
   endRow = buffer.length,
 ): number[] => (
   readLogicalLines(buffer, startRow, endRow)
-    .filter((line) => isShellPrompt(line.text))
+    .filter((line) => isShellPrompt(line.text, promptPrefix))
     .map((line) => line.startRow)
 );
 
@@ -87,6 +78,7 @@ interface ISyncPromptCopyButtonsOptions {
   screenHeight: number;
   label: string;
   onCopy: (promptRow: number) => void;
+  promptPrefix: string;
 }
 
 export const syncPromptCopyButtons = ({
@@ -98,11 +90,12 @@ export const syncPromptCopyButtons = ({
   screenHeight,
   label,
   onCopy,
+  promptPrefix,
 }: ISyncPromptCopyButtonsOptions): void => {
   const rowHeight = screenHeight / viewportRows;
   const viewportEnd = viewportY + viewportRows;
   const promptRows = rowHeight > 0
-    ? findShellPromptRows(buffer, viewportY, viewportEnd)
+    ? findShellPromptRows(buffer, promptPrefix, viewportY, viewportEnd)
       .filter((row) => row >= viewportY && row < viewportEnd)
     : [];
   const visibleRows = new Set(promptRows);
@@ -141,15 +134,16 @@ export const syncPromptCopyButtons = ({
 export const getPromptBlockText = (
   buffer: ITerminalPromptBuffer,
   promptRow: number,
+  promptPrefix: string,
 ): string | null => {
   const logicalLines = readLogicalLines(buffer);
   const startIndex = logicalLines.findIndex(
-    (line) => line.startRow === promptRow && isShellPrompt(line.text),
+    (line) => line.startRow === promptRow && isShellPrompt(line.text, promptPrefix),
   );
   if (startIndex < 0) return null;
 
   const nextPromptIndex = logicalLines.findIndex(
-    (line, index) => index > startIndex && isShellPrompt(line.text),
+    (line, index) => index > startIndex && isShellPrompt(line.text, promptPrefix),
   );
   const endIndex = nextPromptIndex < 0 ? logicalLines.length : nextPromptIndex;
 

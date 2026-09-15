@@ -5,6 +5,7 @@ import {
   ChevronsRight,
   Plus,
   FolderPlus,
+  Trash2,
   Settings,
   LogOut,
 } from 'lucide-react';
@@ -48,6 +49,7 @@ import useWebviewStore from '@/hooks/use-webview-store';
 import IconRenderer from '@/components/features/settings/icon-renderer';
 import SidebarRateLimits from '@/components/layout/sidebar-rate-limits';
 import isElectron from '@/hooks/use-is-electron';
+import { getEmptyWorkspaceIds } from '@/lib/workspace-cleanup';
 
 const MIN_WIDTH = 160;
 const MAX_WIDTH = 480;
@@ -113,6 +115,12 @@ const Sidebar = () => {
 
   const [isCreating, setIsCreating] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<IWorkspace | null>(null);
+  const [cleanupConfirmOpen, setCleanupConfirmOpen] = useState(false);
+  const [isCleaning, setIsCleaning] = useState(false);
+  const [cleanupResult, setCleanupResult] = useState<{
+    deleted: IWorkspace[];
+    remaining: IWorkspace[];
+  } | null>(null);
   const [deletingIds, setDeletingIds] = useState<Set<string>>(new Set());
   const [fadingOutIds, setFadingOutIds] = useState<Set<string>>(new Set());
   const [dragIndex, setDragIndex] = useState<number | null>(null);
@@ -252,6 +260,35 @@ const Sidebar = () => {
       store.unmarkPendingDelete(id);
     }
   }, [deleteTarget, activeWorkspaceId, workspaces, selectWorkspace]);
+
+  const emptyWorkspaceIds = useMemo(
+    () => getEmptyWorkspaceIds(workspaces, workspaceTabs),
+    [workspaces, workspaceTabs],
+  );
+
+  const handleCleanupConfirm = useCallback(async () => {
+    const targets = workspaces.filter((workspace) => emptyWorkspaceIds.includes(workspace.id));
+    if (targets.length === 0) return;
+
+    setCleanupConfirmOpen(false);
+    setIsCleaning(true);
+    try {
+      await useWorkspaceStore.getState().cleanupEmptyWorkspaces(
+        targets.map((workspace) => workspace.id),
+      );
+    } catch {
+      // Reconciliation below still reports the authoritative current state.
+    } finally {
+      const remainingIds = new Set(
+        useWorkspaceStore.getState().workspaces.map((workspace) => workspace.id),
+      );
+      setCleanupResult({
+        deleted: targets.filter((workspace) => !remainingIds.has(workspace.id)),
+        remaining: targets.filter((workspace) => remainingIds.has(workspace.id)),
+      });
+      setIsCleaning(false);
+    }
+  }, [emptyWorkspaceIds, workspaces]);
 
   const handleRename = useCallback(
     (workspaceId: string, name: string) => {
@@ -623,6 +660,15 @@ const Sidebar = () => {
               >
                 <FolderPlus className="h-3.5 w-3.5" />
               </button>
+              <button
+                className="flex w-9 items-center justify-center text-muted-foreground transition-colors hover:bg-sidebar-accent disabled:cursor-not-allowed disabled:opacity-30"
+                onClick={() => setCleanupConfirmOpen(true)}
+                disabled={emptyWorkspaceIds.length === 0 || isCleaning}
+                aria-label={t('cleanupEmptyWorkspaces', { count: emptyWorkspaceIds.length })}
+                title={t('cleanupEmptyWorkspaces', { count: emptyWorkspaceIds.length })}
+              >
+                <Trash2 className="h-3.5 w-3.5" />
+              </button>
             </div>
           )}
 
@@ -789,6 +835,56 @@ const Sidebar = () => {
             >
               {tc('delete')}
             </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <AlertDialog open={cleanupConfirmOpen} onOpenChange={setCleanupConfirmOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>{t('cleanupEmptyTitle')}</AlertDialogTitle>
+            <AlertDialogDescription>
+              {t('cleanupEmptyConfirm', { count: emptyWorkspaceIds.length })}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>{tc('cancel')}</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-ui-red hover:bg-ui-red/80"
+              disabled={isCleaning || emptyWorkspaceIds.length === 0}
+              onClick={handleCleanupConfirm}
+            >
+              {tc('delete')}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <AlertDialog open={cleanupResult !== null} onOpenChange={(open) => !open && setCleanupResult(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>{t('cleanupResultTitle')}</AlertDialogTitle>
+            <AlertDialogDescription className="w-full text-left">
+              <span className="block">
+                {t('cleanupDeleted', { count: cleanupResult?.deleted.length ?? 0 })}
+              </span>
+              {(cleanupResult?.deleted.length ?? 0) > 0 && (
+                <span className="mt-1 block max-h-24 overflow-y-auto break-words text-foreground">
+                  {cleanupResult?.deleted.map((workspace) => workspace.name).join(', ')}
+                </span>
+              )}
+              <span className="mt-3 block">
+                {t('cleanupRemaining', { count: cleanupResult?.remaining.length ?? 0 })}
+              </span>
+              {(cleanupResult?.remaining.length ?? 0) > 0 && (
+                <span className="mt-1 block max-h-24 overflow-y-auto break-words text-foreground">
+                  {cleanupResult?.remaining.map((workspace) => workspace.name).join(', ')}
+                </span>
+              )}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogAction onClick={() => setCleanupResult(null)}>{tc('close')}</AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>

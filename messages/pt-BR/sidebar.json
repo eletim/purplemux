@@ -16,5 +16,11 @@
   "removeFromGroup": "Remover do grupo",
   "ungrouped": "Sem grupo",
   "defaultGroupName": "Novo grupo",
-  "emptyGroup": "(vazio)"
+  "emptyGroup": "(vazio)",
+  "cleanupEmptyWorkspaces": "Limpar workspaces vazios ({count})",
+  "cleanupEmptyTitle": "Excluir workspaces vazios",
+  "cleanupEmptyConfirm": "Excluir {count} workspaces sem abas em execução? Cada workspace será verificado novamente antes da exclusão.",
+  "cleanupResultTitle": "Resultado da limpeza",
+  "cleanupDeleted": "Excluídos: {count}",
+  "cleanupRemaining": "Restantes: {count}"
 }

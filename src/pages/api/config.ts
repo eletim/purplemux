@@ -7,7 +7,7 @@ import { isValidEditorPreset } from '@/lib/editor-url';
 import { isValidToastPosition } from '@/lib/toast-position';
 
 const ALLOWED_FIELDS: (keyof Omit<IConfigData, 'updatedAt' | 'authSecret'>)[] = [
-  'appTheme', 'terminalTheme', 'customCSS', 'dangerouslySkipPermissions', 'claudeShowTerminal', 'gitAskProvider', 'noteSummaryProvider', 'editorUrl', 'editorPreset', 'authPassword', 'notificationsEnabled', 'toastOnCompleteEnabled', 'toastDuration', 'toastPositionDesktop', 'toastPositionMobile', 'locale', 'fontSize', 'lineHeight', 'lineHeightCustom', 'terminalKeyBar', 'systemResourcesEnabled', 'networkAccess',
+  'appTheme', 'terminalTheme', 'customCSS', 'dangerouslySkipPermissions', 'claudeShowTerminal', 'gitAskProvider', 'noteSummaryProvider', 'editorUrl', 'editorPreset', 'authPassword', 'notificationsEnabled', 'toastOnCompleteEnabled', 'toastDuration', 'toastPositionDesktop', 'toastPositionMobile', 'locale', 'fontSize', 'lineHeight', 'lineHeightCustom', 'terminalKeyBar', 'promptPrefix', 'systemResourcesEnabled', 'networkAccess',
 ];
 
 const NETWORK_ACCESS_VALUES = ['localhost', 'tailscale', 'all'] as const;
@@ -49,6 +49,10 @@ const handler = async (req: NextApiRequest, res: NextApiResponse) => {
 
     if ('editorUrl' in updates && !isValidEditorUrl(updates.editorUrl)) {
       return res.status(400).json({ error: 'editorUrl must be a string.' });
+    }
+
+    if ('promptPrefix' in updates && typeof updates.promptPrefix !== 'string') {
+      return res.status(400).json({ error: 'promptPrefix must be a string.' });
     }
 
     if ('editorPreset' in updates && !isValidEditorPreset(updates.editorPreset)) {
