@@ -192,6 +192,50 @@ const cmdWorkspaceDelete = async (args) => {
   die(body?.error || `HTTP ${resp.status}`);
 };
 
+const cmdExtReviewCreate = async (args) => {
+  const selectors = { socketPath: null, session: null, windowTargets: [] };
+  for (let i = 0; i < args.length; i += 2) {
+    const flag = args[i];
+    if (!['--socket', '--session', '--window'].includes(flag)) {
+      die(`unknown ext-review create option: ${flag}`);
+    }
+    const value = args[i + 1];
+    if (!value || value.startsWith('--')) die(`${flag} requires a value`);
+    if (flag === '--window') {
+      selectors.windowTargets.push(value);
+    } else {
+      const key = flag === '--socket' ? 'socketPath' : 'session';
+      if (selectors[key] !== null) die(`${flag} may only be specified once`);
+      selectors[key] = value;
+    }
+  }
+  if (!selectors.socketPath) die('--socket is required');
+  if (!path.isAbsolute(selectors.socketPath)) die('--socket must be an absolute path');
+  if (!selectors.session) die('--session is required');
+  if (!selectors.windowTargets.length) die('--window is required (repeat for each target)');
+  requireEnv();
+  const { body } = await api('POST', '/api/cli/ext-reviews', selectors);
+  if (!body || typeof body.id !== 'string' || !body.id
+      || typeof body.url !== 'string' || !body.url) {
+    die('invalid review creation response: expected id and url');
+  }
+  out({ ...body, url: new URL(body.url, BASE).href });
+};
+
+const cmdExtReviewGet = async (args) => {
+  if (args.length !== 1 || !args[0] || args[0].startsWith('-')) die('exactly one Review ID is required');
+  requireEnv();
+  const { body } = await api('GET', `/api/cli/ext-reviews/${encodeURIComponent(args[0])}`);
+  out(body);
+};
+
+const cmdExtReviewDelete = async (args) => {
+  if (args.length !== 1 || !args[0] || args[0].startsWith('-')) die('exactly one Review ID is required');
+  requireEnv();
+  const { body } = await api('DELETE', `/api/cli/ext-reviews/${encodeURIComponent(args[0])}`);
+  out(body);
+};
+
 const cmdTabList = async (args) => {
   requireEnv();
   const wsId = flagValue(args, '--workspace') || flagValue(args, '-w');
@@ -411,6 +455,11 @@ Commands:
                                            Create a workspace and print its JSON
                                            Contract: workspace create response includes initialTab
   workspace delete -w WS --if-empty        Delete an empty workspace and print its JSON result
+  ext-review create --socket PATH --session SESSION --window @ID [--window @ID ...]
+                                           Create a Review; print JSON with id and browser url
+                                           Use a known absolute socket path and exact session name or $ID
+  ext-review get ID                        Get a Review by ID
+  ext-review delete ID                     Delete only the Review definition
   tab list [-w WS]                         List tabs (optionally scoped to workspace)
   tab create -w WS [-n NAME] [-t TYPE]     Create a tab in workspace (type: terminal | claude-code | codex-cli | agent-sessions | web-browser | diff)
   tab send -w WS TAB_ID CONTENT...         Send input to a tab
@@ -450,6 +499,12 @@ const main = async () => {
       break;
     case 'workspaces':
       return cmdWorkspaces();
+    case 'ext-review':
+      if (sub === 'create') return cmdExtReviewCreate(rest);
+      if (sub === 'get') return cmdExtReviewGet(rest);
+      if (sub === 'delete') return cmdExtReviewDelete(rest);
+      die(`unknown ext-review command: ${sub || '(none)'}. Run 'purplemux help' for usage.`);
+      break;
     case 'tab':
       switch (sub) {
         case 'list': return cmdTabList(rest);

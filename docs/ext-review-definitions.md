@@ -15,6 +15,16 @@ Creation requires a known socket path (not a socket name, symlink, or the purple
 
 Deletion does not send any tmux command. Definitions and their external resources never enter Workspace cleanup.
 
+## CLI lifecycle
+
+```sh
+purplemux ext-review create --socket /absolute/known/tmux/socket --session 'exact-session-name' --window @1 --window @3
+purplemux ext-review get REVIEW_ID
+purplemux ext-review delete REVIEW_ID
+```
+
+Use an exact session name or quote a `$sessionId`. Repeat `--window` for each explicit `@windowId`. Creation prints one JSON document containing `id` and an absolute browser `url`; get and delete print the lifecycle API's JSON response. These commands do not discover targets, import them into Workspaces, or mutate external tmux resources.
+
 ## Live observation transport
 
 An authenticated browser can open `WS /api/ext-review-terminal?reviewId=:id&windowId=%40N` to observe one window from the Review's frozen allowlist. Both parameters are required; unknown, duplicate, socket/session/pane overrides, and dimension parameters are rejected with close code 1008. Select another approved window by opening a separate observation connection. This transport does not use managed Workspace terminals.
