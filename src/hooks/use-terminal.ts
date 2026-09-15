@@ -15,6 +15,7 @@ import { getPromptBlockText, syncPromptCopyButtons } from "@/lib/terminal-prompt
 import isElectron from "@/hooks/use-is-electron";
 
 interface IUseTerminalOptions {
+  readOnly?: boolean;
   theme?: ITerminalThemeColors;
   fontSize?: number;
   lineHeight?: number;
@@ -72,7 +73,7 @@ const loadFonts = () => {
   return fontLoadPromise;
 };
 
-const useTerminal = ({ theme, fontSize = DEFAULT_FONT_SIZE, lineHeight = DEFAULT_LINE_HEIGHT, onInput, onResize, onTitleChange, customKeyEventHandler, enablePromptCopy = false, promptPrefix = '' }: IUseTerminalOptions = {}) => {
+const useTerminal = ({ readOnly = false, theme, fontSize = DEFAULT_FONT_SIZE, lineHeight = DEFAULT_LINE_HEIGHT, onInput, onResize, onTitleChange, customKeyEventHandler, enablePromptCopy = false, promptPrefix = '' }: IUseTerminalOptions = {}) => {
   const [containerNode, setContainerNode] = useState<HTMLDivElement | null>(null);
   const terminalRef = useCallback((node: HTMLDivElement | null) => {
     setContainerNode(node);
@@ -158,9 +159,9 @@ const useTerminal = ({ theme, fontSize = DEFAULT_FONT_SIZE, lineHeight = DEFAULT
     const terminal = terminalInstance.current;
     if (!fitAddon || !terminal) return { cols: 80, rows: 24 };
 
-    fitAddon.fit();
+    if (!readOnly) fitAddon.fit();
     return { cols: terminal.cols, rows: terminal.rows };
-  }, []);
+  }, [readOnly]);
 
   const reset = useCallback(() => {
     writeQueueRef.current = [];
@@ -199,6 +200,7 @@ const useTerminal = ({ theme, fontSize = DEFAULT_FONT_SIZE, lineHeight = DEFAULT
         allowTransparency: false,
         allowProposedApi: true,
         macOptionIsMeta: true,
+        disableStdin: readOnly,
         theme: callbacksRef.current.theme,
         linkHandler: {
           activate: (_event, text) => openExternalUrl(text),
@@ -227,7 +229,21 @@ const useTerminal = ({ theme, fontSize = DEFAULT_FONT_SIZE, lineHeight = DEFAULT
           // 실패 시 브라우저 권한/포커스 이슈는 조용히 무시
         },
       };
-      terminal.loadAddon(new ClipboardAddon(undefined, clipboardProvider));
+      if (!readOnly) terminal.loadAddon(new ClipboardAddon(undefined, clipboardProvider));
+
+      if (readOnly) {
+        // Observation snapshots carry external geometry as CSI 8;rows;cols t.
+        // Resize only this renderer; no managed terminal callbacks or tmux commands.
+        terminal.parser.registerCsiHandler({ final: 't' }, (params) => {
+          if (params.length === 3 && params[0] === 8
+            && typeof params[1] === 'number' && typeof params[2] === 'number'
+            && params[1] > 0 && params[2] > 0) {
+            terminal.resize(params[2], params[1]);
+            return true;
+          }
+          return false;
+        });
+      }
 
       terminal.open(containerNode);
 
@@ -293,6 +309,7 @@ const useTerminal = ({ theme, fontSize = DEFAULT_FONT_SIZE, lineHeight = DEFAULT
       fitAddonRef.current = fitAddon;
 
       terminal.onData((data) => {
+        if (readOnly) return;
         if (/^\x1b\[[\?>]?[\d;]*[cnR]$/.test(data)) return;
         callbacksRef.current.onInput?.(data);
       });
@@ -302,6 +319,7 @@ const useTerminal = ({ theme, fontSize = DEFAULT_FONT_SIZE, lineHeight = DEFAULT
       });
 
       terminal.attachCustomKeyEventHandler((event) => {
+        if (readOnly) return false;
         // IME 조합 단계의 keydown(keyCode 229)은 가로채지 않는다. 같은 키가 조합용으로 한 번,
         // 실제 키로 한 번 들어오므로 실제 키만 처리해 중복 전송(단어 2칸 이동 등)을 막는다.
         if (event.isComposing || event.keyCode === 229) return true;
@@ -325,6 +343,7 @@ const useTerminal = ({ theme, fontSize = DEFAULT_FONT_SIZE, lineHeight = DEFAULT
       });
 
       const doFit = () => {
+        if (readOnly) return;
         fitAddon.fit();
         callbacksRef.current.onResize?.(terminal.cols, terminal.rows);
       };
@@ -353,7 +372,7 @@ const useTerminal = ({ theme, fontSize = DEFAULT_FONT_SIZE, lineHeight = DEFAULT
       const isTouchDevice = 'ontouchstart' in window && navigator.maxTouchPoints > 0;
       const screenEl = containerNode.querySelector('.xterm-screen');
 
-      if (isTouchDevice && screenEl) {
+      if (!readOnly && isTouchDevice && screenEl) {
         let lastY = 0;
         let touchStartedOnPromptButton = false;
 
@@ -406,7 +425,7 @@ const useTerminal = ({ theme, fontSize = DEFAULT_FONT_SIZE, lineHeight = DEFAULT
       terminalInstance.current = null;
       fitAddonRef.current = null;
     };
-  }, [containerNode, enablePromptCopy]);
+  }, [containerNode, enablePromptCopy, readOnly]);
 
   useEffect(() => {
     if (terminalInstance.current && theme) {
@@ -419,9 +438,11 @@ const useTerminal = ({ theme, fontSize = DEFAULT_FONT_SIZE, lineHeight = DEFAULT
     if (!terminal || !fontSize || !lineHeight) return;
     terminal.options.fontSize = fontSize;
     terminal.options.lineHeight = lineHeight;
-    fitAddonRef.current?.fit();
-    callbacksRef.current.onResize?.(terminal.cols, terminal.rows);
-  }, [fontSize, lineHeight]);
+    if (!readOnly) {
+      fitAddonRef.current?.fit();
+      callbacksRef.current.onResize?.(terminal.cols, terminal.rows);
+    }
+  }, [fontSize, lineHeight, readOnly]);
 
   return { terminalRef, write, clear, reset, fit, focus, isReady, getBufferText };
 };
