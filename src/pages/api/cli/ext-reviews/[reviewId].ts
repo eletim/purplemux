@@ -1,5 +1,6 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { verifyCliToken } from '@/lib/cli-token';
+import { verifyRequestSession } from '@/lib/auth';
 import { deleteExtReview, getExtReview } from '@/lib/ext-review-store';
 import { ExtReviewError } from '@/lib/ext-review-tmux';
 
@@ -8,7 +9,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     res.setHeader('Allow', 'GET, DELETE');
     return res.status(405).json({ error: 'Method not allowed' });
   }
-  if (!verifyCliToken(req)) return res.status(403).json({ error: 'Forbidden' });
+  const authed = verifyCliToken(req) || (await verifyRequestSession(req.headers.cookie));
+  if (!authed) return res.status(403).json({ error: 'Forbidden' });
   const { reviewId } = req.query;
   if (typeof reviewId !== 'string') return res.status(400).json({ error: 'reviewId is required' });
   try {
