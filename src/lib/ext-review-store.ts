@@ -43,10 +43,15 @@ export const createExtReview = (input: ICreateExtReview): Promise<IExtReview> =>
   await write([...reviews, review]);
   return review;
 });
-export const getExtReview = async (id: string, signal?: AbortSignal): Promise<IExtReview | null> => {
+/** Load the persisted definition without probing external resources. */
+export const loadExtReviewDefinition = async (id: string, signal?: AbortSignal): Promise<IExtReview | null> => {
   signal?.throwIfAborted();
   const review = (await listExtReviews()).find((entry) => entry.id === id);
   signal?.throwIfAborted();
+  return review ?? null;
+};
+export const getExtReview = async (id: string, signal?: AbortSignal): Promise<IExtReview | null> => {
+  const review = await loadExtReviewDefinition(id, signal);
   return review ? resolveExtReviewTargets(review, signal) : null;
 };
 /** Definition-only deletion, including when the external server is unavailable. */

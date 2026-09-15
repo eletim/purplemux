@@ -96,3 +96,52 @@ it('keeps ANSI window sizing disabled for managed interactive rendering', async 
   expect([terminal.cols, terminal.rows]).toEqual([80, 24]);
   expect(renderer.resize).not.toHaveBeenCalled();
 });
+
+it('renders only the visible pane when either split pane is zoomed, then restores both on unzoom', async () => {
+  const fs = await import('node:fs/promises');
+  const os = await import('node:os');
+  const path = await import('node:path');
+  const { execFileSync } = await import('node:child_process');
+  const { freezeExtReviewTargets, captureExtReviewWindow } = await import('@/lib/ext-review-tmux');
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'pmux-zoom-'));
+  const socket = path.join(directory, 'tmux');
+  const tmux = (...args: string[]) => execFileSync('tmux', ['-f', '/dev/null', '-S', socket, ...args],
+    { encoding: 'utf8' }).trim();
+  const { Terminal } = await import('@xterm/xterm');
+  const terminal = new Terminal({ cols: 90, rows: 30, windowOptions: { setWinSizeChars: true } });
+  try {
+    tmux('new-session', '-d', '-s', 'external', '-x', '90', '-y', '30', 'echo FIRST_PANE; sleep 300');
+    tmux('split-window', '-d', '-t', '$0:@0', 'echo SECOND_PANE; sleep 300');
+    const review = { ...await freezeExtReviewTargets({ socketPath: socket, session: 'external', windowTargets: ['@0'] }),
+      id: 'zoom', createdAt: new Date().toISOString() };
+    await vi.waitFor(() => {
+      expect(tmux('capture-pane', '-p', '-t', '%0')).toContain('FIRST_PANE');
+      expect(tmux('capture-pane', '-p', '-t', '%1')).toContain('SECOND_PANE');
+    });
+    const snapshot = async () => {
+      const screen = await captureExtReviewWindow(review, '@0');
+      await new Promise<void>((resolve) => terminal.write(screen, resolve));
+      expect([terminal.cols, terminal.rows]).toEqual([90, 30]);
+      return Array.from({ length: terminal.rows }, (_, row) =>
+        terminal.buffer.active.getLine(row)?.translateToString(true)).join('\n');
+    };
+    for (const [pane, visible, hidden] of [['%0', 'FIRST_PANE', 'SECOND_PANE'], ['%1', 'SECOND_PANE', 'FIRST_PANE']]) {
+      tmux('resize-pane', '-Z', '-t', pane);
+      const zoomed = await snapshot();
+      expect(zoomed).toContain(visible);
+      expect(zoomed).not.toContain(hidden);
+      expect(terminal.buffer.active.getLine(0)?.translateToString(true).trimEnd()).toBe(visible);
+      tmux('resize-pane', '-Z', '-t', pane);
+      const split = await snapshot();
+      expect(split).toContain('FIRST_PANE');
+      expect(split).toContain('SECOND_PANE');
+      expect(terminal.buffer.active.getLine(0)?.translateToString(true).trimEnd()).toBe('FIRST_PANE');
+      const top = Number(tmux('display-message', '-p', '-t', '%1', '#{pane_top}'));
+      expect(terminal.buffer.active.getLine(top)?.translateToString(true).trimEnd()).toBe('SECOND_PANE');
+    }
+  } finally {
+    terminal.dispose();
+    try { tmux('kill-server'); } catch {}
+    await fs.rm(directory, { recursive: true, force: true });
+  }
+});

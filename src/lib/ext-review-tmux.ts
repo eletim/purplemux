@@ -113,14 +113,16 @@ export const captureExtReviewWindow = async (review: IExtReview, windowId: strin
       { timeout: 5000, maxBuffer: 4 * 1024 * 1024, signal })).stdout;
   };
   const list = () => run(['list-panes', '-t', target, '-F',
-    '#{session_id}\t#{window_id}\t#{pane_id}\t#{pane_left}\t#{pane_top}\t#{pane_width}\t#{pane_height}']);
+    '#{session_id}\t#{window_id}\t#{pane_id}\t#{pane_left}\t#{pane_top}\t#{pane_width}\t#{pane_height}\t#{window_zoomed_flag}\t#{pane_active}\t#{window_visible_layout}']);
   const before = await list();
-  const panes = before.trim().split('\n').map((line) => line.split('\t'));
-  if (panes.some(([session, window, pane, ...geometry]) => session !== review.sessionId
-    || window !== windowId || !/^%\d+$/.test(pane) || geometry.length !== 4
-    || geometry.some((value) => !/^\d+$/.test(value)))) {
+  const allPanes = before.trim().split('\n').map((line) => line.split('\t'));
+  if (allPanes.some(([session, window, pane, left, top, width, height, zoomed, active, layout]) => session !== review.sessionId
+    || window !== windowId || !/^%\d+$/.test(pane) || ![left, top, width, height].every((value) => /^\d+$/.test(value))
+    || !/^[01]$/.test(zoomed) || !/^[01]$/.test(active) || !layout)) {
     throw new ExtReviewError('Frozen window panes are unavailable');
   }
+  const panes = allPanes.filter(([, , , , , , , zoomed, active]) => zoomed === '0' || active === '1');
+  if (!panes.length) throw new ExtReviewError('Frozen window has no visible panes');
   const cols = Math.max(...panes.map(([, , , left, , width]) => Number(left) + Number(width)));
   const rows = Math.max(...panes.map(([, , , , top, , height]) => Number(top) + Number(height)));
   let screen = `\x1b[8;${rows};${cols}t\x1b[?25l\x1b[0m\x1b[2J\x1b[H`;

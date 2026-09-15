@@ -1,7 +1,7 @@
 import type { IncomingMessage } from 'http';
 import { WebSocket } from 'ws';
-import { getExtReview } from '@/lib/ext-review-store';
-import { captureExtReviewWindow } from '@/lib/ext-review-tmux';
+import { loadExtReviewDefinition } from '@/lib/ext-review-store';
+import { captureExtReviewWindow, resolveExtReviewTargets } from '@/lib/ext-review-tmux';
 import { extReviewObservers } from '@/lib/ext-review-observation-resources';
 import { encodeStdout, MSG_HEARTBEAT } from '@/lib/terminal-protocol';
 
@@ -54,7 +54,7 @@ export const handleExtReviewObservation = async (ws: WebSocket, request: Incomin
       if (stopped || ws.readyState !== WebSocket.OPEN) return stop(1000, 'Disconnected');
       if (Date.now() - lastHeartbeat > 90_000) return stop(1001, 'Heartbeat timeout');
       // Re-read the definition so deletion in a separate Next process also ends observation.
-      const review = await getExtReview(reviewId, abort.signal);
+      const review = await loadExtReviewDefinition(reviewId, abort.signal);
       if (stopped) return;
       if (!review) return stop(1000, 'Review deleted');
       if (!review.windowIds.includes(windowId)) return stop(1008, 'Window is not approved');
@@ -66,6 +66,8 @@ export const handleExtReviewObservation = async (ws: WebSocket, request: Incomin
           ws.send(encodeStdout(screen));
           previous = screen;
         }
+      } else {
+        await resolveExtReviewTargets(review, abort.signal);
       }
       if (!stopped) timer = setTimeout(() => { void poll(); }, 250);
     } catch {

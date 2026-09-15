@@ -141,13 +141,68 @@ describe('read-only external review observation with real tmux and WebSockets', 
     expect(extReviewObservers.size).toBe(0);
   });
 
+  it.each([1, 3])('uses 15 commands per poll with %s concurrent viewers, including unchanged screens', async (viewers) => {
+    const log = path.join(directory, 'poll-commands.jsonl');
+    const bin = path.join(directory, 'count-bin');
+    await fs.mkdir(bin);
+    await fs.writeFile(path.join(bin, 'tmux'), `#!${process.execPath}
+const fs = require('node:fs');
+const { execFileSync } = require('node:child_process');
+fs.appendFileSync(${JSON.stringify(log)}, JSON.stringify(process.argv.slice(2)) + '\\n');
+process.stdout.write(execFileSync(${JSON.stringify(realTmux)}, process.argv.slice(2)));
+`, { mode: 0o700 });
+    vi.stubEnv('PATH', `${bin}:${process.env.PATH}`);
+    const originalCapture = await import('@/lib/ext-review-tmux');
+    const capture = vi.spyOn(originalCapture, 'captureExtReviewWindow');
+    const connected = await Promise.all(Array.from({ length: viewers }, () => connect()));
+    await Promise.all(handlers);
+    expect((await fs.readFile(log, 'utf8')).trim().split('\n')).toHaveLength(15 * viewers);
+    await vi.waitFor(() => expect(capture).toHaveBeenCalledTimes(2 * viewers), { timeout: 3000 });
+    // Wait for each second capture before the third poll can start.
+    await Promise.all(capture.mock.results.slice(viewers).map((result) => result.value));
+    connected.forEach((client) => client.ws.close());
+    expect((await fs.readFile(log, 'utf8')).trim().split('\n')).toHaveLength(30 * viewers);
+    connected.forEach((client) => expect(client.frames.filter((frame) => frame[0] === MSG_STDOUT)).toHaveLength(1));
+  });
+
+  it('rejects a snapshot when zoom visibility changes during capture', async () => {
+    tmux('split-window', '-d', '-t', '$0:@0', 'sleep 300');
+    const bin = path.join(directory, 'zoom-bin');
+    await fs.mkdir(bin);
+    await fs.writeFile(path.join(bin, 'tmux'), `#!${process.execPath}
+const { execFileSync } = require('node:child_process');
+const fs = require('node:fs');
+const marker = ${JSON.stringify(path.join(directory, 'zoomed'))};
+const args = process.argv.slice(2);
+process.stdout.write(execFileSync(${JSON.stringify(realTmux)}, args));
+if (args.includes('capture-pane') && !fs.existsSync(marker)) {
+  fs.writeFileSync(marker, '');
+  execFileSync(${JSON.stringify(realTmux)}, ['-S', ${JSON.stringify(socket)}, 'resize-pane', '-Z', '-t', '%0']);
+}
+`, { mode: 0o700 });
+    vi.stubEnv('PATH', `${bin}:${process.env.PATH}`);
+    const client = await connect();
+    await vi.waitFor(() => expect(client.closed()?.code).toBe(1011), { timeout: 3000 });
+    expect(text(client.frames)).toBe('');
+  });
+
+  it('still validates frozen targets while output is backpressured', async () => {
+    const client = await connect();
+    await Promise.all(handlers);
+    const observer = [...wss.clients][0];
+    vi.spyOn(observer, 'bufferedAmount', 'get').mockReturnValue(1024 * 1024);
+    tmux('kill-window', '-t', '$0:@0');
+    await vi.waitFor(() => expect(client.closed()?.code).toBe(1011));
+    expect(client.frames.filter((frame) => frame[0] === MSG_STDOUT)).toHaveLength(1);
+  });
+
   // Each command wrapper delegates to real tmux except at the chosen validation
   // step, where the observation-owned subprocess blocks until it is killed.
   const stages = [
-    ['lookup session check', 1], ['lookup target inspection', 2],
-    ['lookup freeze', 3], ['capture resolution', 7], ['capture freeze', 9],
-    ['pane listing', 13], ['pane capture', 14],
-    ['post-capture resolution', 15], ['post-capture freeze', 17],
+    ['capture session check', 1], ['capture target inspection', 2],
+    ['capture freeze', 3], ['pane listing', 7], ['pane capture', 8],
+    ['post-capture resolution', 9], ['post-capture freeze', 11],
+    ['consistency listing', 15],
   ] as const;
   it.each(stages.flatMap(([stage, command]) =>
     ['disconnect', 'delete', 'shutdown'].map((action) => ({ stage, command, action }))))(
@@ -198,6 +253,7 @@ if (count + 1 === ${command}) {
     abort.abort();
     const identityRead = vi.spyOn(fs, 'lstat');
     const definitionRead = vi.spyOn(fs, 'readFile');
+    await expect(store.loadExtReviewDefinition(reviewId, abort.signal)).rejects.toMatchObject({ name: 'AbortError' });
     await expect(store.getExtReview(reviewId, abort.signal)).rejects.toMatchObject({ name: 'AbortError' });
     await expect(resolveExtReviewTargets(review, abort.signal)).rejects.toMatchObject({ name: 'AbortError' });
     await expect(freezeExtReviewTargets({ socketPath: socket, session: '$0', windowTargets: ['@0'] }, abort.signal))
