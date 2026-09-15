@@ -121,7 +121,9 @@ export const captureExtReviewWindow = async (review: IExtReview, windowId: strin
     || geometry.some((value) => !/^\d+$/.test(value)))) {
     throw new ExtReviewError('Frozen window panes are unavailable');
   }
-  let screen = '\x1b[?25l\x1b[0m\x1b[2J\x1b[H';
+  const cols = Math.max(...panes.map(([, , , left, , width]) => Number(left) + Number(width)));
+  const rows = Math.max(...panes.map(([, , , , top, , height]) => Number(top) + Number(height)));
+  let screen = `\x1b[8;${rows};${cols}t\x1b[?25l\x1b[0m\x1b[2J\x1b[H`;
   for (const [, , pane, left, top, , height] of panes) {
     const content = await run(['capture-pane', '-p', '-e', '-N', '-t', `${target}.${pane}`]);
     const lines = content.split('\n').slice(0, Number(height));

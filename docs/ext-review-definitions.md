@@ -31,6 +31,12 @@ An authenticated browser can open `WS /api/ext-review-terminal?reviewId=:id&wind
 
 The connection sends the existing binary `MSG_STDOUT` frames containing ANSI screen snapshots, suitable for the existing xterm rendering infrastructure. All panes in the approved window are captured at their external positions and dimensions. Screens are polled every 250 ms and sent when changed; this is current-screen observation, not a lossless output/history stream. The viewer should have enough local rows and columns to display the external window; resizing the viewer never resizes tmux.
 
+Snapshots begin with `CSI 8;rows;cols t` carrying the external screen dimensions. The read-only browser renderer consumes this sequence to resize only its local xterm screen, with scrolling for screens larger than the viewport.
+
 Only a single-byte binary `MSG_HEARTBEAT` is accepted and echoed. Send one at least every 30 seconds. Every other message is rejected with 1008, including stdin, web input, send-keys, kill, rename, resize, target changes, text commands, and unknown opcodes. The server never attaches a client or changes terminal state: it uses scoped `list-panes` and `capture-pane -p` reads, with `-N` to prevent server creation. Added windows are never observed. Missing or replaced frozen targets close the observation with 1011; they are not recreated or substituted.
 
 Disconnect, Review deletion, heartbeat expiry, and server shutdown release only local timers, sockets, and in-flight read command processes. Deletion in a separate Next server process is detected on the next poll. Backpressure skips captures while continuing to check the frozen definition and targets. There are at most 32 observation connections.
+
+## Browser pages
+
+`/ext-review` lists persisted definitions, including unavailable targets, and provides Open, Delete, and manual creation from an absolute socket path, exact session name or `$sessionId`, and explicit `@windowId` values. `/ext-review/:id` validates the definition and shows only its approved windows. Missing or deleted definitions and unavailable frozen targets are displayed explicitly. The viewer sends only heartbeats, disables input and paste, and does not expose discovery or terminal mutation controls. These pages do not initialize Workspaces or connect to managed terminal/status transports.

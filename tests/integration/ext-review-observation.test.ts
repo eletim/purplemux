@@ -73,6 +73,7 @@ describe('read-only external review observation with real tmux and WebSockets', 
     await vi.waitFor(() => {
       expect(text(client.frames)).toContain('APPROVED_FIRST');
       expect(text(client.frames)).toContain('APPROVED_SPLIT');
+      expect(text(client.frames)).toContain('\x1b[8;30;90t');
     });
     expect(text(client.frames)).not.toContain('UNAPPROVED_SECRET');
     expect(tmux('list-clients')).toBe('');
