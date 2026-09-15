@@ -1,0 +1,22 @@
+name: AWM Compatibility
+
+on:
+  push:
+    branches: ['dev/v*']
+  pull_request:
+    branches: ['dev/v*']
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/checkout@v6
+        with:
+          repository: eletim/agent-workflow-manager
+          ref: 7c66f46298332e1d68b0e4325fca2381a72dd488
+          path: .awm-validator
+
+      - name: Verify AWM compatibility as PurpleMux 0.4.11
+        run: node scripts/check-awm-compatibility.mjs .awm-validator/start.sh
