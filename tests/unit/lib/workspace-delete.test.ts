@@ -7,12 +7,14 @@ const mocks = vi.hoisted(() => ({
   sessions: [] as string[],
   listSessionsForSafetyCheck: vi.fn<() => Promise<string[]>>(),
   createSession: vi.fn(async () => undefined),
+  killSession: vi.fn(async () => undefined),
 }));
 
 vi.mock('@/lib/tmux', async (importOriginal) => ({
   ...await importOriginal<typeof import('@/lib/tmux')>(),
   listSessionsForSafetyCheck: mocks.listSessionsForSafetyCheck,
   createSession: mocks.createSession,
+  killSession: mocks.killSession,
 }));
 vi.mock('@/lib/sync-server', () => ({ broadcastSync: vi.fn() }));
 
@@ -56,6 +58,9 @@ beforeEach(async () => {
   mocks.listSessionsForSafetyCheck.mockReset();
   mocks.listSessionsForSafetyCheck.mockImplementation(async () => mocks.sessions);
   mocks.createSession.mockClear();
+  mocks.killSession.mockClear();
+  const { setLayoutReconciler } = await import('@/lib/layout-store');
+  setLayoutReconciler(null);
   await fs.rm(path.join(tempHome, '.purplemux'), { recursive: true, force: true });
 });
 
@@ -179,5 +184,89 @@ describe('deleteWorkspaceIfEmpty', () => {
       workspaceId: 'ws-missing', status: 'absent', deleted: false,
     });
     await expect(fs.access(path.join(base, 'workspaces', 'ws-other', 'layout.json'))).resolves.toBeUndefined();
+  });
+});
+
+describe('deleteWorkspace', () => {
+  it('serializes status registration with unconditional workspace deletion', async () => {
+    await seed(nonEmptyLayout);
+    const runtimeTabIds = new Set<string>();
+    let enterRegistration!: () => void;
+    let releaseRegistration!: () => void;
+    const registrationEntered = new Promise<void>((resolve) => { enterRegistration = resolve; });
+    const registrationRelease = new Promise<void>((resolve) => { releaseRegistration = resolve; });
+
+    const { deleteWorkspace } = await import('@/lib/workspace-store');
+    const { runWithExistingTab, setLayoutReconciler } = await import('@/lib/layout-store');
+    setLayoutReconciler({
+      reconcileWorkspaceTabs: () => undefined,
+      removeWorkspaceTabs: (workspaceId) => {
+        if (workspaceId === 'ws-target') runtimeTabIds.clear();
+      },
+      syncAgentSessionId: () => undefined,
+    });
+
+    const registration = runWithExistingTab('ws-target', 'tab-1', async (tab) => {
+      enterRegistration();
+      await registrationRelease;
+      runtimeTabIds.add(tab.id);
+    });
+    await registrationEntered;
+
+    const deletion = deleteWorkspace('ws-target');
+    expect(mocks.killSession).not.toHaveBeenCalled();
+    expect(runtimeTabIds).toEqual(new Set());
+
+    releaseRegistration();
+    await expect(registration).resolves.toBe(true);
+    await expect(deletion).resolves.toBe(true);
+    expect(mocks.killSession).toHaveBeenCalledWith(nonEmptyLayout.root.tabs[0].sessionName);
+    expect(runtimeTabIds).toEqual(new Set());
+    setLayoutReconciler(null);
+  });
+
+  it('prevents a concurrent tab addition from leaving an orphan session', async () => {
+    const base = await seed(nonEmptyLayout);
+    let releaseSessionTeardown!: () => void;
+    const sessionTeardownRelease = new Promise<void>((resolve) => { releaseSessionTeardown = resolve; });
+    mocks.killSession.mockImplementationOnce(async () => {
+      await sessionTeardownRelease;
+    });
+
+    const { deleteWorkspace } = await import('@/lib/workspace-store');
+    const { addTabToPane } = await import('@/lib/layout-store');
+    const deletion = deleteWorkspace('ws-target');
+    await vi.waitFor(() => expect(mocks.killSession).toHaveBeenCalledWith(nonEmptyLayout.root.tabs[0].sessionName));
+
+    const tabAddition = addTabToPane('ws-target', 'pane-1');
+    await vi.waitFor(() => expect(mocks.createSession).not.toHaveBeenCalled());
+    releaseSessionTeardown();
+
+    await expect(deletion).resolves.toBe(true);
+    await expect(tabAddition).resolves.toBeNull();
+    expect(mocks.createSession).not.toHaveBeenCalled();
+    await expect(fs.access(path.join(base, 'workspaces', 'ws-target'))).rejects.toThrow();
+  });
+
+  it('prevents a queued layout read from recreating deleted workspace state', async () => {
+    const base = await seed(nonEmptyLayout);
+    let releaseSessionTeardown!: () => void;
+    const sessionTeardownRelease = new Promise<void>((resolve) => { releaseSessionTeardown = resolve; });
+    mocks.killSession.mockImplementationOnce(async () => {
+      await sessionTeardownRelease;
+    });
+
+    const { deleteWorkspace } = await import('@/lib/workspace-store');
+    const { getLayout } = await import('@/lib/layout-store');
+    const deletion = deleteWorkspace('ws-target');
+    await vi.waitFor(() => expect(mocks.killSession).toHaveBeenCalledWith(nonEmptyLayout.root.tabs[0].sessionName));
+
+    const layoutRead = getLayout('ws-target', '/ws-target');
+    releaseSessionTeardown();
+
+    await expect(deletion).resolves.toBe(true);
+    await expect(layoutRead).rejects.toThrow('Workspace not found');
+    expect(mocks.createSession).not.toHaveBeenCalled();
+    await expect(fs.access(path.join(base, 'workspaces', 'ws-target'))).rejects.toThrow();
   });
 });

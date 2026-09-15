@@ -16,7 +16,10 @@ POST /api/cli/workspaces
   This mutation is not idempotent and clients must not retry it automatically after an unknown outcome.
   Transport failures, invalid success responses, and server errors may mean creation committed;
   the CLI reports "outcome unknown; do not retry automatically" for these cases.
-  Response: { "id": "ws-...", "name": "Workspace N", "directories": ["/absolute/path"] }
+  Response: { "id": "ws-...", "name": "Workspace N", "directories": ["/absolute/path"],
+              "initialTab": { "tabId": "tab-...", "workspaceId": "ws-...", "name": "",
+                              "panelType": "terminal", "agentProviderId": null } }
+  initialTab is the authoritative identity of the initial/default tab created by this mutation.
 
 GET /api/cli/workspaces/<workspaceId>
   Read authoritative workspace state for mutation reconciliation.

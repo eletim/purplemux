@@ -1,12 +1,13 @@
 import { checkAgentAvailabilityForPanelType, toAgentAvailabilityError } from '@/lib/agent-availability';
-import { getLayout, addTabToPane, removeTabFromPane, updateTabAgentSessionId } from '@/lib/layout-store';
+import { getLayout, addTabToPane, removeTabFromPane, runWithExistingTab, updateTabAgentSessionId } from '@/lib/layout-store';
 import { findPane, getFirstPaneId } from '@/lib/layout-tree';
 import { createLogger } from '@/lib/logger';
 import { getStatusManager } from '@/lib/status-manager';
 import { findTab, type ITabLocation } from '@/lib/tab-location';
 import { sendKeys } from '@/lib/tmux';
 import { getWorkspaceById } from '@/lib/workspace-store';
-import type { IAgentProvider } from '@/lib/providers';
+import { getProviderByPanelType, type IAgentProvider } from '@/lib/providers';
+import { registerExistingRuntimeTab } from '@/lib/runtime-tab-registration';
 import type { ITab, IWorkspace, TPanelType } from '@/types/terminal';
 import type { ITabStatusEntry } from '@/types/status';
 
@@ -82,7 +83,9 @@ export interface ITabRuntimeDependencies {
   checkAgentAvailabilityForPanelType: typeof checkAgentAvailabilityForPanelType;
   addTabToPane: typeof addTabToPane;
   removeTabFromPane: typeof removeTabFromPane;
+  runWithExistingTab: typeof runWithExistingTab;
   updateTabAgentSessionId: typeof updateTabAgentSessionId;
+  getProviderByPanelType: typeof getProviderByPanelType;
   getStatusManager: () => IStatusRuntime;
   sendKeys: typeof sendKeys;
 }
@@ -93,7 +96,9 @@ const defaultDependencies: ITabRuntimeDependencies = {
   checkAgentAvailabilityForPanelType,
   addTabToPane,
   removeTabFromPane,
+  runWithExistingTab,
   updateTabAgentSessionId,
+  getProviderByPanelType,
   getStatusManager,
   sendKeys,
 };
@@ -148,26 +153,6 @@ const buildAgentLaunchCommand = async (
   }
 
   return provider.buildLaunchCommand({ workspaceId });
-};
-
-const registerRuntimeTab = (
-  statusManager: IStatusRuntime,
-  workspaceId: string,
-  tab: ITab,
-  provider: IAgentProvider | null,
-) => {
-  if (tab.panelType === 'web-browser') return;
-  statusManager.registerTab(tab.id, {
-    cliState: 'inactive',
-    workspaceId,
-    tabName: tab.name,
-    tmuxSession: tab.sessionName,
-    panelType: tab.panelType,
-    agentProviderId: provider?.id,
-    agentSessionId: provider?.readSessionId(tab) ?? null,
-    lastEvent: null,
-    eventSeq: 0,
-  });
 };
 
 const rollbackCreatedTab = async (
@@ -255,10 +240,11 @@ export const createTabRuntime = async (
     }
 
     // Hooks can arrive as soon as the command starts. Establish the complete
-    // tab/workspace/session mapping in StatusManager before sending it.
-    registerRuntimeTab(statusManager, workspace.id, tab, provider);
+    // tab/workspace/session mapping in StatusManager before sending it, while
+    // guarding against a close that removed the persisted tab after creation.
+    const tabPresent = await registerExistingRuntimeTab(workspace.id, tab.id, dependencies);
 
-    if (provider && launchCommand) {
+    if (provider && launchCommand && tabPresent) {
       await dependencies.sendKeys(tab.sessionName, launchCommand);
       statusManager.markAgentLaunch(tab.id);
     }

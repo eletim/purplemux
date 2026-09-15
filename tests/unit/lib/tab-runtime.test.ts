@@ -61,7 +61,13 @@ const makeDependencies = (provider: IAgentProvider | null, events: string[] = []
       persistedTab = null;
       return true;
     }),
+    runWithExistingTab: vi.fn(async (_workspaceId, tabId, callback) => {
+      if (!persistedTab || persistedTab.id !== tabId) return false;
+      await callback(persistedTab);
+      return true;
+    }),
     updateTabAgentSessionId: vi.fn(async () => undefined),
+    getProviderByPanelType: vi.fn(() => provider),
     getStatusManager: vi.fn(() => statusManager),
     sendKeys: vi.fn(async () => {
       events.push('send');

@@ -2,7 +2,7 @@ import fs from 'fs/promises';
 import path from 'path';
 import os from 'os';
 import { nanoid } from 'nanoid';
-import { listSessions, killSession } from '@/lib/tmux';
+import { listSessions } from '@/lib/tmux';
 import { createLogger } from '@/lib/logger';
 import { broadcastSync } from '@/lib/sync-server';
 import {
@@ -10,16 +10,17 @@ import {
   writeLayoutFile,
   resolveLayoutDir,
   resolveLayoutFile,
-  removeLayoutFile,
+  removeWorkspaceLayout,
   crossCheckWorkspaceLayout,
   collectAllTabs,
   createDefaultLayout,
+  createDefaultLayoutWithInitialTab,
   removeWorkspaceLayoutIfEmpty,
 } from '@/lib/layout-store';
 import type { ICreateLayoutOptions } from '@/lib/layout-store';
 import { listProviders } from '@/lib/providers/registry';
 import { getVisuallyOrderedWorkspaces } from '@/lib/workspace-order';
-import type { IWorkspace, IWorkspaceGroup, IWorkspacesData, ILayoutData } from '@/types/terminal';
+import type { IWorkspace, IWorkspaceGroup, IWorkspacesData, ILayoutData, ITab } from '@/types/terminal';
 import type { TDeleteWorkspaceIfEmptyResult } from '@/types/workspace-cleanup';
 
 const log = createLogger('workspace');
@@ -301,7 +302,16 @@ export const getWorkspaceById = async (wsId: string): Promise<IWorkspace | undef
   return data?.workspaces.find((w) => w.id === wsId);
 };
 
-export const createWorkspace = async (directory: string, name?: string, layoutOptions?: ICreateLayoutOptions): Promise<IWorkspace> =>
+export interface ICreateWorkspaceResult {
+  workspace: IWorkspace;
+  initialTab: ITab;
+}
+
+export const createWorkspaceWithInitialTab = async (
+  directory: string,
+  name?: string,
+  layoutOptions?: ICreateLayoutOptions,
+): Promise<ICreateWorkspaceResult> =>
   withLock(async () => {
     let stat;
     try {
@@ -319,7 +329,11 @@ export const createWorkspace = async (directory: string, name?: string, layoutOp
     const wsId = `ws-${nanoid(6)}`;
     const wsName = name?.trim() || nextWorkspaceName(data.workspaces);
 
-    const layout = await createDefaultLayout(wsId, directory, layoutOptions);
+    const { layout, initialTab } = await createDefaultLayoutWithInitialTab(
+      wsId,
+      directory,
+      layoutOptions,
+    );
     await fs.mkdir(resolveLayoutDir(wsId), { recursive: true });
     await writeLayoutFile(layout, resolveLayoutFile(wsId));
 
@@ -329,8 +343,15 @@ export const createWorkspace = async (directory: string, name?: string, layoutOp
     await writeWorkspacePrompts(workspace);
 
     log.debug(`Created: ${wsId} (${wsName}, ${directory})`);
-    return workspace;
+    return { workspace, initialTab };
   });
+
+export const createWorkspace = async (
+  directory: string,
+  name?: string,
+  layoutOptions?: ICreateLayoutOptions,
+): Promise<IWorkspace> =>
+  (await createWorkspaceWithInitialTab(directory, name, layoutOptions)).workspace;
 
 export const deleteWorkspace = async (workspaceId: string): Promise<boolean> =>
   withLock(async () => {
@@ -340,23 +361,10 @@ export const deleteWorkspace = async (workspaceId: string): Promise<boolean> =>
 
     const ws = data.workspaces[idx];
 
-    const layout = await readLayoutFile(resolveLayoutFile(workspaceId));
-    if (layout) {
-      const tabs = collectAllTabs(layout.root);
-      for (const tab of tabs) {
-        try {
-          await killSession(tab.sessionName);
-        } catch {}
-      }
-    }
-
-    try {
-      await removeLayoutFile(workspaceId);
-    } catch {}
-
-    data.workspaces.splice(idx, 1);
-
-    await writeWorkspacesFile(data);
+    await removeWorkspaceLayout(workspaceId, async () => {
+      data.workspaces.splice(idx, 1);
+      await writeWorkspacesFile(data);
+    });
     log.info(`Deleted: ${workspaceId} (${ws.name})`);
     return true;
   });

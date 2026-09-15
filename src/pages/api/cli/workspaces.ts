@@ -36,8 +36,8 @@ const handler = async (req: NextApiRequest, res: NextApiResponse) => {
   }
 
   try {
-    const workspace = await createWorkspaceRuntime({ directory: cwd, name });
-    return res.status(201).json(workspace);
+    const { workspace, initialTab } = await createWorkspaceRuntime({ directory: cwd, name });
+    return res.status(201).json({ ...workspace, initialTab });
   } catch (error) {
     const result = getWorkspaceRuntimeHttpError(error);
     return res.status(result.status).json(result.body);

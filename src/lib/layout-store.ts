@@ -65,6 +65,16 @@ export interface IEmptyWorkspaceLayoutResult {
   sessionCount: number;
 }
 
+const removeLayoutFileUnlocked = async (wsId: string): Promise<void> => {
+  await fs.rm(resolveLayoutDir(wsId), { recursive: true, force: true });
+  clearLayoutCache(wsId);
+  const reconciler = g.__ptLayoutReconciler;
+  if (reconciler) {
+    reconciler.removeWorkspaceTabs(wsId);
+  }
+  broadcastSync({ type: 'layout', workspaceId: wsId });
+};
+
 const readLayoutForSafetyCheck = async (wsId: string): Promise<ILayoutData> => {
   const filePath = resolveLayoutFile(wsId);
   let raw: string;
@@ -79,6 +89,31 @@ const readLayoutForSafetyCheck = async (wsId: string): Promise<ILayoutData> => {
     throw new Error(`Cannot verify workspace '${wsId}' is empty: layout state is invalid`);
   }
 };
+
+/**
+ * Hold the layout mutation lock from the authoritative layout read through
+ * session teardown, the caller's metadata commit, and layout/status removal.
+ */
+export const removeWorkspaceLayout = async (
+  wsId: string,
+  commit: () => Promise<void>,
+): Promise<void> =>
+  withLock(async () => {
+    const layout = await readLayoutFile(resolveLayoutFile(wsId));
+    if (layout) {
+      for (const tab of collectAllTabs(layout.root)) {
+        try {
+          await killSession(tab.sessionName);
+        } catch {}
+      }
+    }
+
+    await commit();
+
+    try {
+      await removeLayoutFileUnlocked(wsId);
+    } catch {}
+  });
 
 /**
  * Hold the layout mutation lock from the emptiness check through the caller's
@@ -101,7 +136,7 @@ export const removeWorkspaceLayoutIfEmpty = async (
     }
 
     await commit();
-    await removeLayoutFile(wsId);
+    await removeLayoutFileUnlocked(wsId);
     return { empty: true, tabCount: 0, sessionCount: 0 };
   });
 
@@ -165,6 +200,19 @@ export const readLayoutFile = async (filePath: string): Promise<ILayoutData | nu
 export const readExistingLayout = async (wsId: string): Promise<ILayoutData | null> =>
   readLayoutFileInternal(resolveLayoutFile(wsId), false);
 
+export const runWithExistingTab = async (
+  wsId: string,
+  tabId: string,
+  callback: (tab: ITab) => void | Promise<void>,
+): Promise<boolean> =>
+  withLock(async () => {
+    const layout = await readLayoutFile(resolveLayoutFile(wsId));
+    const tab = layout ? collectAllTabs(layout.root).find((candidate) => candidate.id === tabId) : null;
+    if (!tab) return false;
+    await callback(tab);
+    return true;
+  });
+
 const extractWsIdFromPath = (filePath: string): string | null => {
   const match = filePath.match(/workspaces\/(ws-[^/]+)\//);
   return match?.[1] ?? null;
@@ -199,15 +247,8 @@ export const writeLayoutFile = async (data: ILayoutData, filePath: string): Prom
   }
 };
 
-export const removeLayoutFile = async (wsId: string): Promise<void> => {
-  await fs.rm(resolveLayoutDir(wsId), { recursive: true, force: true });
-  clearLayoutCache(wsId);
-  const reconciler = g.__ptLayoutReconciler;
-  if (reconciler) {
-    reconciler.removeWorkspaceTabs(wsId);
-  }
-  broadcastSync({ type: 'layout', workspaceId: wsId });
-};
+export const removeLayoutFile = async (wsId: string): Promise<void> =>
+  withLock(() => removeLayoutFileUnlocked(wsId));
 
 export const clearLayoutCache = (wsId: string): void => {
   const filePath = resolveLayoutFile(wsId);
@@ -307,16 +348,35 @@ export interface ICreateLayoutOptions {
   panelType?: TPanelType;
 }
 
-export const createDefaultLayout = async (wsId: string, cwd: string, options?: ICreateLayoutOptions): Promise<ILayoutData> => {
+export interface ICreateDefaultLayoutResult {
+  layout: ILayoutData;
+  initialTab: ITab;
+}
+
+export const createDefaultLayoutWithInitialTab = async (
+  wsId: string,
+  cwd: string,
+  options?: ICreateLayoutOptions,
+): Promise<ICreateDefaultLayoutResult> => {
   const { pane, tab } = createDefaultPaneNode(wsId, cwd);
   if (options?.panelType) tab.panelType = options.panelType;
   await createSession(tab.sessionName, 80, 24, cwd);
   return {
-    root: pane,
-    activePaneId: pane.id,
-    updatedAt: new Date().toISOString(),
+    layout: {
+      root: pane,
+      activePaneId: pane.id,
+      updatedAt: new Date().toISOString(),
+    },
+    initialTab: tab,
   };
 };
+
+export const createDefaultLayout = async (
+  wsId: string,
+  cwd: string,
+  options?: ICreateLayoutOptions,
+): Promise<ILayoutData> =>
+  (await createDefaultLayoutWithInitialTab(wsId, cwd, options)).layout;
 
 export const getLayout = async (wsId: string, defaultCwd?: string): Promise<ILayoutData> =>
   withLock(async () => {

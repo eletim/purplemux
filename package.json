@@ -1,6 +1,6 @@
 {
   "name": "purplemux",
-  "version": "0.4.6",
+  "version": "0.4.11",
   "description": "Manage multiple Claude Code sessions from your browser",
   "license": "MIT",
   "author": "subicura",
@@ -49,6 +49,7 @@
     "prestart": "node scripts/ensure-prompt-prefix.js",
     "start": "node scripts/build-fingerprint.js check && NODE_ENV=production tsx server.ts",
     "lint": "eslint",
+    "check:version": "node scripts/check-version.mjs",
     "test": "vitest run",
     "test:watch": "vitest",
     "ralph": "node ralph-loop.js",

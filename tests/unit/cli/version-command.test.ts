@@ -1,6 +1,7 @@
 import { execFileSync } from 'node:child_process';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
+import packageJson from '../../../package.json';
 
 const root = path.resolve(__dirname, '../../..');
 
@@ -11,6 +12,6 @@ describe('purplemux version command', () => {
       encoding: 'utf8',
     });
 
-    expect(output.trim()).toBe('0.4.6');
+    expect(output.trim()).toBe(packageJson.version);
   });
 });

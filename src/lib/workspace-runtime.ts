@@ -1,10 +1,11 @@
 import { checkAgentAvailabilityForPanelType, toAgentAvailabilityError } from '@/lib/agent-availability';
-import { collectAllTabs, readLayoutFile, resolveLayoutFile, updateTabAgentSessionId } from '@/lib/layout-store';
+import { runWithExistingTab, updateTabAgentSessionId } from '@/lib/layout-store';
 import { createLogger } from '@/lib/logger';
 import { getProviderByPanelType } from '@/lib/providers';
+import { registerExistingRuntimeTab } from '@/lib/runtime-tab-registration';
 import { getStatusManager } from '@/lib/status-manager';
 import { sendKeys } from '@/lib/tmux';
-import { createWorkspace } from '@/lib/workspace-store';
+import { createWorkspaceWithInitialTab } from '@/lib/workspace-store';
 import type { IWorkspace, TPanelType } from '@/types/terminal';
 import type { ITabStatusEntry } from '@/types/status';
 
@@ -32,16 +33,27 @@ export interface ICreateWorkspaceRuntimeOptions {
   panelType?: TPanelType;
 }
 
+export interface IInitialWorkspaceTab {
+  tabId: string;
+  workspaceId: string;
+  name: string;
+  panelType: TPanelType;
+  agentProviderId: string | null;
+}
+
+export interface ICreateWorkspaceRuntimeResult {
+  workspace: IWorkspace;
+  initialTab: IInitialWorkspaceTab;
+}
+
 interface IWorkspaceStatusRuntime {
   registerTab(tabId: string, entry: ITabStatusEntry): void;
   markAgentLaunch(tabId: string): void;
 }
 
 export interface IWorkspaceRuntimeDependencies {
-  createWorkspace: typeof createWorkspace;
-  readLayoutFile: typeof readLayoutFile;
-  resolveLayoutFile: typeof resolveLayoutFile;
-  collectAllTabs: typeof collectAllTabs;
+  createWorkspace: typeof createWorkspaceWithInitialTab;
+  runWithExistingTab: typeof runWithExistingTab;
   updateTabAgentSessionId: typeof updateTabAgentSessionId;
   getProviderByPanelType: typeof getProviderByPanelType;
   checkAgentAvailabilityForPanelType: typeof checkAgentAvailabilityForPanelType;
@@ -50,10 +62,8 @@ export interface IWorkspaceRuntimeDependencies {
 }
 
 const defaultDependencies: IWorkspaceRuntimeDependencies = {
-  createWorkspace,
-  readLayoutFile,
-  resolveLayoutFile,
-  collectAllTabs,
+  createWorkspace: createWorkspaceWithInitialTab,
+  runWithExistingTab,
   updateTabAgentSessionId,
   getProviderByPanelType,
   checkAgentAvailabilityForPanelType,
@@ -64,7 +74,7 @@ const defaultDependencies: IWorkspaceRuntimeDependencies = {
 export const createWorkspaceRuntime = async (
   options: ICreateWorkspaceRuntimeOptions,
   dependencies: IWorkspaceRuntimeDependencies = defaultDependencies,
-): Promise<IWorkspace> => {
+): Promise<ICreateWorkspaceRuntimeResult> => {
   const provider = options.resumeSessionId
     ? dependencies.getProviderByPanelType(options.panelType ?? 'claude-code')
     : null;
@@ -83,18 +93,15 @@ export const createWorkspaceRuntime = async (
   }
 
   const layoutOptions = provider ? { panelType: provider.panelType } : undefined;
-  const workspace = await dependencies.createWorkspace(
+  const { workspace, initialTab: defaultTab } = await dependencies.createWorkspace(
     options.directory,
     options.name,
     layoutOptions,
   );
 
-  const layout = await dependencies.readLayoutFile(
-    dependencies.resolveLayoutFile(workspace.id),
-  );
-  const defaultTab = layout ? dependencies.collectAllTabs(layout.root)[0] : null;
+  const tabProvider = dependencies.getProviderByPanelType(defaultTab.panelType);
 
-  if (options.resumeSessionId && provider && defaultTab) {
+  if (options.resumeSessionId && provider) {
     provider.writeSessionId(defaultTab, options.resumeSessionId);
     await dependencies.updateTabAgentSessionId(
       defaultTab.sessionName,
@@ -103,22 +110,13 @@ export const createWorkspaceRuntime = async (
     );
   }
 
-  if (defaultTab && defaultTab.panelType !== 'web-browser') {
-    const tabProvider = dependencies.getProviderByPanelType(defaultTab.panelType);
-    dependencies.getStatusManager().registerTab(defaultTab.id, {
-      cliState: 'inactive',
-      workspaceId: workspace.id,
-      tabName: defaultTab.name,
-      tmuxSession: defaultTab.sessionName,
-      panelType: defaultTab.panelType,
-      agentProviderId: tabProvider?.id,
-      agentSessionId: tabProvider?.readSessionId(defaultTab) ?? null,
-      lastEvent: null,
-      eventSeq: 0,
-    });
-  }
+  const initialTabPresent = await registerExistingRuntimeTab(
+    workspace.id,
+    defaultTab.id,
+    dependencies,
+  );
 
-  if (options.resumeSessionId && provider && defaultTab) {
+  if (options.resumeSessionId && provider && initialTabPresent) {
     const resumeSessionId = options.resumeSessionId;
     setTimeout(async () => {
       try {
@@ -134,7 +132,16 @@ export const createWorkspaceRuntime = async (
     }, SHELL_READY_DELAY_MS);
   }
 
-  return workspace;
+  return {
+    workspace,
+    initialTab: {
+      tabId: defaultTab.id,
+      workspaceId: workspace.id,
+      name: defaultTab.name,
+      panelType: defaultTab.panelType ?? 'terminal',
+      agentProviderId: tabProvider?.id ?? null,
+    },
+  };
 };
 
 export const getWorkspaceRuntimeHttpError = (
