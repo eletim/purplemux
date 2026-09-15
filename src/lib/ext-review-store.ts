@@ -43,9 +43,11 @@ export const createExtReview = (input: ICreateExtReview): Promise<IExtReview> =>
   await write([...reviews, review]);
   return review;
 });
-export const getExtReview = async (id: string): Promise<IExtReview | null> => {
+export const getExtReview = async (id: string, signal?: AbortSignal): Promise<IExtReview | null> => {
+  signal?.throwIfAborted();
   const review = (await listExtReviews()).find((entry) => entry.id === id);
-  return review ? resolveExtReviewTargets(review) : null;
+  signal?.throwIfAborted();
+  return review ? resolveExtReviewTargets(review, signal) : null;
 };
 /** Definition-only deletion, including when the external server is unavailable. */
 export const deleteExtReview = (id: string): Promise<boolean> => withLock(async () => {

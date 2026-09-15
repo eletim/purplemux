@@ -54,7 +54,7 @@ export const handleExtReviewObservation = async (ws: WebSocket, request: Incomin
       if (stopped || ws.readyState !== WebSocket.OPEN) return stop(1000, 'Disconnected');
       if (Date.now() - lastHeartbeat > 90_000) return stop(1001, 'Heartbeat timeout');
       // Re-read the definition so deletion in a separate Next process also ends observation.
-      const review = await getExtReview(reviewId);
+      const review = await getExtReview(reviewId, abort.signal);
       if (stopped) return;
       if (!review) return stop(1000, 'Review deleted');
       if (!review.windowIds.includes(windowId)) return stop(1008, 'Window is not approved');

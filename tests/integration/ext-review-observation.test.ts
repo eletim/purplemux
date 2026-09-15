@@ -15,7 +15,9 @@ let wss: WebSocketServer;
 let origin: string;
 let store: typeof import('@/lib/ext-review-store');
 let reviewId: string;
+let handlers: Promise<void>[];
 const clients: WebSocket[] = [];
+const realTmux = execFileSync('which', ['tmux'], { encoding: 'utf8' }).trim();
 const tmux = (...args: string[]) => execFileSync('tmux', ['-f', '/dev/null', '-S', socket, ...args],
   { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
 const terminalState = () => tmux('list-panes', '-a', '-F',
@@ -46,7 +48,8 @@ beforeEach(async () => {
   const { handleExtReviewObservation } = await import('@/lib/ext-review-observation');
   server = createServer();
   wss = new WebSocketServer({ server });
-  wss.on('connection', (ws, req) => { void handleExtReviewObservation(ws, req); });
+  handlers = [];
+  wss.on('connection', (ws, req) => { handlers.push(handleExtReviewObservation(ws, req)); });
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
   origin = `ws://127.0.0.1:${(server.address() as { port: number }).port}`;
 });
@@ -55,6 +58,7 @@ afterEach(async () => {
   clients.splice(0).forEach((ws) => ws.terminate());
   await new Promise<void>((resolve) => wss.close(() => resolve()));
   await new Promise<void>((resolve) => server.close(() => resolve()));
+  vi.unstubAllEnvs();
   try { tmux('kill-server'); } catch {}
   vi.restoreAllMocks();
   await fs.rm(directory, { recursive: true, force: true });
@@ -134,6 +138,72 @@ describe('read-only external review observation with real tmux and WebSockets', 
     expect(text(client.frames)).not.toContain('REPLACEMENT_SECRET');
     expect(tmux('list-windows', '-t', '$0', '-F', '#{window_id}')).not.toContain('@0');
     expect(extReviewObservers.size).toBe(0);
+  });
+
+  // Each command wrapper delegates to real tmux except at the chosen validation
+  // step, where the observation-owned subprocess blocks until it is killed.
+  const stages = [
+    ['lookup session check', 1], ['lookup target inspection', 2],
+    ['lookup freeze', 3], ['capture resolution', 7], ['capture freeze', 9],
+    ['pane listing', 13], ['pane capture', 14],
+    ['post-capture resolution', 15], ['post-capture freeze', 17],
+  ] as const;
+  it.each(stages.flatMap(([stage, command]) =>
+    ['disconnect', 'delete', 'shutdown'].map((action) => ({ stage, command, action }))))(
+    'cancels blocked $stage on $action without subsequent commands', async ({ command, action }) => {
+      const log = path.join(directory, 'commands.jsonl');
+      const bin = path.join(directory, 'bin');
+      await fs.mkdir(bin);
+      const executable = path.join(bin, 'tmux');
+      await fs.writeFile(executable, `#!${process.execPath}
+const fs = require('node:fs');
+const { execFileSync } = require('node:child_process');
+const log = ${JSON.stringify(log)};
+const count = fs.existsSync(log) ? fs.readFileSync(log, 'utf8').trim().split('\\n').length : 0;
+fs.appendFileSync(log, JSON.stringify({ pid: process.pid, args: process.argv.slice(2) }) + '\\n');
+if (count + 1 === ${command}) {
+  setInterval(() => {}, 1000);
+} else {
+  process.stdout.write(execFileSync(${JSON.stringify(realTmux)}, process.argv.slice(2)));
+}
+`, { mode: 0o700 });
+      vi.stubEnv('PATH', `${bin}:${process.env.PATH}`);
+      const client = await connect();
+      let calls: { pid: number; args: string[] }[] = [];
+      await vi.waitFor(async () => {
+        calls = (await fs.readFile(log, 'utf8')).trim().split('\n').map((line) => JSON.parse(line));
+        expect(calls.length).toBe(command);
+      }, { timeout: 3000 });
+      const blockedPid = calls[command - 1].pid;
+      expect(() => process.kill(blockedPid, 0)).not.toThrow();
+      if (action === 'disconnect') client.ws.close();
+      else if (action === 'delete') await store.deleteExtReview(reviewId);
+      else stopExtReviewObservations();
+      await vi.waitFor(() => {
+        expect(extReviewObservers.size).toBe(0);
+        expect(() => process.kill(blockedPid, 0)).toThrow();
+      }, { timeout: 1000 });
+      await Promise.all(handlers);
+      expect((await fs.readFile(log, 'utf8')).trim().split('\n')).toHaveLength(command);
+      expect(text(client.frames)).toBe('');
+      vi.unstubAllEnvs();
+      expect(tmux('has-session', '-t', '$0')).toBe('');
+    });
+
+  it('starts no commands when lookup, resolution, freezing or capture is already cancelled', async () => {
+    const review = (await store.listExtReviews())[0];
+    const { freezeExtReviewTargets, resolveExtReviewTargets, captureExtReviewWindow } = await import('@/lib/ext-review-tmux');
+    const abort = new AbortController();
+    abort.abort();
+    const identityRead = vi.spyOn(fs, 'lstat');
+    const definitionRead = vi.spyOn(fs, 'readFile');
+    await expect(store.getExtReview(reviewId, abort.signal)).rejects.toMatchObject({ name: 'AbortError' });
+    await expect(resolveExtReviewTargets(review, abort.signal)).rejects.toMatchObject({ name: 'AbortError' });
+    await expect(freezeExtReviewTargets({ socketPath: socket, session: '$0', windowTargets: ['@0'] }, abort.signal))
+      .rejects.toMatchObject({ name: 'AbortError' });
+    await expect(captureExtReviewWindow(review, '@0', abort.signal)).rejects.toMatchObject({ name: 'AbortError' });
+    expect(identityRead).not.toHaveBeenCalled();
+    expect(definitionRead).not.toHaveBeenCalled();
   });
 
   it('does not start a missing server', async () => {
