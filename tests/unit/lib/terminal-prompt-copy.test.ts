@@ -90,6 +90,62 @@ describe('terminal prompt copy boundaries', () => {
     expect(getPromptBlockText(buffer, 2, PROMPT_PREFIX)).toBe('eletim@E-ryzen:~$ pwd\n/home/eletim');
   });
 
+  it('reads forward in chunks and stops at the next prompt', () => {
+    const rows = Array.from({ length: 160 }, (_, row) => `output ${row}`);
+    rows[5] = 'eletim@E-ryzen:~$ first';
+    rows[87] = 'eletim@E-ryzen:~$ second';
+    const reads: number[] = [];
+    const source = createBuffer(rows);
+    const buffer: ITerminalPromptBuffer = {
+      length: source.length,
+      getLine: (row) => {
+        reads.push(row);
+        return source.getLine(row);
+      },
+    };
+
+    expect(getPromptBlockText(buffer, 5, PROMPT_PREFIX)).toBe(rows.slice(5, 87).join('\n'));
+    expect(reads.every((row) => row >= 5 && row < 126)).toBe(true);
+    expect(reads.length).toBeLessThan(300);
+  });
+
+  it('keeps the click-time end when output is appended during a chunk read', () => {
+    const rows = Array.from({ length: 45 }, (_, row) => row === 0
+      ? 'eletim@E-ryzen:~$ first'
+      : `output ${row}`);
+    const source = createBuffer(rows);
+    const reads: number[] = [];
+    let appended = false;
+    const buffer: ITerminalPromptBuffer = {
+      get length() { return rows.length; },
+      getLine: (row) => {
+        reads.push(row);
+        if (row === 40 && !appended) {
+          appended = true;
+          rows.push('eletim@E-ryzen:~$ later', 'later output');
+        }
+        return source.getLine(row);
+      },
+    };
+
+    expect(getPromptBlockText(buffer, 0, PROMPT_PREFIX)).toBe(rows.slice(0, 45).join('\n'));
+    expect(Math.max(...reads)).toBe(44);
+  });
+
+  it('joins wrapped lines that cross a chunk boundary', () => {
+    const rows: Array<string | { text: string; wrapped: boolean }> = [
+      'eletim@E-ryzen:~$ first',
+      ...Array.from({ length: 38 }, (_, row) => `output ${row}`),
+      'long ',
+      { text: 'line', wrapped: true },
+      'eletim@E-ryzen:~$ second',
+    ];
+
+    expect(getPromptBlockText(createBuffer(rows), 0, PROMPT_PREFIX)).toBe(
+      [...rows.slice(0, 39), 'long line'].join('\n'),
+    );
+  });
+
   it('keeps hash-led comments inside command output', () => {
     const buffer = createBuffer([
       'eletim@E-ryzen:~$ cat config.yml',

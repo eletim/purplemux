@@ -14,6 +14,8 @@ interface ILogicalBufferLine {
   text: string;
 }
 
+const PROMPT_COPY_CHUNK_ROWS = 40;
+
 const normalizePromptCandidate = (text: string): string => text
   .replace(/^[\s\u200B\u200C\u200D\uFEFF]+/, '');
 
@@ -136,20 +138,35 @@ export const getPromptBlockText = (
   promptRow: number,
   promptPrefix: string,
 ): string | null => {
-  const logicalLines = readLogicalLines(buffer);
-  const startIndex = logicalLines.findIndex(
-    (line) => line.startRow === promptRow && isShellPrompt(line.text, promptPrefix),
-  );
-  if (startIndex < 0) return null;
+  const snapshotEnd = buffer.length;
+  if (promptRow < 0 || promptRow >= snapshotEnd) return null;
 
-  const nextPromptIndex = logicalLines.findIndex(
-    (line, index) => index > startIndex && isShellPrompt(line.text, promptPrefix),
-  );
-  const endIndex = nextPromptIndex < 0 ? logicalLines.length : nextPromptIndex;
+  const snapshotBuffer: ITerminalPromptBuffer = {
+    length: snapshotEnd,
+    getLine: (row) => row < snapshotEnd ? buffer.getLine(row) : undefined,
+  };
+  const copiedLines: string[] = [];
+  let nextRow = promptRow;
 
-  return logicalLines
-    .slice(startIndex, endIndex)
-    .map((line) => line.text)
-    .join('\n')
-    .replace(/\n+$/, '');
+  while (nextRow < snapshotEnd) {
+    const chunk = readLogicalLines(
+      snapshotBuffer,
+      nextRow,
+      Math.min(nextRow + PROMPT_COPY_CHUNK_ROWS, snapshotEnd),
+    );
+    if (chunk.length === 0) break;
+
+    for (const line of chunk) {
+      if (copiedLines.length === 0) {
+        if (line.startRow !== promptRow || !isShellPrompt(line.text, promptPrefix)) return null;
+      } else if (isShellPrompt(line.text, promptPrefix)) {
+        return copiedLines.join('\n').replace(/\n+$/, '');
+      }
+      copiedLines.push(line.text);
+    }
+
+    nextRow = chunk[chunk.length - 1].endRow + 1;
+  }
+
+  return copiedLines.length > 0 ? copiedLines.join('\n').replace(/\n+$/, '') : null;
 };
