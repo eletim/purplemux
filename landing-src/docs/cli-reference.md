@@ -78,7 +78,7 @@ If a transport failure or server error makes the mutation outcome uncertain, rec
 
 ### External target registration
 
-Use `external-target register` with a known absolute socket path, exact session name or `$sessionId`, and one or more `@windowId` values. It returns a stable registration ID and an absolute browser URL. `external-target list` includes registrations whose tmux resources are unavailable. `external-target open ID` checks the frozen identities before returning the read-only browser URL; a changed or missing target fails the check. `external-target unregister ID` deletes only the registration, even if the tmux server is gone. These commands use the external Review definitions and browser view described below; registration never grants PurpleMux ownership of the tmux resources.
+Use `external-target register` with a known absolute socket path, exact session name or `$sessionId`, and one or more `@windowId` values. It returns a stable registration ID and an absolute browser URL for an interactive terminal with input, scrollback, and resize. `external-target list` includes registrations whose tmux resources are unavailable. `external-target open ID` checks the frozen identities before returning the browser URL; a changed or missing target fails the check. `external-target unregister ID` deletes only the registration, even if the tmux server is gone. These commands use the external Review definitions; registration never grants PurpleMux ownership of the tmux resources. The separate external Review browser view remains read-only.
 
 ### External review (0.5.0)
 

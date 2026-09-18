@@ -34,8 +34,13 @@ const socketIdentity = async (socketPath: string, signal?: AbortSignal): Promise
   if (managed && stat.dev === managed.dev && stat.ino === managed.ino) {
     throw new ExtReviewError('The purplemux-owned tmux socket is not external');
   }
-  return `${stat.dev}:${stat.ino}:${stat.ctimeNs}`;
+  // tmux changes socket permissions as clients attach, which changes ctime.
+  // Device and inode remain stable for the lifetime of this socket.
+  return `${stat.dev}:${stat.ino}`;
 };
+
+const sameSocket = (stored: string, current: string): boolean =>
+  stored === current || stored.startsWith(`${current}:`); // Definitions saved before ctime was dropped.
 
 const inspectTarget = async (socketPath: string, target: string, signal?: AbortSignal): Promise<string[]> => {
   signal?.throwIfAborted();
@@ -82,7 +87,7 @@ export const freezeExtReviewTargets = async (input: ICreateExtReview, signal?: A
 export const resolveExtReviewTargets = async (review: IExtReview, signal?: AbortSignal): Promise<IExtReview> => {
   signal?.throwIfAborted();
   try {
-    if (await socketIdentity(review.socketPath, signal) !== review.socketIdentity) {
+    if (!sameSocket(review.socketIdentity, await socketIdentity(review.socketPath, signal))) {
       throw new ExtReviewError('External review socket identity changed');
     }
     const [pid, sessionId, created] = await inspectTarget(review.socketPath, `${review.sessionId}:`, signal);
@@ -91,7 +96,7 @@ export const resolveExtReviewTargets = async (review: IExtReview, signal?: Abort
     }
     const current = await freezeExtReviewTargets({ socketPath: review.socketPath,
       session: review.sessionId, windowTargets: review.windowIds }, signal);
-    if (current.socketIdentity !== review.socketIdentity || current.serverPid !== review.serverPid
+    if (!sameSocket(review.socketIdentity, current.socketIdentity) || current.serverPid !== review.serverPid
       || current.sessionId !== review.sessionId || current.sessionCreated !== review.sessionCreated) {
       throw new ExtReviewError('External review resource identity changed');
     }

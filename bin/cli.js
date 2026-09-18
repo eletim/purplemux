@@ -192,7 +192,7 @@ const cmdWorkspaceDelete = async (args) => {
   die(body?.error || `HTTP ${resp.status}`);
 };
 
-const cmdExtReviewCreate = async (args) => {
+const cmdExtReviewCreate = async (args, externalTarget = false) => {
   const selectors = { socketPath: null, session: null, windowTargets: [] };
   for (let i = 0; i < args.length; i += 2) {
     const flag = args[i];
@@ -214,12 +214,12 @@ const cmdExtReviewCreate = async (args) => {
   if (!selectors.session) die('--session is required');
   if (!selectors.windowTargets.length) die('--window is required (repeat for each target)');
   requireEnv();
-  const { body } = await api('POST', '/api/cli/ext-reviews', selectors);
+  const { body } = await api('POST', '/api/cli/ext-reviews', externalTarget ? { ...selectors, interactive: true } : selectors);
   if (!body || typeof body.id !== 'string' || !body.id
       || typeof body.url !== 'string' || !body.url) {
     die('invalid review creation response: expected id and url');
   }
-  out({ ...body, url: new URL(body.url, BASE).href });
+  out({ ...body, url: new URL(externalTarget ? `/external-target/${encodeURIComponent(body.id)}` : body.url, BASE).href });
 };
 
 const cmdExtReviewGet = async (args) => {
@@ -240,7 +240,7 @@ const cmdExternalTargetList = async (args) => {
   if (args.length) die('external-target list takes no arguments');
   requireEnv();
   const { body } = await api('GET', '/api/cli/ext-reviews');
-  out({ targets: body.reviews.map((review) => ({ ...review, url: new URL(`/ext-review/${encodeURIComponent(review.id)}`, BASE).href })) });
+  out({ targets: body.reviews.filter((review) => review.interactive === true).map((review) => ({ ...review, url: new URL(`/external-target/${encodeURIComponent(review.id)}`, BASE).href })) });
 };
 
 const cmdExternalTargetOpen = async (args) => {
@@ -248,7 +248,8 @@ const cmdExternalTargetOpen = async (args) => {
   requireEnv();
   // GET checks frozen socket, server, session, and window identities before returning a URL.
   const { body } = await api('GET', `/api/cli/ext-reviews/${encodeURIComponent(args[0])}`);
-  out({ ...body, url: new URL(`/ext-review/${encodeURIComponent(body.id)}`, BASE).href });
+  if (body.interactive !== true) die('external target is not registered');
+  out({ ...body, url: new URL(`/external-target/${encodeURIComponent(body.id)}`, BASE).href });
 };
 
 const cmdTabList = async (args) => {
@@ -478,7 +479,7 @@ Commands:
   external-target register --socket PATH --session SESSION --window @ID [--window @ID ...]
                                            Register explicit external targets; print ID and browser URL
   external-target list                     List registrations, including unavailable targets
-  external-target open ID                  Validate identity and print the read-only browser URL
+  external-target open ID                  Validate identity and print the interactive browser URL
   external-target unregister ID            Remove registration without changing tmux resources
   tab list [-w WS]                         List tabs (optionally scoped to workspace)
   tab create -w WS [-n NAME] [-t TYPE]     Create a tab in workspace (type: terminal | claude-code | codex-cli | agent-sessions | web-browser | diff)
@@ -526,7 +527,7 @@ const main = async () => {
       die(`unknown ext-review command: ${sub || '(none)'}. Run 'purplemux help' for usage.`);
       break;
     case 'external-target':
-      if (sub === 'register') return cmdExtReviewCreate(rest);
+      if (sub === 'register') return cmdExtReviewCreate(rest, true);
       if (sub === 'list') return cmdExternalTargetList(rest);
       if (sub === 'open') return cmdExternalTargetOpen(rest);
       if (sub === 'unregister') return cmdExtReviewDelete(rest);

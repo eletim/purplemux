@@ -13,6 +13,8 @@ import { PRISTINE_ENV } from '@/lib/pristine-env';
 import { encodeStdout } from '@/lib/terminal-protocol';
 import { reconcileTabCwd } from '@/lib/layout-store';
 import { createLogger } from '@/lib/logger';
+import { loadExtReviewDefinition } from '@/lib/ext-review-store';
+import { resolveExtReviewTargets } from '@/lib/ext-review-tmux';
 
 const log = createLogger('terminal');
 
@@ -37,6 +39,7 @@ interface IActiveConnection {
   ws: WebSocket;
   pty: pty.IPty;
   sessionName: string;
+  external: boolean;
   clientId: string | null;
   heartbeatTimer: ReturnType<typeof setInterval>;
   cleaned: boolean;
@@ -62,8 +65,10 @@ const terminalOutputTimestamps = globalStore.__purplemux_terminal_output_ts ??= 
 export const getLastTerminalOutput = (sessionName: string): number | undefined =>
   terminalOutputTimestamps.get(sessionName);
 
-const attachToSession = (sessionName: string, cols: number, rows: number): pty.IPty =>
-  pty.spawn('tmux', ['-u', '-L', TMUX_SOCKET, 'attach-session', '-t', sessionName], {
+const attachToSession = (sessionName: string, cols: number, rows: number, socketPath?: string): pty.IPty =>
+  pty.spawn('tmux', socketPath
+    ? ['-u', '-N', '-S', socketPath, 'attach-session', '-t', sessionName]
+    : ['-u', '-L', TMUX_SOCKET, 'attach-session', '-t', sessionName], {
     name: 'xterm-256color',
     cols,
     rows,
@@ -206,6 +211,15 @@ export const handleConnection = async (ws: WebSocket, request: IncomingMessage, 
   const clientId = url.searchParams.get('clientId');
   const urlCols = parseInt(url.searchParams.get('cols') || '', 10);
   const urlRows = parseInt(url.searchParams.get('rows') || '', 10);
+  const externalTargetId = url.searchParams.get('externalTargetId');
+  const externalWindowId = url.searchParams.get('windowId');
+  if ((externalTargetId !== null || externalWindowId !== null)
+    && (!externalTargetId || !externalWindowId || url.searchParams.has('session')
+      || url.searchParams.getAll('externalTargetId').length !== 1
+      || url.searchParams.getAll('windowId').length !== 1)) {
+    ws.close(1008, 'Invalid external target');
+    return;
+  }
 
   connections.forEach((conn, key) => {
     if (key.readyState === WebSocket.CLOSED || key.readyState === WebSocket.CLOSING) {
@@ -251,6 +265,7 @@ export const handleConnection = async (ws: WebSocket, request: IncomingMessage, 
   let conn: IActiveConnection | null = null;
   let lastHeartbeat = Date.now();
   let sessionName = '';
+  let externalSocketPath: string | undefined;
   let webStdinQueue = Promise.resolve();
   let currentCols = 80;
   let currentRows = 24;
@@ -283,7 +298,7 @@ export const handleConnection = async (ws: WebSocket, request: IncomingMessage, 
       case MSG_WEB_STDIN: {
         const data = textDecoder.decode(msg.payload);
         webStdinQueue = webStdinQueue
-          .then(() => exitCopyMode(sessionName))
+          .then(() => exitCopyMode(sessionName, externalSocketPath))
           .catch(() => {})
           .then(() => { ptyProcess?.write(data); });
         break;
@@ -315,6 +330,10 @@ export const handleConnection = async (ws: WebSocket, request: IncomingMessage, 
         break;
       }
       case MSG_KILL_SESSION: {
+        if (conn?.external) {
+          ws.close(1008, 'External target cannot be killed');
+          break;
+        }
         log.debug(`kill session requested: ${sessionName}`);
         killSession(sessionName).catch((err) => {
           log.error(`kill session failed: ${err instanceof Error ? err.message : err}`);
@@ -337,7 +356,37 @@ export const handleConnection = async (ws: WebSocket, request: IncomingMessage, 
     cleanup(conn);
   });
 
-  if (sessionId) {
+  if (externalTargetId && externalWindowId) {
+    let definition;
+    try {
+      definition = await loadExtReviewDefinition(externalTargetId);
+    } catch {
+      ws.close(1011, 'External registration unavailable');
+      return;
+    }
+    if (!definition?.interactive || !definition.windowIds.includes(externalWindowId)) {
+      ws.close(1008, 'External target is not registered');
+      return;
+    }
+    try {
+      await resolveExtReviewTargets(definition);
+    } catch {
+      ws.close(1011, 'External target unavailable');
+      return;
+    }
+    if (ws.readyState !== WebSocket.OPEN) return;
+    sessionName = `${definition.sessionId}:${externalWindowId}`;
+    externalSocketPath = definition.socketPath;
+    currentCols = urlCols > 0 ? urlCols : (pending.resize?.cols || 80);
+    currentRows = urlRows > 0 ? urlRows : (pending.resize?.rows || 24);
+    try {
+      ptyProcess = attachToSession(sessionName, currentCols, currentRows, definition.socketPath);
+    } catch (err) {
+      log.error(`external tmux attach failed: ${err instanceof Error ? err.message : err}`);
+      ws.close(1011, 'External target attach failed');
+      return;
+    }
+  } else if (sessionId) {
     sessionName = sessionId;
     const exists = await hasSession(sessionId);
     if (!exists) {
@@ -393,6 +442,7 @@ export const handleConnection = async (ws: WebSocket, request: IncomingMessage, 
     ws,
     pty: ptyProcess,
     sessionName,
+    external: !!externalTargetId,
     clientId,
     heartbeatTimer,
     cleaned: false,
