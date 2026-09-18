@@ -82,8 +82,10 @@ DELETE /api/cli/ext-reviews/<reviewId>
   CLI equivalent: purplemux ext-review delete REVIEW_ID (prints JSON).
   Never sends tmux commands or kills external sessions/windows/panes.
 
-Open the returned url in an authenticated browser. /ext-review lists definitions and
-supports manual explicit-target creation, Open, and definition-only Delete.
+For a read-only Review, open the returned /ext-review/<id> url in an authenticated browser.
+For an interactive registration ("interactive": true), use the response id to open
+/external-target/<id> instead; the returned url still points to the read-only Review.
+/ext-review lists definitions and supports manual explicit-target creation, Open, and definition-only Delete.
 /ext-review/<id> shows only approved windows as live current-screen snapshots, not output history.
 Observation is fixed and read-only: no input, paste, send-keys, kill, rename, or tmux resize.
 Browser resizing affects only the local renderer. Added windows never enter the allowlist;
