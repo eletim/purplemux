@@ -236,6 +236,21 @@ const cmdExtReviewDelete = async (args) => {
   out(body);
 };
 
+const cmdExternalTargetList = async (args) => {
+  if (args.length) die('external-target list takes no arguments');
+  requireEnv();
+  const { body } = await api('GET', '/api/cli/ext-reviews');
+  out({ targets: body.reviews.map((review) => ({ ...review, url: new URL(`/ext-review/${encodeURIComponent(review.id)}`, BASE).href })) });
+};
+
+const cmdExternalTargetOpen = async (args) => {
+  if (args.length !== 1 || !args[0] || args[0].startsWith('-')) die('exactly one external target ID is required');
+  requireEnv();
+  // GET checks frozen socket, server, session, and window identities before returning a URL.
+  const { body } = await api('GET', `/api/cli/ext-reviews/${encodeURIComponent(args[0])}`);
+  out({ ...body, url: new URL(`/ext-review/${encodeURIComponent(body.id)}`, BASE).href });
+};
+
 const cmdTabList = async (args) => {
   requireEnv();
   const wsId = flagValue(args, '--workspace') || flagValue(args, '-w');
@@ -460,6 +475,11 @@ Commands:
                                            Use a known absolute socket path and exact session name or $ID
   ext-review get ID                        Get a Review by ID
   ext-review delete ID                     Delete only the Review definition
+  external-target register --socket PATH --session SESSION --window @ID [--window @ID ...]
+                                           Register explicit external targets; print ID and browser URL
+  external-target list                     List registrations, including unavailable targets
+  external-target open ID                  Validate identity and print the read-only browser URL
+  external-target unregister ID            Remove registration without changing tmux resources
   tab list [-w WS]                         List tabs (optionally scoped to workspace)
   tab create -w WS [-n NAME] [-t TYPE]     Create a tab in workspace (type: terminal | claude-code | codex-cli | agent-sessions | web-browser | diff)
   tab send -w WS TAB_ID CONTENT...         Send input to a tab
@@ -504,6 +524,13 @@ const main = async () => {
       if (sub === 'get') return cmdExtReviewGet(rest);
       if (sub === 'delete') return cmdExtReviewDelete(rest);
       die(`unknown ext-review command: ${sub || '(none)'}. Run 'purplemux help' for usage.`);
+      break;
+    case 'external-target':
+      if (sub === 'register') return cmdExtReviewCreate(rest);
+      if (sub === 'list') return cmdExternalTargetList(rest);
+      if (sub === 'open') return cmdExternalTargetOpen(rest);
+      if (sub === 'unregister') return cmdExtReviewDelete(rest);
+      die(`unknown external-target command: ${sub || '(none)'}. Run 'purplemux help' for usage.`);
       break;
     case 'tab':
       switch (sub) {

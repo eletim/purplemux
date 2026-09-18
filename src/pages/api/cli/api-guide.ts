@@ -43,6 +43,10 @@ DELETE /api/cli/workspaces/<workspaceId>?ifEmpty=true
 
 These endpoints accept x-pmux-token or an authenticated browser session cookie.
 Definitions observe external tmux resources without adopting them into Workspaces or tabs.
+The external-target CLI register/list/open/unregister commands use these same definitions.
+Register accepts the explicit socket, session, and window selectors below. List includes
+unavailable registrations; open rechecks frozen identity before printing the absolute
+browser URL. Unregister removes only the definition. Browser access is read-only.
 
 POST /api/cli/ext-reviews
   Body: { "socketPath": "/absolute/known/tmux/socket", "session": "exact-session-name",
