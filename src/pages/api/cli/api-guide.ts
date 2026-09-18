@@ -46,11 +46,13 @@ Definitions observe external tmux resources without adopting them into Workspace
 The external-target CLI register/list/open/unregister commands use these same definitions.
 Register accepts the explicit socket, session, and window selectors below. List includes
 unavailable registrations; open rechecks frozen identity before printing the absolute
-browser URL. Unregister removes only the definition. Browser access is read-only.
+browser URL. Unregister removes only the definition. Registered targets use the
+interactive /external-target/<id> terminal; Review URLs remain read-only.
 
 POST /api/cli/ext-reviews
   Body: { "socketPath": "/absolute/known/tmux/socket", "session": "exact-session-name",
           "windowTargets": ["@1", "@3"] }
+  external-target register sends "interactive": true; ordinary Review definitions omit it.
   Requires a known absolute socket path (no symlink or PurpleMux-owned purple socket),
   exact session name or $sessionId, and a nonempty list of unique @windowIds.
   No socket, session, or window discovery; validation never starts a tmux server.
