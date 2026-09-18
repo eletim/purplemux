@@ -39,6 +39,52 @@ DELETE /api/cli/workspaces/<workspaceId>?ifEmpty=true
   If a response is lost or a 5xx result leaves the mutation outcome uncertain, use the GET
   endpoint above (or GET /api/cli/workspaces) to reconcile from authoritative server state.
 
+## External review (PurpleMux 0.5.0)
+
+These endpoints accept x-pmux-token or an authenticated browser session cookie.
+Definitions observe external tmux resources without adopting them into Workspaces or tabs.
+
+POST /api/cli/ext-reviews
+  Body: { "socketPath": "/absolute/known/tmux/socket", "session": "exact-session-name",
+          "windowTargets": ["@1", "@3"] }
+  Requires a known absolute socket path (no symlink or PurpleMux-owned purple socket),
+  exact session name or $sessionId, and a nonempty list of unique @windowIds.
+  No socket, session, or window discovery; validation never starts a tmux server.
+  HTTP 201: { "id": "...", "createdAt": "...", "socketPath": "...",
+              "socketIdentity": "...", "serverPid": "...", "sessionId": "$...",
+              "sessionCreated": "...", "windowIds": ["@1", "@3"], "url": "/ext-review/<id>" }
+  Invalid or unavailable creation targets return HTTP 400 with { "error": "..." }.
+  CLI equivalent: purplemux ext-review create --socket /absolute/known/tmux/socket
+                 --session 'exact-session-name' --window @1 --window @3
+  CLI prints one JSON document with id and an absolute browser url.
+
+GET /api/cli/ext-reviews
+  Response: { "reviews": [{ "id", "createdAt", "socketPath", "socketIdentity",
+                            "serverPid", "sessionId", "sessionCreated", "windowIds" }] }
+  Lists persisted definitions, including unavailable ones; this is not target discovery.
+  There is no ext-review list CLI command.
+
+GET /api/cli/ext-reviews/<reviewId>
+  Resolves the frozen allowlist against the persisted socket/server/session/window identities.
+  HTTP 200: the definition fields above, without url.
+  HTTP 404: { "error": "Review not found" }; HTTP 409: { "error": "..." } for changed/unavailable targets.
+  CLI equivalent: purplemux ext-review get REVIEW_ID (prints JSON).
+
+DELETE /api/cli/ext-reviews/<reviewId>
+  Removes only the definition, even when its external resources are unavailable.
+  HTTP 200: { "deleted": true }; HTTP 404: { "error": "Review not found" }.
+  CLI equivalent: purplemux ext-review delete REVIEW_ID (prints JSON).
+  Never sends tmux commands or kills external sessions/windows/panes.
+
+Open the returned url in an authenticated browser. /ext-review lists definitions and
+supports manual explicit-target creation, Open, and definition-only Delete.
+/ext-review/<id> shows only approved windows as live current-screen snapshots, not output history.
+Observation is fixed and read-only: no input, paste, send-keys, kill, rename, or tmux resize.
+Browser resizing affects only the local renderer. Added windows never enter the allowlist;
+changed or missing frozen identities make the Review unavailable, with no recreation/substitution.
+There is no target-update endpoint; explicitly create a new definition to change targets.
+Definitions and external resources are excluded from Workspace ownership, discovery, and cleanup.
+
 ## Tabs
 
 GET /api/cli/tabs?workspaceId=WS
