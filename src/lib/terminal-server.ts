@@ -14,9 +14,9 @@ import { encodeStdout } from '@/lib/terminal-protocol';
 import { reconcileTabCwd } from '@/lib/layout-store';
 import { createLogger } from '@/lib/logger';
 import { loadExtReviewDefinition } from '@/lib/ext-review-store';
-import { assertExtReviewSocketIdentity, resolveExtReviewTargets } from '@/lib/ext-review-tmux';
+import { assertExtReviewSocketIdentity, captureExtReviewWindow, resolveExtReviewTargets } from '@/lib/ext-review-tmux';
 import { externalTerminals } from '@/lib/external-terminal-resources';
-import { sendExternalInput, areExternalClientsOnWindow, ExternalWindowGuard } from '@/lib/external-target-terminal';
+import { sendExternalInput, areExternalClientsOnWindow, captureExternalHistory, ExternalWindowGuard } from '@/lib/external-target-terminal';
 import type { IExtReview } from '@/types/ext-review';
 
 const log = createLogger('terminal');
@@ -71,7 +71,7 @@ export const getLastTerminalOutput = (sessionName: string): number | undefined =
 
 const attachToSession = (sessionName: string, cols: number, rows: number, socketPath?: string): pty.IPty =>
   pty.spawn('tmux', socketPath
-    ? ['-u', '-N', '-S', socketPath, 'attach-session', '-f', 'read-only', '-t', sessionName]
+    ? ['-u', '-C', '-N', '-S', socketPath, 'attach-session', '-f', 'read-only,ignore-size', '-t', sessionName]
     : ['-u', '-L', TMUX_SOCKET, 'attach-session', '-t', sessionName], {
     name: 'xterm-256color',
     cols,
@@ -342,11 +342,13 @@ export const handleConnection = async (ws: WebSocket, request: IncomingMessage, 
               conn.currentCols = newCols;
               conn.currentRows = newRows;
               if (!conn.capturePaused) {
-                ptyProcess.resize(newCols, newRows);
+                if (externalSocketPath) ptyProcess.write(`refresh-client -C ${newCols},${newRows}\n`);
+                else ptyProcess.resize(newCols, newRows);
                 if (sizeChanged) startThrottleWindow('resize');
               }
             } else {
-              ptyProcess.resize(newCols, newRows);
+              if (externalSocketPath) ptyProcess.write(`refresh-client -C ${newCols},${newRows}\n`);
+              else ptyProcess.resize(newCols, newRows);
             }
           }
         }
@@ -431,6 +433,7 @@ export const handleConnection = async (ws: WebSocket, request: IncomingMessage, 
         throw new Error('External window guard unavailable');
       }
       ptyProcess = attachToSession(sessionName, currentCols, currentRows, definition.socketPath);
+      ptyProcess.write(`refresh-client -C ${currentCols},${currentRows}\n`);
       await assertExtReviewSocketIdentity(definition, externalAbort.signal);
     } catch (err) {
       externalWindowGuard?.stop();
@@ -483,7 +486,8 @@ export const handleConnection = async (ws: WebSocket, request: IncomingMessage, 
   if (pending.resize && pending.resize.cols > 0 && pending.resize.rows > 0) {
     currentCols = pending.resize.cols;
     currentRows = pending.resize.rows;
-    ptyProcess.resize(currentCols, currentRows);
+    if (externalSocketPath) ptyProcess.write(`refresh-client -C ${currentCols},${currentRows}\n`);
+    else ptyProcess.resize(currentCols, currentRows);
   }
 
   const heartbeatTimer = setInterval(() => {
@@ -594,9 +598,37 @@ export const handleConnection = async (ws: WebSocket, request: IncomingMessage, 
 
   startThrottleWindow('initial');
 
+  // Control mode carries tmux protocol events, not terminal bytes. Rebuild the
+  // approved window from its panes so session status and other windows cannot
+  // enter the browser's terminal stream.
+  let externalCapture = Promise.resolve();
+  let previousExternalHistory = '';
+  const captureExternalOutput = () => {
+    externalCapture = externalCapture.then(async () => {
+      if (!externalDefinition || !externalWindowId || conn.cleaned) return;
+      const screen = await captureExtReviewWindow(externalDefinition, externalWindowId, externalAbort.signal);
+      const history = await captureExternalHistory(externalDefinition, externalWindowId, externalAbort.signal);
+      if (history !== null && history !== previousExternalHistory) {
+        const appended = history.startsWith(previousExternalHistory)
+          ? history.slice(previousExternalHistory.length) : history;
+        previousExternalHistory = history;
+        if (appended) sendCheckedStdout(`\x1b[${conn.currentRows};1H${appended.replace(/\n/g, '\r\n')}`);
+      }
+      sendCheckedStdout(screen);
+    }).catch(() => {
+      if (ws.readyState === WebSocket.OPEN) ws.close(1011, 'External output capture failed');
+      conn.detaching = true;
+      cleanup(conn);
+    });
+  };
+
   conn.disposables.push(
     ptyProcess.onData((data: string) => {
       if (conn.cleaned || ws.readyState !== WebSocket.OPEN) return;
+      if (externalSocketPath) {
+        captureExternalOutput();
+        return;
+      }
       terminalOutputTimestamps.set(sessionName, Date.now());
       if (conn.capturePaused) return;
 
@@ -607,6 +639,8 @@ export const handleConnection = async (ws: WebSocket, request: IncomingMessage, 
       sendCheckedStdout(data);
     }),
   );
+
+  if (externalSocketPath) captureExternalOutput();
 
   conn.disposables.push(
     ptyProcess.onExit(({ exitCode, signal }) => {
