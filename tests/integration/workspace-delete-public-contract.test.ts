@@ -11,7 +11,6 @@ const execFileAsync = promisify(execFile);
 const waitFor = (assertion: () => unknown) => vi.waitFor(assertion, { timeout: 5000 });
 const repoRoot = process.cwd();
 const cliPath = path.join(repoRoot, 'bin', 'purplemux.js');
-const tsxPath = path.join(repoRoot, 'node_modules', '.bin', 'tsx');
 const children: ChildProcess[] = [];
 const tempHomes: string[] = [];
 const viewers: WebSocket[] = [];
@@ -63,8 +62,9 @@ describe('external Review public boundary contract', () => {
       { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
     // Started by the fixture before purplemux, never by the Review lifecycle.
     tmux('new-session', '-d', '-s', 'external', '-n', 'approved', '-x', '90', '-y', '30',
-      'echo EXTERNAL_APPROVED; exec sleep 300');
+      'echo EXTERNAL_APPROVED; exec bash --noprofile --norc');
     tmux('new-window', '-d', '-t', 'external', '-n', 'hidden', 'echo HIDDEN_SECRET; exec sleep 300');
+    tmux('set-option', '-t', 'external', 'status-right', 'UNREGISTERED_STATUS_SECRET');
     const state = () => tmux('list-panes', '-a', '-F',
       '#{pid}:#{session_id}:#{session_name}:#{window_id}:#{window_name}:#{pane_id}:#{pane_width}:#{pane_height}:#{pane_pid}');
     let initial = state();
@@ -110,9 +110,10 @@ exec ${quote(realTmux)} "$@"
       ...process.env, HOME: home, TMUX_TMPDIR: home, PORT: '0', HOST: 'localhost',
       PATH: `${bin}:${process.env.PATH}`, SHELL: '/bin/bash',
       INIT_PASSWORD: 'review-test-password', NEXT_TELEMETRY_DISABLED: '1', NO_UPDATE_NOTIFIER: '1',
+      IS_WEBPACK_TEST: '1', WATCHPACK_POLLING: 'true',
     };
     delete env.__PMUX_PRISTINE_ENV;
-    const server = spawn(tsxPath, ['server.ts'], { cwd: repoRoot, env, stdio: 'ignore' });
+    const server = spawn(process.execPath, ['--import', 'tsx', 'server.ts'], { cwd: repoRoot, env, stdio: 'ignore' });
     children.push(server);
     const port = await waitForServer(home);
     const origin = `http://127.0.0.1:${port}`;
@@ -125,7 +126,7 @@ exec ${quote(realTmux)} "$@"
     const registration = await cli('external-target', 'register', '--socket', socket,
       '--session', 'external', '--window', '@0');
     expect(registration).toMatchObject({ socketPath: socket, sessionId: '$0', windowIds: ['@0'],
-      url: `http://localhost:${port}/ext-review/${registration.id}` });
+      url: `http://localhost:${port}/external-target/${registration.id}` });
     expect((await cli('external-target', 'list')).targets).toEqual(expect.arrayContaining([
       expect.objectContaining({ id: registration.id, url: registration.url }),
     ]));
@@ -160,10 +161,11 @@ exec ${quote(realTmux)} "$@"
       viewers.push(ws);
       const frames: Buffer[] = [];
       let code: number | undefined;
+      let reason = '';
       ws.on('message', (data) => frames.push(Buffer.from(data as Buffer)));
-      ws.on('close', (value) => { code = value; });
+      ws.on('close', (value, message) => { code = value; reason = message.toString(); });
       await new Promise<void>((resolve, reject) => { ws.once('open', resolve); ws.once('error', reject); });
-      return { ws, frames, code: () => code, output: () => frames.filter((frame) => frame[0] === MSG_STDOUT).map((frame) => frame.subarray(1).toString()).join('') };
+      return { ws, frames, code: () => code, reason: () => reason, output: () => frames.filter((frame) => frame[0] === MSG_STDOUT).map((frame) => frame.subarray(1).toString()).join('') };
     };
     const query = `reviewId=${review.id}&windowId=%400`;
     const observer = await connect(query);
@@ -246,14 +248,77 @@ exec ${quote(realTmux)} "$@"
     expect((await request(`/api/cli/ext-reviews/${review.id}`)).status).toBe(404);
     intact();
 
+    const interactive = await cli('external-target', 'register', '--socket', socket,
+      '--session', 'external', '--window', '@0');
+    const readOnly = await create();
+    const readOnlyDenied = await connect(`externalTargetId=${readOnly.id}&windowId=%400`, true);
+    await waitFor(() => expect(readOnlyDenied.code()).toBe(1008));
+    expect((await request(`/external-target/${interactive.id}`)).status).toBe(200);
+    const external = await connect(`externalTargetId=${interactive.id}&windowId=%400&cols=90&rows=30`, true);
+    await waitFor(() => expect(external.output()).toContain('EXTERNAL_APPROVED'));
+    expect(external.output()).not.toContain('HIDDEN_SECRET');
+    expect(external.output()).not.toContain('UNREGISTERED_STATUS_SECRET');
+    external.ws.send(encodeStdin("printf 'EXTERNAL_%s\\n' 'INPUT'\r"));
+    await waitFor(() => expect(external.output()).toContain('EXTERNAL_INPUT'));
+    external.ws.send(encodeWebStdin("printf 'EXTERNAL_%s\\n' 'WEB_INPUT'\r"));
+    await waitFor(() => expect(external.output()).toContain('EXTERNAL_WEB_INPUT'));
+    external.ws.send(encodeWebStdin("for n in {1..70}; do printf 'SCROLLBACK_%03d\\n' \"$n\"; done\r"));
+    await waitFor(() => expect(external.output()).toContain('SCROLLBACK_070'));
+    expect(external.output()).toContain('SCROLLBACK_001');
+    // Prefix navigation is delivered to the approved pane, not to the tmux client.
+    external.ws.send(encodeStdin('\x02n'));
+    await waitFor(() => expect(tmux('list-clients', '-F', '#{window_id}').split('\n').every((id) => id === '@0')).toBe(true));
+    expect(external.output()).not.toContain('HIDDEN_SECRET');
+    external.ws.send(encodeResize(100, 40));
+    // Control mode has no status row, so the approved pane uses the full size.
+    await waitFor(() => expect(tmux('display-message', '-p', '-t', '$0:@0', '#{pane_width}:#{pane_height}')).toBe('100:40'));
+    external.ws.close(1000);
+    await waitFor(() => expect(external.code()).toBe(1000));
+    expect(tmux('display-message', '-p', '-t', '$0:@0', '#{window_id}')).toBe('@0');
+    const refreshed = await request(`/api/cli/ext-reviews/${interactive.id}`);
+    expect([refreshed.status, await refreshed.json()]).toMatchObject([200, { id: interactive.id }]);
+    const resumed = await connect(`externalTargetId=${interactive.id}&windowId=%400`, true);
+    await waitFor(() => expect(tmux('list-clients', '-F', '#{client_flags}')
+      .split('\n').some((flags) => !flags.includes('no-output'))).toBe(true));
+    resumed.ws.send(encodeKillSession());
+    await waitFor(() => expect([resumed.code(), resumed.reason()]).toEqual([1008, 'External target cannot be killed']));
+    expect(tmux('display-message', '-p', '-t', '$0:@0', '#{window_id}')).toBe('@0');
+    const wrongWindow = await connect(`externalTargetId=${interactive.id}&windowId=%401`, true);
+    await waitFor(() => expect(wrongWindow.code()).toBe(1008));
+    expect(wrongWindow.output()).toBe('');
+    const switched = await connect(`externalTargetId=${interactive.id}&windowId=%400`, true);
+    await waitFor(() => expect(switched.output()).toContain('EXTERNAL_APPROVED'));
+    const clientTty = tmux('list-clients', '-F', '#{client_flags}\t#{client_tty}')
+      .split('\n').find((line) => !line.includes('no-output'))?.split('\t')[1] ?? '';
+    expect(clientTty).toBeTruthy();
+    tmux('switch-client', '-c', clientTty, '-t', '$0:@1');
+    await waitFor(() => expect(switched.code()).toBe(1008));
+    expect(switched.output()).not.toContain('HIDDEN_SECRET');
+    const rapid = await connect(`externalTargetId=${interactive.id}&windowId=%400`, true);
+    await waitFor(() => expect(rapid.output()).toContain('EXTERNAL_APPROVED'));
+    const rapidTty = tmux('list-clients', '-F', '#{client_flags}\t#{client_tty}')
+      .split('\n').find((line) => !line.includes('no-output'))?.split('\t')[1] ?? '';
+    expect(rapidTty).toBeTruthy();
+    tmux('switch-client', '-c', rapidTty, '-t', '$0:@1');
+    tmux('switch-client', '-c', rapidTty, '-t', '$0:@0');
+    tmux('send-keys', '-t', '$0:@0', '-l', 'AFTER_WINDOW_SWITCH');
+    await waitFor(() => expect(rapid.code()).toBe(1008));
+    expect(rapid.output()).not.toContain('HIDDEN_SECRET');
+    const revocable = await connect(`externalTargetId=${interactive.id}&windowId=%400`, true);
+    await waitFor(() => expect(revocable.output()).toContain('EXTERNAL_APPROVED'));
+    expect(await cli('external-target', 'unregister', interactive.id)).toEqual({ deleted: true });
+    await waitFor(() => expect([revocable.code(), revocable.reason()]).toEqual([1000, 'External target unregistered']));
+    const unregistered = await connect(`externalTargetId=${interactive.id}&windowId=%400`, true);
+    await waitFor(() => expect(unregistered.code()).toBe(1008));
+
     const shutdownReview = await create();
     const shutdownViewer = await connect(`reviewId=${shutdownReview.id}&windowId=%400`);
-    await waitFor(() => expect(shutdownViewer.output()).toContain('EXTERNAL_APPROVED'));
+    await waitFor(() => expect(shutdownViewer.output()).toContain('SCROLLBACK_070'));
     const exited = new Promise<void>((resolve) => server.once('exit', () => resolve()));
     server.kill('SIGTERM');
     await exited;
     await waitFor(() => expect(shutdownViewer.code()).toBe(1001));
-    intact();
+    expect(tmux('display-message', '-p', '-t', '$0:@0', '#{window_id}')).toBe('@0');
   }, 90_000);
 });
 
@@ -279,7 +344,7 @@ describe('real public workspace deletion contract', () => {
     await fs.writeFile(path.join(base, 'workspaces', 'ws-target', 'layout.json'), JSON.stringify(emptyLayout));
     await fs.writeFile(path.join(base, 'workspaces', 'ws-control', 'layout.json'), JSON.stringify(emptyLayout));
 
-    const server = spawn(tsxPath, ['server.ts'], {
+    const server = spawn(process.execPath, ['--import', 'tsx', 'server.ts'], {
       cwd: repoRoot,
       env: {
         ...process.env,
@@ -288,6 +353,7 @@ describe('real public workspace deletion contract', () => {
         HOST: 'localhost',
         NEXT_TELEMETRY_DISABLED: '1',
         NO_UPDATE_NOTIFIER: '1',
+        IS_WEBPACK_TEST: '1', WATCHPACK_POLLING: 'true',
       },
       stdio: 'ignore',
     });
