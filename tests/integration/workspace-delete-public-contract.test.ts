@@ -261,7 +261,7 @@ exec ${quote(realTmux)} "$@"
     await waitFor(() => expect(external.output()).toContain('EXTERNAL_WEB_INPUT'));
     // Prefix navigation is delivered to the approved pane, not to the tmux client.
     external.ws.send(encodeStdin('\x02n'));
-    await waitFor(() => expect(tmux('list-clients', '-F', '#{window_id}')).toBe('@0'));
+    await waitFor(() => expect(tmux('list-clients', '-F', '#{window_id}').split('\n').every((id) => id === '@0')).toBe(true));
     expect(external.output()).not.toContain('HIDDEN_SECRET');
     external.ws.send(encodeResize(100, 40));
     // The external server retains its own one-row tmux status bar.
@@ -272,7 +272,8 @@ exec ${quote(realTmux)} "$@"
     const refreshed = await request(`/api/cli/ext-reviews/${interactive.id}`);
     expect([refreshed.status, await refreshed.json()]).toMatchObject([200, { id: interactive.id }]);
     const resumed = await connect(`externalTargetId=${interactive.id}&windowId=%400`, true);
-    await waitFor(() => expect(tmux('list-clients')).not.toBe(''));
+    await waitFor(() => expect(tmux('list-clients', '-F', '#{client_flags}')
+      .split('\n').some((flags) => !flags.includes('no-output'))).toBe(true));
     resumed.ws.send(encodeKillSession());
     await waitFor(() => expect([resumed.code(), resumed.reason()]).toEqual([1008, 'External target cannot be killed']));
     expect(tmux('display-message', '-p', '-t', '$0:@0', '#{window_id}')).toBe('@0');
@@ -281,10 +282,22 @@ exec ${quote(realTmux)} "$@"
     expect(wrongWindow.output()).toBe('');
     const switched = await connect(`externalTargetId=${interactive.id}&windowId=%400`, true);
     await waitFor(() => expect(switched.output()).toContain('EXTERNAL_APPROVED'));
-    const clientTty = tmux('list-clients', '-F', '#{client_tty}');
+    const clientTty = tmux('list-clients', '-F', '#{client_flags}\t#{client_tty}')
+      .split('\n').find((line) => !line.includes('no-output'))?.split('\t')[1] ?? '';
+    expect(clientTty).toBeTruthy();
     tmux('switch-client', '-c', clientTty, '-t', '$0:@1');
     await waitFor(() => expect(switched.code()).toBe(1008));
     expect(switched.output()).not.toContain('HIDDEN_SECRET');
+    const rapid = await connect(`externalTargetId=${interactive.id}&windowId=%400`, true);
+    await waitFor(() => expect(rapid.output()).toContain('EXTERNAL_APPROVED'));
+    const rapidTty = tmux('list-clients', '-F', '#{client_flags}\t#{client_tty}')
+      .split('\n').find((line) => !line.includes('no-output'))?.split('\t')[1] ?? '';
+    expect(rapidTty).toBeTruthy();
+    tmux('switch-client', '-c', rapidTty, '-t', '$0:@1');
+    tmux('switch-client', '-c', rapidTty, '-t', '$0:@0');
+    tmux('send-keys', '-t', '$0:@0', '-l', 'AFTER_WINDOW_SWITCH');
+    await waitFor(() => expect(rapid.code()).toBe(1008));
+    expect(rapid.output()).not.toContain('HIDDEN_SECRET');
     const revocable = await connect(`externalTargetId=${interactive.id}&windowId=%400`, true);
     await waitFor(() => expect(revocable.output()).toContain('EXTERNAL_APPROVED'));
     expect(await cli('external-target', 'unregister', interactive.id)).toEqual({ deleted: true });

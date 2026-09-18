@@ -14,9 +14,10 @@ import { encodeStdout } from '@/lib/terminal-protocol';
 import { reconcileTabCwd } from '@/lib/layout-store';
 import { createLogger } from '@/lib/logger';
 import { loadExtReviewDefinition } from '@/lib/ext-review-store';
-import { resolveExtReviewTargets } from '@/lib/ext-review-tmux';
+import { assertExtReviewSocketIdentity, resolveExtReviewTargets } from '@/lib/ext-review-tmux';
 import { externalTerminals } from '@/lib/external-terminal-resources';
-import { sendExternalInput, isExternalClientOnWindow } from '@/lib/external-target-terminal';
+import { sendExternalInput, areExternalClientsOnWindow, ExternalWindowGuard } from '@/lib/external-target-terminal';
+import type { IExtReview } from '@/types/ext-review';
 
 const log = createLogger('terminal');
 
@@ -42,6 +43,7 @@ interface IActiveConnection {
   pty: pty.IPty;
   sessionName: string;
   external: boolean;
+  windowGuard?: ExternalWindowGuard;
   clientId: string | null;
   heartbeatTimer: ReturnType<typeof setInterval>;
   cleaned: boolean;
@@ -81,6 +83,7 @@ const attachToSession = (sessionName: string, cols: number, rows: number, socket
 const cleanup = (conn: IActiveConnection, sessionExited = false) => {
   if (conn.cleaned) return;
   conn.cleaned = true;
+  conn.windowGuard?.stop();
   terminalOutputTimestamps.delete(conn.sessionName);
 
   clearInterval(conn.heartbeatTimer);
@@ -169,6 +172,10 @@ export const gracefulShutdown = (): Promise<void> => {
     connections.forEach((conn) => {
       if (conn.cleaned) return;
       conn.cleaned = true;
+      if (conn.windowGuard) {
+        remaining++;
+        conn.windowGuard.stop().then(done);
+      }
       conn.detaching = true;
       terminalOutputTimestamps.delete(conn.sessionName);
 
@@ -269,6 +276,8 @@ export const handleConnection = async (ws: WebSocket, request: IncomingMessage, 
   let lastHeartbeat = Date.now();
   let sessionName = '';
   let externalSocketPath: string | undefined;
+  let externalDefinition: IExtReview | undefined;
+  let externalWindowGuard: ExternalWindowGuard | undefined;
   let webStdinQueue = Promise.resolve();
   let externalInputQueue = Promise.resolve();
   const externalAbort = new AbortController();
@@ -298,10 +307,9 @@ export const handleConnection = async (ws: WebSocket, request: IncomingMessage, 
     switch (msg.type) {
       case MSG_STDIN: {
         if (externalSocketPath) {
-          const socketPath = externalSocketPath;
           externalInputQueue = externalInputQueue.then(() => {
             if (conn?.cleaned) return;
-            return sendExternalInput(socketPath, sessionName, msg.payload, externalAbort.signal);
+            return sendExternalInput(externalDefinition!, sessionName, msg.payload, externalAbort.signal);
           }).catch(() => ws.close(1011, 'External input failed'));
           break;
         }
@@ -310,12 +318,9 @@ export const handleConnection = async (ws: WebSocket, request: IncomingMessage, 
       }
       case MSG_WEB_STDIN: {
         if (externalSocketPath) {
-          const socketPath = externalSocketPath;
           externalInputQueue = externalInputQueue.then(async () => {
             if (conn?.cleaned) return;
-            await exitCopyMode(sessionName, socketPath);
-            if (conn?.cleaned) return;
-            await sendExternalInput(socketPath, sessionName, msg.payload, externalAbort.signal);
+            await sendExternalInput(externalDefinition!, sessionName, msg.payload, externalAbort.signal, true);
           }).catch(() => ws.close(1011, 'External input failed'));
           break;
         }
@@ -369,6 +374,7 @@ export const handleConnection = async (ws: WebSocket, request: IncomingMessage, 
   ws.on('message', handleMessage);
   ws.on('close', () => {
     externalAbort.abort();
+    externalWindowGuard?.stop();
     externalTerminals.delete(ws);
     if (!conn) return;
     conn.detaching = true;
@@ -376,6 +382,7 @@ export const handleConnection = async (ws: WebSocket, request: IncomingMessage, 
   });
   ws.on('error', (err) => {
     externalAbort.abort();
+    externalWindowGuard?.stop();
     externalTerminals.delete(ws);
     log.error(`websocket error: ${err.message}`);
     if (!conn) return;
@@ -386,6 +393,7 @@ export const handleConnection = async (ws: WebSocket, request: IncomingMessage, 
   if (externalTargetId && externalWindowId) {
     externalTerminals.set(ws, { targetId: externalTargetId, stop: () => {
       externalAbort.abort();
+      externalWindowGuard?.stop();
       if (ws.readyState === WebSocket.OPEN) ws.close(1000, 'External target unregistered');
       if (conn) {
         conn.detaching = true;
@@ -412,11 +420,21 @@ export const handleConnection = async (ws: WebSocket, request: IncomingMessage, 
     if (ws.readyState !== WebSocket.OPEN) return;
     sessionName = `${definition.sessionId}:${externalWindowId}`;
     externalSocketPath = definition.socketPath;
+    externalDefinition = definition;
     currentCols = urlCols > 0 ? urlCols : (pending.resize?.cols || 80);
     currentRows = urlRows > 0 ? urlRows : (pending.resize?.rows || 24);
     try {
+      await assertExtReviewSocketIdentity(definition, externalAbort.signal);
+      externalWindowGuard = new ExternalWindowGuard(definition, externalWindowId);
+      if (!await externalWindowGuard.check()
+        || !await areExternalClientsOnWindow(definition, [externalWindowGuard.pid], externalWindowId)) {
+        throw new Error('External window guard unavailable');
+      }
       ptyProcess = attachToSession(sessionName, currentCols, currentRows, definition.socketPath);
+      await assertExtReviewSocketIdentity(definition, externalAbort.signal);
     } catch (err) {
+      externalWindowGuard?.stop();
+      ptyProcess?.kill();
       log.error(`external tmux attach failed: ${err instanceof Error ? err.message : err}`);
       ws.close(1011, 'External target attach failed');
       return;
@@ -483,6 +501,7 @@ export const handleConnection = async (ws: WebSocket, request: IncomingMessage, 
     pty: ptyProcess,
     sessionName,
     external: !!externalTargetId,
+    windowGuard: externalWindowGuard,
     clientId,
     heartbeatTimer,
     cleaned: false,
@@ -525,7 +544,8 @@ export const handleConnection = async (ws: WebSocket, request: IncomingMessage, 
     }
     externalOutputQueue = externalOutputQueue.then(async () => {
       if (conn.cleaned || ws.readyState !== WebSocket.OPEN) return;
-      if (!await isExternalClientOnWindow(externalSocketPath, ptyPid, externalWindowId)) {
+      if (!await areExternalClientsOnWindow(externalDefinition!, [externalWindowGuard!.pid, ptyPid], externalWindowId)
+        || !await externalWindowGuard!.check()) {
         ws.close(1008, 'External client left registered window');
         conn.detaching = true;
         cleanup(conn);

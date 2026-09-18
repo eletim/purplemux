@@ -42,6 +42,12 @@ const socketIdentity = async (socketPath: string, signal?: AbortSignal): Promise
 const sameSocket = (stored: string, current: string): boolean =>
   stored === current || stored.startsWith(`${current}:`); // Definitions saved before ctime was dropped.
 
+export const assertExtReviewSocketIdentity = async (review: IExtReview, signal?: AbortSignal): Promise<void> => {
+  if (!sameSocket(review.socketIdentity, await socketIdentity(review.socketPath, signal))) {
+    throw new ExtReviewError('External review socket identity changed');
+  }
+};
+
 const inspectTarget = async (socketPath: string, target: string, signal?: AbortSignal): Promise<string[]> => {
   signal?.throwIfAborted();
   // Check the explicit session first: older tmux servers can crash when
@@ -87,9 +93,7 @@ export const freezeExtReviewTargets = async (input: ICreateExtReview, signal?: A
 export const resolveExtReviewTargets = async (review: IExtReview, signal?: AbortSignal): Promise<IExtReview> => {
   signal?.throwIfAborted();
   try {
-    if (!sameSocket(review.socketIdentity, await socketIdentity(review.socketPath, signal))) {
-      throw new ExtReviewError('External review socket identity changed');
-    }
+    await assertExtReviewSocketIdentity(review, signal);
     const [pid, sessionId, created] = await inspectTarget(review.socketPath, `${review.sessionId}:`, signal);
     if (pid !== review.serverPid || sessionId !== review.sessionId || created !== review.sessionCreated) {
       throw new ExtReviewError('External review resource identity changed');
