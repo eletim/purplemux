@@ -122,10 +122,25 @@ exec ${quote(realTmux)} "$@"
     const create = () => cli('ext-review', 'create', '--socket', socket, '--session', 'external', '--window', '@0');
     const review = await create();
     expect(review).toMatchObject({ socketPath: socket, sessionId: '$0', windowIds: ['@0'], url: `http://localhost:${port}/ext-review/${review.id}` });
+    const registration = await cli('external-target', 'register', '--socket', socket,
+      '--session', 'external', '--window', '@0');
+    expect(registration).toMatchObject({ socketPath: socket, sessionId: '$0', windowIds: ['@0'],
+      url: `http://localhost:${port}/ext-review/${registration.id}` });
+    expect((await cli('external-target', 'list')).targets).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: registration.id, url: registration.url }),
+    ]));
+    expect(await cli('external-target', 'open', registration.id)).toMatchObject({
+      id: registration.id, url: registration.url,
+    });
     tmux('new-window', '-d', '-t', 'external', '-n', 'added', 'echo ADDED_SECRET; exec sleep 300');
     initial = state();
     pids.push(Number(tmux('display-message', '-p', '-t', '$0:@2', '#{pane_pid}')));
     expect(await cli('ext-review', 'get', review.id)).toMatchObject({ id: review.id, windowIds: ['@0'] });
+    expect(await cli('external-target', 'unregister', registration.id)).toEqual({ deleted: true });
+    expect((await cli('external-target', 'list')).targets).not.toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: registration.id }),
+    ]));
+    expect(tmux('display-message', '-p', '-t', '$0:@0', '#{window_id}')).toBe('@0');
     const login = await fetch(`${origin}/api/auth/login`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ password: 'review-test-password' }),
     });
