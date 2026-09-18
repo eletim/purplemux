@@ -17,6 +17,7 @@ import { loadExtReviewDefinition } from '@/lib/ext-review-store';
 import { assertExtReviewSocketIdentity, captureExtReviewWindow, resolveExtReviewTargets } from '@/lib/ext-review-tmux';
 import { externalTerminals } from '@/lib/external-terminal-resources';
 import { sendExternalInput, areExternalClientsOnWindow, captureExternalHistory, ExternalWindowGuard } from '@/lib/external-target-terminal';
+import { createExternalCaptureScheduler } from '@/lib/external-capture-scheduler';
 import type { IExtReview } from '@/types/ext-review';
 
 const log = createLogger('terminal');
@@ -601,10 +602,9 @@ export const handleConnection = async (ws: WebSocket, request: IncomingMessage, 
   // Control mode carries tmux protocol events, not terminal bytes. Rebuild the
   // approved window from its panes so session status and other windows cannot
   // enter the browser's terminal stream.
-  let externalCapture = Promise.resolve();
   let previousExternalHistory = '';
-  const captureExternalOutput = () => {
-    externalCapture = externalCapture.then(async () => {
+  const captureExternalOutput = createExternalCaptureScheduler(
+    async () => {
       if (!externalDefinition || !externalWindowId || conn.cleaned) return;
       const screen = await captureExtReviewWindow(externalDefinition, externalWindowId, externalAbort.signal);
       const history = await captureExternalHistory(externalDefinition, externalWindowId, externalAbort.signal);
@@ -615,12 +615,13 @@ export const handleConnection = async (ws: WebSocket, request: IncomingMessage, 
         if (appended) sendCheckedStdout(`\x1b[${conn.currentRows};1H${appended.replace(/\n/g, '\r\n')}`);
       }
       sendCheckedStdout(screen);
-    }).catch(() => {
+    },
+    () => {
       if (ws.readyState === WebSocket.OPEN) ws.close(1011, 'External output capture failed');
       conn.detaching = true;
       cleanup(conn);
-    });
-  };
+    },
+  );
 
   conn.disposables.push(
     ptyProcess.onData((data: string) => {
