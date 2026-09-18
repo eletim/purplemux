@@ -131,6 +131,19 @@ purplemux tab create -w WS -t agent-sessions
 purplemux workspace delete -w WS --if-empty
 ```
 
+### External targets (PurpleMux 0.5.2)
+
+Register known tmux windows for an interactive browser terminal:
+
+```bash
+purplemux external-target register --socket /absolute/known/tmux/socket --session '$2' --window @1 --window @3
+purplemux external-target list
+purplemux external-target open TARGET_ID
+purplemux external-target unregister TARGET_ID
+```
+
+Registration returns an ID and an absolute URL at `/external-target/<id>`. Open that URL for terminal input, scrollback, and resize in the registered windows. `open` rechecks the target before printing its URL; `unregister` removes only the registration. The tmux resources remain yours.
+
 ### External review (PurpleMux 0.5.0)
 
 View known external tmux windows in an authenticated browser:

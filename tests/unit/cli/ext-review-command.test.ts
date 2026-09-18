@@ -57,6 +57,17 @@ describe('purplemux ext-review commands', () => {
     },
   );
 
+  it.each([['open', 'GET'], ['unregister', 'DELETE']])(
+    'accepts a generated external target ID beginning with a dash for %s', async (command, method) => {
+      const id = '-tbquP-K1QhHnU_ZqnRF1';
+      const body = command === 'open' ? { id, interactive: true } : { deleted: true };
+      const { port, requests } = await startServer(200, body);
+      const result = await run(['external-target', command, id], port);
+      expect(JSON.parse(result.stdout)).toMatchObject(body);
+      expect(requests).toEqual([{ method, url: `/api/cli/ext-reviews/${id}`, token: 'test-token', body: undefined }]);
+    },
+  );
+
   it.each([
     [[], '--socket is required'],
     [['--socket', 'relative'], '--socket must be an absolute path'],

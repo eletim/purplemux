@@ -382,10 +382,10 @@ export const getPaneTitle = async (sessionName: string): Promise<string | null> 
   }
 };
 
-export const exitCopyMode = async (sessionName: string): Promise<void> => {
+export const exitCopyMode = async (sessionName: string, socketPath?: string): Promise<void> => {
   await execFile(
     'tmux',
-    ['-L', TMUX_SOCKET, 'copy-mode', '-q', '-t', sessionName],
+    [...(socketPath ? ['-N', '-S', socketPath] : ['-L', TMUX_SOCKET]), 'copy-mode', '-q', '-t', sessionName],
     { timeout: CMD_TIMEOUT },
   ).catch(() => {});
 };
