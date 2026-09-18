@@ -9,7 +9,7 @@ import { WebSocketServer } from 'ws';
 import { verifySessionToken, SESSION_COOKIE, extractCookie } from './src/lib/auth';
 import { handleConnection, gracefulShutdown } from './src/lib/terminal-server';
 import { handleExtReviewObservation } from './src/lib/ext-review-observation';
-import { stopExtReviewObservations } from './src/lib/ext-review-observation-resources';
+import { gracefulExtReviewObservationShutdown } from './src/lib/ext-review-observation-resources';
 import { handleInstallConnection, gracefulInstallShutdown } from './src/lib/install-server';
 import { handleTimelineConnection, gracefulTimelineShutdown } from './src/lib/timeline-server';
 import { handleSyncConnection, gracefulSyncShutdown } from './src/lib/sync-server';
@@ -104,12 +104,13 @@ const handleWsUpgrade = (
 const NO_AUTH_WS_PATHS = new Set(['/api/install']);
 
 const shutdownWs = async () => {
-  stopExtReviewObservations();
+  const reviewShutdown = gracefulExtReviewObservationShutdown();
   gracefulTimelineShutdown();
   gracefulSyncShutdown();
   gracefulStatusShutdown();
   gracefulInstallShutdown();
   await gracefulShutdown();
+  await reviewShutdown;
 };
 
 // --- Production: HTTP proxy to Next.js standalone ---
@@ -292,6 +293,7 @@ const startProd = async (port: number, appDir: string, bindHost: string): Promis
   const savedPort = process.env.PORT;
   process.env.PORT = String(internalPort);
   process.env.HOSTNAME = '127.0.0.1';
+  process.env.NEXT_MANUAL_SIG_HANDLE = 'true';
 
   const standaloneDir = process.env.__PMUX_APP_DIR_UNPACKED || appDir;
   const standalonePath = path.join(standaloneDir, '.next', 'standalone', 'server.js');

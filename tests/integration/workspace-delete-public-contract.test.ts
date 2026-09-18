@@ -11,7 +11,6 @@ const execFileAsync = promisify(execFile);
 const waitFor = (assertion: () => unknown) => vi.waitFor(assertion, { timeout: 5000 });
 const repoRoot = process.cwd();
 const cliPath = path.join(repoRoot, 'bin', 'purplemux.js');
-const tsxPath = path.join(repoRoot, 'node_modules', '.bin', 'tsx');
 const children: ChildProcess[] = [];
 const tempHomes: string[] = [];
 const viewers: WebSocket[] = [];
@@ -112,7 +111,7 @@ exec ${quote(realTmux)} "$@"
       INIT_PASSWORD: 'review-test-password', NEXT_TELEMETRY_DISABLED: '1', NO_UPDATE_NOTIFIER: '1',
     };
     delete env.__PMUX_PRISTINE_ENV;
-    const server = spawn(tsxPath, ['server.ts'], { cwd: repoRoot, env, stdio: 'ignore' });
+    const server = spawn(process.execPath, ['--import', 'tsx', 'server.ts'], { cwd: repoRoot, env, stdio: 'ignore' });
     children.push(server);
     const port = await waitForServer(home);
     const origin = `http://127.0.0.1:${port}`;
@@ -299,7 +298,7 @@ exec ${quote(realTmux)} "$@"
     const exited = new Promise<void>((resolve) => server.once('exit', () => resolve()));
     server.kill('SIGTERM');
     await exited;
-    await waitFor(() => expect([1001, 1006]).toContain(shutdownViewer.code()));
+    await waitFor(() => expect(shutdownViewer.code()).toBe(1001));
     expect(tmux('display-message', '-p', '-t', '$0:@0', '#{window_id}')).toBe('@0');
   }, 90_000);
 });
@@ -326,7 +325,7 @@ describe('real public workspace deletion contract', () => {
     await fs.writeFile(path.join(base, 'workspaces', 'ws-target', 'layout.json'), JSON.stringify(emptyLayout));
     await fs.writeFile(path.join(base, 'workspaces', 'ws-control', 'layout.json'), JSON.stringify(emptyLayout));
 
-    const server = spawn(tsxPath, ['server.ts'], {
+    const server = spawn(process.execPath, ['--import', 'tsx', 'server.ts'], {
       cwd: repoRoot,
       env: {
         ...process.env,

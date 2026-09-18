@@ -1,6 +1,4 @@
 import { IncomingMessage } from 'http';
-import { execFile as execFileCallback } from 'child_process';
-import { promisify } from 'util';
 import { WebSocket } from 'ws';
 import * as pty from 'node-pty';
 import {
@@ -18,9 +16,9 @@ import { createLogger } from '@/lib/logger';
 import { loadExtReviewDefinition } from '@/lib/ext-review-store';
 import { resolveExtReviewTargets } from '@/lib/ext-review-tmux';
 import { externalTerminals } from '@/lib/external-terminal-resources';
+import { sendExternalInput, isExternalClientOnWindow } from '@/lib/external-target-terminal';
 
 const log = createLogger('terminal');
-const execFile = promisify(execFileCallback);
 
 const MSG_STDIN = 0x00;
 const MSG_RESIZE = 0x02;
@@ -79,23 +77,6 @@ const attachToSession = (sessionName: string, cols: number, rows: number, socket
     cwd: PRISTINE_ENV.HOME || '/',
     env: buildShellEnv(),
   });
-
-const sendExternalInput = async (socketPath: string, target: string, data: Uint8Array,
-  signal: AbortSignal): Promise<void> => {
-  // -H sends bytes to the exact target pane, without feeding tmux client keys.
-  for (let offset = 0; offset < data.length; offset += 1024) {
-    signal.throwIfAborted();
-    const bytes = data.subarray(offset, offset + 1024);
-    await execFile('tmux', ['-N', '-S', socketPath, 'send-keys', '-H', '-t', target,
-      ...Array.from(bytes, (byte) => byte.toString(16).padStart(2, '0'))], { timeout: 5000, signal });
-  }
-};
-
-const isExternalClientOnWindow = async (socketPath: string, pid: number, windowId: string): Promise<boolean> => {
-  const { stdout } = await execFile('tmux', ['-N', '-S', socketPath, 'list-clients', '-F',
-    '#{client_pid}\t#{window_id}'], { timeout: 5000 });
-  return stdout.trim().split('\n').some((line) => line === `${pid}\t${windowId}`);
-};
 
 const cleanup = (conn: IActiveConnection, sessionExited = false) => {
   if (conn.cleaned) return;
