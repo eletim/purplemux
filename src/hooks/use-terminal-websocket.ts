@@ -31,20 +31,25 @@ const getOrCreateClientId = (sessionName: string): string => {
 };
 
 interface IUseTerminalWebSocketOptions {
+  externalTarget?: { id: string; windowId: string };
   onData?: (data: Uint8Array) => void;
   onConnected?: () => void;
   onSessionEnded?: () => void;
 }
 
 const useTerminalWebSocket = ({
+  externalTarget,
   onData,
   onConnected,
   onSessionEnded,
 }: IUseTerminalWebSocketOptions = {}) => {
+  const externalTargetId = externalTarget?.id;
+  const externalWindowId = externalTarget?.windowId;
   const [status, setStatus] = useState<TConnectionStatus>('disconnected');
   const [retryCount, setRetryCount] = useState(0);
   const [disconnectReason, setDisconnectReason] =
     useState<TDisconnectReason>(null);
+  const [externalTargetFailure, setExternalTargetFailure] = useState<string | null>(null);
 
   const wsRef = useRef<WebSocket | null>(null);
   const heartbeatRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -80,14 +85,18 @@ const useTerminalWebSocket = ({
       }
 
       setDisconnectReason(null);
+      setExternalTargetFailure(null);
       setStatus(retryCountRef.current > 0 ? 'reconnecting' : 'connecting');
 
       const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
       const clientId = getOrCreateClientId(sessionName);
       const size = initialSizeRef.current;
       const sizeParams = size ? `&cols=${size.cols}&rows=${size.rows}` : '';
+      const targetParams = externalTargetId && externalWindowId
+        ? `externalTargetId=${encodeURIComponent(externalTargetId)}&windowId=${encodeURIComponent(externalWindowId)}`
+        : `session=${encodeURIComponent(sessionName)}`;
       const ws = new WebSocket(
-        `${protocol}//${location.host}/api/terminal?clientId=${clientId}&session=${sessionName}${sizeParams}`,
+        `${protocol}//${location.host}/api/terminal?clientId=${clientId}&${targetParams}${sizeParams}`,
       );
       ws.binaryType = 'arraybuffer';
       wsRef.current = ws;
@@ -130,6 +139,13 @@ const useTerminalWebSocket = ({
           return;
         }
 
+        if (externalTargetId && event.code === 1008) {
+          setExternalTargetFailure(event.reason || 'External target rejected');
+          sessionNameRef.current = '';
+          setStatus('disconnected');
+          return;
+        }
+
         if (event.code === 1011) {
           setDisconnectReason('session-not-found');
           setStatus('disconnected');
@@ -162,7 +178,7 @@ const useTerminalWebSocket = ({
         console.log('[terminal-ws] connection error');
       };
     },
-    [clearTimers],
+    [clearTimers, externalTargetId, externalWindowId],
   );
 
   useEffect(() => {
@@ -251,6 +267,7 @@ const useTerminalWebSocket = ({
     status,
     retryCount,
     disconnectReason,
+    externalTargetFailure,
     connect,
     disconnect,
     reconnect,

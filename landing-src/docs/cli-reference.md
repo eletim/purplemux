@@ -78,7 +78,7 @@ If a transport failure or server error makes the mutation outcome uncertain, rec
 
 ### External target registration
 
-Use `external-target register` with a known absolute socket path, exact session name or `$sessionId`, and one or more `@windowId` values. It returns a stable registration ID and an absolute browser URL. `external-target list` includes registrations whose tmux resources are unavailable. `external-target open ID` checks the frozen identities before returning the read-only browser URL; a changed or missing target fails the check. `external-target unregister ID` deletes only the registration, even if the tmux server is gone. These commands use the external Review definitions and browser view described below; registration never grants PurpleMux ownership of the tmux resources.
+Use `external-target register` with a known absolute socket path, exact session name or `$sessionId`, and one or more `@windowId` values. It returns a stable registration ID and an absolute browser URL for an interactive terminal with input, scrollback, and resize. `external-target list` includes registrations whose tmux resources are unavailable. `external-target open ID` checks the frozen identities before returning the browser URL; a changed or missing target fails the check. `external-target unregister ID` deletes only the registration, even if the tmux server is gone. These commands use the external Review definitions; registration never grants PurpleMux ownership of the tmux resources. The separate external Review browser view remains read-only.
 
 ### External review (0.5.0)
 
@@ -102,7 +102,7 @@ The lifecycle API accepts a CLI token or authenticated browser session cookie:
 
 | Endpoint | Request / response |
 |---|---|
-| `POST /api/cli/ext-reviews` | Body: `{"socketPath":"/absolute/known/tmux/socket","session":"$2","windowTargets":["@1","@3"]}`. HTTP 201 returns the definition with `id` and relative `url: "/ext-review/<id>"`; the CLI makes the URL absolute. Invalid targets return 400. |
+| `POST /api/cli/ext-reviews` | Body for an interactive target: `{"socketPath":"/absolute/known/tmux/socket","session":"$2","windowTargets":["@1","@3"],"interactive":true}`. Omit `interactive` for a read-only Review. HTTP 201 always returns the definition with `id` and relative `url: "/ext-review/<id>"`; for interactive targets, use `/external-target/<id>` instead. `external-target register` prints that interactive URL as an absolute URL. Invalid targets return 400. |
 | `GET /api/cli/ext-reviews` | `{"reviews":[...]}` lists persisted definitions, including unavailable ones. |
 | `GET /api/cli/ext-reviews/<reviewId>` | Returns the validated definition without `url`; missing definitions return 404, unavailable or changed targets return 409. |
 | `DELETE /api/cli/ext-reviews/<reviewId>` | `{"deleted":true}` on success; missing definitions return 404. Definition-only deletion. |

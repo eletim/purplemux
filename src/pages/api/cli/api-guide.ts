@@ -46,11 +46,13 @@ Definitions observe external tmux resources without adopting them into Workspace
 The external-target CLI register/list/open/unregister commands use these same definitions.
 Register accepts the explicit socket, session, and window selectors below. List includes
 unavailable registrations; open rechecks frozen identity before printing the absolute
-browser URL. Unregister removes only the definition. Browser access is read-only.
+browser URL. Unregister removes only the definition. Registered targets use the
+interactive /external-target/<id> terminal; Review URLs remain read-only.
 
 POST /api/cli/ext-reviews
   Body: { "socketPath": "/absolute/known/tmux/socket", "session": "exact-session-name",
           "windowTargets": ["@1", "@3"] }
+  external-target register sends "interactive": true; ordinary Review definitions omit it.
   Requires a known absolute socket path (no symlink or PurpleMux-owned purple socket),
   exact session name or $sessionId, and a nonempty list of unique @windowIds.
   No socket, session, or window discovery; validation never starts a tmux server.
@@ -80,8 +82,10 @@ DELETE /api/cli/ext-reviews/<reviewId>
   CLI equivalent: purplemux ext-review delete REVIEW_ID (prints JSON).
   Never sends tmux commands or kills external sessions/windows/panes.
 
-Open the returned url in an authenticated browser. /ext-review lists definitions and
-supports manual explicit-target creation, Open, and definition-only Delete.
+For a read-only Review, open the returned /ext-review/<id> url in an authenticated browser.
+For an interactive registration ("interactive": true), use the response id to open
+/external-target/<id> instead; the returned url still points to the read-only Review.
+/ext-review lists definitions and supports manual explicit-target creation, Open, and definition-only Delete.
 /ext-review/<id> shows only approved windows as live current-screen snapshots, not output history.
 Observation is fixed and read-only: no input, paste, send-keys, kill, rename, or tmux resize.
 Browser resizing affects only the local renderer. Added windows never enter the allowlist;
