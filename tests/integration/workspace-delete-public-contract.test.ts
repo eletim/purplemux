@@ -260,6 +260,10 @@ exec ${quote(realTmux)} "$@"
     await waitFor(() => expect(external.output()).toContain('EXTERNAL_INPUT'));
     external.ws.send(encodeWebStdin("printf 'EXTERNAL_%s\\n' 'WEB_INPUT'\r"));
     await waitFor(() => expect(external.output()).toContain('EXTERNAL_WEB_INPUT'));
+    // Prefix navigation is delivered to the approved pane, not to the tmux client.
+    external.ws.send(encodeStdin('\x02n'));
+    await waitFor(() => expect(tmux('list-clients', '-F', '#{window_id}')).toBe('@0'));
+    expect(external.output()).not.toContain('HIDDEN_SECRET');
     external.ws.send(encodeResize(100, 40));
     // The external server retains its own one-row tmux status bar.
     await waitFor(() => expect(tmux('display-message', '-p', '-t', '$0:@0', '#{pane_width}:#{pane_height}')).toBe('100:39'));
@@ -276,7 +280,16 @@ exec ${quote(realTmux)} "$@"
     const wrongWindow = await connect(`externalTargetId=${interactive.id}&windowId=%401`, true);
     await waitFor(() => expect(wrongWindow.code()).toBe(1008));
     expect(wrongWindow.output()).toBe('');
+    const switched = await connect(`externalTargetId=${interactive.id}&windowId=%400`, true);
+    await waitFor(() => expect(switched.output()).toContain('EXTERNAL_APPROVED'));
+    const clientTty = tmux('list-clients', '-F', '#{client_tty}');
+    tmux('switch-client', '-c', clientTty, '-t', '$0:@1');
+    await waitFor(() => expect(switched.code()).toBe(1008));
+    expect(switched.output()).not.toContain('HIDDEN_SECRET');
+    const revocable = await connect(`externalTargetId=${interactive.id}&windowId=%400`, true);
+    await waitFor(() => expect(revocable.output()).toContain('EXTERNAL_APPROVED'));
     expect(await cli('external-target', 'unregister', interactive.id)).toEqual({ deleted: true });
+    await waitFor(() => expect([revocable.code(), revocable.reason()]).toEqual([1000, 'External target unregistered']));
     const unregistered = await connect(`externalTargetId=${interactive.id}&windowId=%400`, true);
     await waitFor(() => expect(unregistered.code()).toBe(1008));
 

@@ -1,4 +1,6 @@
 import { IncomingMessage } from 'http';
+import { execFile as execFileCallback } from 'child_process';
+import { promisify } from 'util';
 import { WebSocket } from 'ws';
 import * as pty from 'node-pty';
 import {
@@ -15,8 +17,10 @@ import { reconcileTabCwd } from '@/lib/layout-store';
 import { createLogger } from '@/lib/logger';
 import { loadExtReviewDefinition } from '@/lib/ext-review-store';
 import { resolveExtReviewTargets } from '@/lib/ext-review-tmux';
+import { externalTerminals } from '@/lib/external-terminal-resources';
 
 const log = createLogger('terminal');
+const execFile = promisify(execFileCallback);
 
 const MSG_STDIN = 0x00;
 const MSG_RESIZE = 0x02;
@@ -67,7 +71,7 @@ export const getLastTerminalOutput = (sessionName: string): number | undefined =
 
 const attachToSession = (sessionName: string, cols: number, rows: number, socketPath?: string): pty.IPty =>
   pty.spawn('tmux', socketPath
-    ? ['-u', '-N', '-S', socketPath, 'attach-session', '-t', sessionName]
+    ? ['-u', '-N', '-S', socketPath, 'attach-session', '-f', 'read-only', '-t', sessionName]
     : ['-u', '-L', TMUX_SOCKET, 'attach-session', '-t', sessionName], {
     name: 'xterm-256color',
     cols,
@@ -75,6 +79,23 @@ const attachToSession = (sessionName: string, cols: number, rows: number, socket
     cwd: PRISTINE_ENV.HOME || '/',
     env: buildShellEnv(),
   });
+
+const sendExternalInput = async (socketPath: string, target: string, data: Uint8Array,
+  signal: AbortSignal): Promise<void> => {
+  // -H sends bytes to the exact target pane, without feeding tmux client keys.
+  for (let offset = 0; offset < data.length; offset += 1024) {
+    signal.throwIfAborted();
+    const bytes = data.subarray(offset, offset + 1024);
+    await execFile('tmux', ['-N', '-S', socketPath, 'send-keys', '-H', '-t', target,
+      ...Array.from(bytes, (byte) => byte.toString(16).padStart(2, '0'))], { timeout: 5000, signal });
+  }
+};
+
+const isExternalClientOnWindow = async (socketPath: string, pid: number, windowId: string): Promise<boolean> => {
+  const { stdout } = await execFile('tmux', ['-N', '-S', socketPath, 'list-clients', '-F',
+    '#{client_pid}\t#{window_id}'], { timeout: 5000 });
+  return stdout.trim().split('\n').some((line) => line === `${pid}\t${windowId}`);
+};
 
 const cleanup = (conn: IActiveConnection, sessionExited = false) => {
   if (conn.cleaned) return;
@@ -108,6 +129,7 @@ const cleanup = (conn: IActiveConnection, sessionExited = false) => {
   }
 
   connections.delete(conn.ws);
+  externalTerminals.delete(conn.ws);
 };
 
 
@@ -267,6 +289,8 @@ export const handleConnection = async (ws: WebSocket, request: IncomingMessage, 
   let sessionName = '';
   let externalSocketPath: string | undefined;
   let webStdinQueue = Promise.resolve();
+  let externalInputQueue = Promise.resolve();
+  const externalAbort = new AbortController();
   let currentCols = 80;
   let currentRows = 24;
 
@@ -292,10 +316,28 @@ export const handleConnection = async (ws: WebSocket, request: IncomingMessage, 
 
     switch (msg.type) {
       case MSG_STDIN: {
+        if (externalSocketPath) {
+          const socketPath = externalSocketPath;
+          externalInputQueue = externalInputQueue.then(() => {
+            if (conn?.cleaned) return;
+            return sendExternalInput(socketPath, sessionName, msg.payload, externalAbort.signal);
+          }).catch(() => ws.close(1011, 'External input failed'));
+          break;
+        }
         ptyProcess.write(textDecoder.decode(msg.payload));
         break;
       }
       case MSG_WEB_STDIN: {
+        if (externalSocketPath) {
+          const socketPath = externalSocketPath;
+          externalInputQueue = externalInputQueue.then(async () => {
+            if (conn?.cleaned) return;
+            await exitCopyMode(sessionName, socketPath);
+            if (conn?.cleaned) return;
+            await sendExternalInput(socketPath, sessionName, msg.payload, externalAbort.signal);
+          }).catch(() => ws.close(1011, 'External input failed'));
+          break;
+        }
         const data = textDecoder.decode(msg.payload);
         webStdinQueue = webStdinQueue
           .then(() => exitCopyMode(sessionName, externalSocketPath))
@@ -345,11 +387,15 @@ export const handleConnection = async (ws: WebSocket, request: IncomingMessage, 
 
   ws.on('message', handleMessage);
   ws.on('close', () => {
+    externalAbort.abort();
+    externalTerminals.delete(ws);
     if (!conn) return;
     conn.detaching = true;
     cleanup(conn);
   });
   ws.on('error', (err) => {
+    externalAbort.abort();
+    externalTerminals.delete(ws);
     log.error(`websocket error: ${err.message}`);
     if (!conn) return;
     conn.detaching = true;
@@ -357,6 +403,14 @@ export const handleConnection = async (ws: WebSocket, request: IncomingMessage, 
   });
 
   if (externalTargetId && externalWindowId) {
+    externalTerminals.set(ws, { targetId: externalTargetId, stop: () => {
+      externalAbort.abort();
+      if (ws.readyState === WebSocket.OPEN) ws.close(1000, 'External target unregistered');
+      if (conn) {
+        conn.detaching = true;
+        cleanup(conn);
+      }
+    } });
     let definition;
     try {
       definition = await loadExtReviewDefinition(externalTargetId);
@@ -422,6 +476,11 @@ export const handleConnection = async (ws: WebSocket, request: IncomingMessage, 
     }
   }
 
+  if (ws.readyState !== WebSocket.OPEN) {
+    ptyProcess.kill();
+    return;
+  }
+
   if (pending.resize && pending.resize.cols > 0 && pending.resize.rows > 0) {
     currentCols = pending.resize.cols;
     currentRows = pending.resize.rows;
@@ -460,6 +519,9 @@ export const handleConnection = async (ws: WebSocket, request: IncomingMessage, 
   connections.set(ws, conn);
 
   const ptyPid = ptyProcess.pid;
+  let externalOutputQueue = Promise.resolve();
+  let externalQueuedBytes = 0;
+  let externalQueuePaused = false;
 
   const sendStdout = (data: string) => {
     ws.send(encodeStdout(data));
@@ -469,13 +531,42 @@ export const handleConnection = async (ws: WebSocket, request: IncomingMessage, 
       ptyProcess!.pause();
     } else if (ws.bufferedAmount < BACKPRESSURE_LOW && conn.backpressurePaused) {
       conn.backpressurePaused = false;
-      ptyProcess!.resume();
+      if (!externalQueuePaused) ptyProcess!.resume();
     }
+  };
+
+  const sendCheckedStdout = (data: string) => {
+    if (!externalSocketPath || !externalWindowId) return sendStdout(data);
+    externalQueuedBytes += Buffer.byteLength(data);
+    if (externalQueuedBytes > BACKPRESSURE_HIGH && !externalQueuePaused) {
+      externalQueuePaused = true;
+      ptyProcess.pause();
+    }
+    externalOutputQueue = externalOutputQueue.then(async () => {
+      if (conn.cleaned || ws.readyState !== WebSocket.OPEN) return;
+      if (!await isExternalClientOnWindow(externalSocketPath, ptyPid, externalWindowId)) {
+        ws.close(1008, 'External client left registered window');
+        conn.detaching = true;
+        cleanup(conn);
+        return;
+      }
+      if (!conn.cleaned && ws.readyState === WebSocket.OPEN) sendStdout(data);
+    }).catch(() => {
+      if (ws.readyState === WebSocket.OPEN) ws.close(1011, 'External client validation failed');
+      conn.detaching = true;
+      cleanup(conn);
+    }).finally(() => {
+      externalQueuedBytes -= Buffer.byteLength(data);
+      if (externalQueuePaused && externalQueuedBytes < BACKPRESSURE_LOW && !conn.cleaned) {
+        externalQueuePaused = false;
+        if (!conn.backpressurePaused) ptyProcess.resume();
+      }
+    });
   };
 
   const flushThrottleBuffer = () => {
     if (conn.throttleBuffer.length === 0) return;
-    sendStdout(conn.throttleBuffer);
+    sendCheckedStdout(conn.throttleBuffer);
     conn.throttleBuffer = '';
   };
 
@@ -512,7 +603,7 @@ export const handleConnection = async (ws: WebSocket, request: IncomingMessage, 
         conn.throttleBuffer += data;
         return;
       }
-      sendStdout(data);
+      sendCheckedStdout(data);
     }),
   );
 
