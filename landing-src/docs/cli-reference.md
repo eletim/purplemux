@@ -102,7 +102,7 @@ The lifecycle API accepts a CLI token or authenticated browser session cookie:
 
 | Endpoint | Request / response |
 |---|---|
-| `POST /api/cli/ext-reviews` | Body: `{"socketPath":"/absolute/known/tmux/socket","session":"$2","windowTargets":["@1","@3"]}`. HTTP 201 returns the definition with `id` and relative `url: "/ext-review/<id>"`; the CLI makes the URL absolute. Invalid targets return 400. |
+| `POST /api/cli/ext-reviews` | Body for an interactive target: `{"socketPath":"/absolute/known/tmux/socket","session":"$2","windowTargets":["@1","@3"],"interactive":true}`. Omit `interactive` for a read-only Review. HTTP 201 always returns the definition with `id` and relative `url: "/ext-review/<id>"`; for interactive targets, use `/external-target/<id>` instead. `external-target register` prints that interactive URL as an absolute URL. Invalid targets return 400. |
 | `GET /api/cli/ext-reviews` | `{"reviews":[...]}` lists persisted definitions, including unavailable ones. |
 | `GET /api/cli/ext-reviews/<reviewId>` | Returns the validated definition without `url`; missing definitions return 404, unavailable or changed targets return 409. |
 | `DELETE /api/cli/ext-reviews/<reviewId>` | `{"deleted":true}` on success; missing definitions return 404. Definition-only deletion. |

@@ -1,7 +1,7 @@
 import { execFile as execFileCallback } from 'child_process';
 import { promisify } from 'util';
 import * as pty from 'node-pty';
-import { assertExtReviewSocketIdentity, resolveExtReviewTargets } from '@/lib/ext-review-tmux';
+import { assertExtReviewSocketIdentity, ExtReviewSnapshotRaceError, resolveExtReviewTargets } from '@/lib/ext-review-tmux';
 import { exitCopyMode } from '@/lib/tmux';
 import { buildShellEnv } from '@/lib/shell-env';
 import { PRISTINE_ENV } from '@/lib/pristine-env';
@@ -44,7 +44,7 @@ export const captureExternalHistory = async (review: IExtReview, windowId: strin
     '-p', '-e', '-S', '-2000', '-E', '-1', '-t', `${target}.${match[1]}`],
   { timeout: 5000, maxBuffer: 4 * 1024 * 1024, signal });
   await resolveExtReviewTargets(review, signal);
-  if (await list() !== before) throw new Error('External pane changed during history capture');
+  if (await list() !== before) throw new ExtReviewSnapshotRaceError('External pane changed during history capture');
   return stdout;
 };
 

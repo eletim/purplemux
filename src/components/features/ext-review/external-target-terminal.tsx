@@ -5,7 +5,7 @@ import useTerminalTheme from '@/hooks/use-terminal-theme';
 
 export default function ExternalTargetTerminal({ targetId, windowId }: { targetId: string; windowId: string }) {
   const { theme } = useTerminalTheme();
-  const { status, disconnectReason, connect, disconnect, sendStdin, sendResize } = useTerminalWebSocket({
+  const { status, disconnectReason, externalTargetFailure, connect, disconnect, sendStdin, sendResize } = useTerminalWebSocket({
     externalTarget: { id: targetId, windowId },
     onData: (data) => write(data),
   });
@@ -24,7 +24,7 @@ export default function ExternalTargetTerminal({ targetId, windowId }: { targetI
 
   return (
     <section aria-label={`External terminal ${windowId}`}>
-      <p role="status" className="my-3">{disconnectReason ? 'External target unavailable' : status}</p>
+      <p role="status" className="my-3">{externalTargetFailure || (disconnectReason ? 'External target unavailable' : status)}</p>
       <div className="h-[75vh] min-h-64 border rounded overflow-hidden" ref={terminalRef} />
     </section>
   );

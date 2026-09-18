@@ -272,6 +272,17 @@ exec ${quote(realTmux)} "$@"
     external.ws.send(encodeResize(100, 40));
     // Control mode has no status row, so the approved pane uses the full size.
     await waitFor(() => expect(tmux('display-message', '-p', '-t', '$0:@0', '#{pane_width}:#{pane_height}')).toBe('100:40'));
+    // Output while tmux reflows and changes pane membership must not close the terminal.
+    for (let n = 0; n < 3; n++) {
+      external.ws.send(encodeResize(90 + n, 30 + n));
+      tmux('split-window', '-d', '-h', '-t', '$0:@0', 'sleep 300');
+      const panes = tmux('list-panes', '-t', '$0:@0', '-F', '#{pane_id}').split('\n');
+      tmux('send-keys', '-t', `$0:@0.${panes[0]}`, `printf 'REFLOW_${n}\\n'`, 'Enter');
+      tmux('kill-pane', '-t', `$0:@0.${panes[1]}`);
+    }
+    external.ws.send(encodeWebStdin("printf 'AFTER_REFLOW\\n'\r"));
+    await waitFor(() => expect(external.output()).toContain('AFTER_REFLOW'));
+    expect(external.ws.readyState).toBe(WebSocket.OPEN);
     external.ws.close(1000);
     await waitFor(() => expect(external.code()).toBe(1000));
     expect(tmux('display-message', '-p', '-t', '$0:@0', '#{window_id}')).toBe('@0');

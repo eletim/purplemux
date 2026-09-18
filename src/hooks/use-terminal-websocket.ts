@@ -49,6 +49,7 @@ const useTerminalWebSocket = ({
   const [retryCount, setRetryCount] = useState(0);
   const [disconnectReason, setDisconnectReason] =
     useState<TDisconnectReason>(null);
+  const [externalTargetFailure, setExternalTargetFailure] = useState<string | null>(null);
 
   const wsRef = useRef<WebSocket | null>(null);
   const heartbeatRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -84,6 +85,7 @@ const useTerminalWebSocket = ({
       }
 
       setDisconnectReason(null);
+      setExternalTargetFailure(null);
       setStatus(retryCountRef.current > 0 ? 'reconnecting' : 'connecting');
 
       const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
@@ -134,6 +136,13 @@ const useTerminalWebSocket = ({
         if (event.code === 1000) {
           setStatus('session-ended');
           callbacksRef.current.onSessionEnded?.();
+          return;
+        }
+
+        if (externalTargetId && event.code === 1008) {
+          setExternalTargetFailure(event.reason || 'External target rejected');
+          sessionNameRef.current = '';
+          setStatus('disconnected');
           return;
         }
 
@@ -258,6 +267,7 @@ const useTerminalWebSocket = ({
     status,
     retryCount,
     disconnectReason,
+    externalTargetFailure,
     connect,
     disconnect,
     reconnect,

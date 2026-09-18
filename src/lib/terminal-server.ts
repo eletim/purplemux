@@ -14,7 +14,7 @@ import { encodeStdout } from '@/lib/terminal-protocol';
 import { reconcileTabCwd } from '@/lib/layout-store';
 import { createLogger } from '@/lib/logger';
 import { loadExtReviewDefinition } from '@/lib/ext-review-store';
-import { assertExtReviewSocketIdentity, captureExtReviewWindow, resolveExtReviewTargets } from '@/lib/ext-review-tmux';
+import { assertExtReviewSocketIdentity, captureExtReviewWindow, ExtReviewSnapshotRaceError, resolveExtReviewTargets } from '@/lib/ext-review-tmux';
 import { externalTerminals } from '@/lib/external-terminal-resources';
 import { sendExternalInput, areExternalClientsOnWindow, captureExternalHistory, appendedExternalHistory, ExternalWindowGuard } from '@/lib/external-target-terminal';
 import { createExternalCaptureScheduler } from '@/lib/external-capture-scheduler';
@@ -606,8 +606,17 @@ export const handleConnection = async (ws: WebSocket, request: IncomingMessage, 
   const captureExternalOutput = createExternalCaptureScheduler(
     async () => {
       if (!externalDefinition || !externalWindowId || conn.cleaned) return;
-      const screen = await captureExtReviewWindow(externalDefinition, externalWindowId, externalAbort.signal);
-      const history = await captureExternalHistory(externalDefinition, externalWindowId, externalAbort.signal);
+      let screen: string;
+      let history: string | null;
+      try {
+        screen = await captureExtReviewWindow(externalDefinition, externalWindowId, externalAbort.signal);
+        history = await captureExternalHistory(externalDefinition, externalWindowId, externalAbort.signal);
+      } catch (error) {
+        if (!(error instanceof ExtReviewSnapshotRaceError)) throw error;
+        // A resize or pane layout change invalidates only this frame. Read it again.
+        setTimeout(captureExternalOutput, 100);
+        return;
+      }
       if (history !== null && history !== previousExternalHistory) {
         const appended = appendedExternalHistory(previousExternalHistory, history);
         previousExternalHistory = history;
