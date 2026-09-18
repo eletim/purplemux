@@ -16,6 +16,16 @@ describe('version contract check', () => {
     expect(output.trim()).toBe(`Version contract verified: ${packageJson.version}`);
   });
 
+  it('accepts a recovery branch for the same development version', () => {
+    const output = execFileSync(
+      process.execPath,
+      ['scripts/check-version.mjs', `dev/v${packageJson.version}-recovery`],
+      { cwd: root, encoding: 'utf8' },
+    );
+
+    expect(output.trim()).toBe(`Version contract verified: ${packageJson.version}`);
+  });
+
   it('rejects a development branch with a different package version', () => {
     const result = spawnSync(
       process.execPath,
