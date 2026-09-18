@@ -222,15 +222,17 @@ const cmdExtReviewCreate = async (args, externalTarget = false) => {
   out({ ...body, url: new URL(externalTarget ? `/external-target/${encodeURIComponent(body.id)}` : body.url, BASE).href });
 };
 
+const isReviewId = (value) => value && (!value.startsWith('-') || /^[-_A-Za-z0-9]{21}$/.test(value));
+
 const cmdExtReviewGet = async (args) => {
-  if (args.length !== 1 || !args[0] || args[0].startsWith('-')) die('exactly one Review ID is required');
+  if (args.length !== 1 || !isReviewId(args[0])) die('exactly one Review ID is required');
   requireEnv();
   const { body } = await api('GET', `/api/cli/ext-reviews/${encodeURIComponent(args[0])}`);
   out(body);
 };
 
 const cmdExtReviewDelete = async (args) => {
-  if (args.length !== 1 || !args[0] || args[0].startsWith('-')) die('exactly one Review ID is required');
+  if (args.length !== 1 || !isReviewId(args[0])) die('exactly one Review ID is required');
   requireEnv();
   const { body } = await api('DELETE', `/api/cli/ext-reviews/${encodeURIComponent(args[0])}`);
   out(body);
@@ -244,7 +246,7 @@ const cmdExternalTargetList = async (args) => {
 };
 
 const cmdExternalTargetOpen = async (args) => {
-  if (args.length !== 1 || !args[0] || args[0].startsWith('-')) die('exactly one external target ID is required');
+  if (args.length !== 1 || !isReviewId(args[0])) die('exactly one external target ID is required');
   requireEnv();
   // GET checks frozen socket, server, session, and window identities before returning a URL.
   const { body } = await api('GET', `/api/cli/ext-reviews/${encodeURIComponent(args[0])}`);
