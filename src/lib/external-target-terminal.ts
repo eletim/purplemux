@@ -9,6 +9,27 @@ import type { IExtReview } from '@/types/ext-review';
 
 const execFile = promisify(execFileCallback);
 
+/** Return only history not already sent when the bounded tmux capture slides. */
+export const appendedExternalHistory = (previous: string, current: string): string => {
+  if (!previous || !current) return current;
+
+  // KMP prefix lengths find the longest suffix of previous matching the
+  // prefix of current without repeatedly scanning a potentially large capture.
+  const prefix = new Uint32Array(current.length);
+  for (let i = 1, matched = 0; i < current.length; i++) {
+    while (matched > 0 && current[i] !== current[matched]) matched = prefix[matched - 1];
+    if (current[i] === current[matched]) matched++;
+    prefix[i] = matched;
+  }
+
+  let matched = 0;
+  for (let i = Math.max(0, previous.length - current.length); i < previous.length; i++) {
+    while (matched > 0 && previous[i] !== current[matched]) matched = prefix[matched - 1];
+    if (previous[i] === current[matched]) matched++;
+  }
+  return current.slice(matched);
+};
+
 /** Read bounded tmux history only when the registered window has one pane. */
 export const captureExternalHistory = async (review: IExtReview, windowId: string,
   signal: AbortSignal): Promise<string | null> => {

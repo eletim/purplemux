@@ -2,8 +2,10 @@ import { createServer, type Server } from 'net';
 import fs from 'fs/promises';
 import os from 'os';
 import path from 'path';
-import { afterEach, describe, expect, it } from 'vitest';
-import { sendExternalInput, areExternalClientsOnWindow } from '@/lib/external-target-terminal';
+import { execFileSync } from 'child_process';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { sendExternalInput, areExternalClientsOnWindow, captureExternalHistory, appendedExternalHistory } from '@/lib/external-target-terminal';
+import { freezeExtReviewTargets } from '@/lib/ext-review-tmux';
 import type { IExtReview } from '@/types/ext-review';
 
 const servers: Server[] = [];
@@ -42,5 +44,52 @@ describe('external terminal socket identity', () => {
       new AbortController().signal)).rejects.toThrow('External review socket identity changed');
     await expect(areExternalClientsOnWindow(review, [123], '@0'))
       .rejects.toThrow('External review socket identity changed');
+  });
+});
+
+describe('external terminal scrollback', () => {
+  it('sends only new lines after tmux history passes the 2,000-line capture limit', async () => {
+    const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'pmux-external-history-'));
+    directories.push(directory);
+    const socketPath = path.join(directory, 'tmux');
+    const tmux = (...args: string[]) => execFileSync('tmux', ['-f', '/dev/null', '-S', socketPath, ...args],
+      { encoding: 'utf8' });
+
+    try {
+      tmux('new-session', '-d', '-s', 'external', '-x', '90', '-y', '30');
+      const review: IExtReview = {
+        ...await freezeExtReviewTargets({ socketPath, session: 'external', windowTargets: ['@0'] }),
+        id: 'history', createdAt: new Date().toISOString(),
+      };
+      const signal = new AbortController().signal;
+      const target = `${review.sessionId}:@0`;
+      tmux('send-keys', '-t', target, 'seq -f HISTORY_%04g 1 2100', 'Enter');
+      await vi.waitFor(() => expect(tmux('capture-pane', '-p', '-t', target)).toContain('HISTORY_2100'),
+        { timeout: 10_000 });
+      const before = await vi.waitFor(async () => {
+        const history = await captureExternalHistory(review, '@0', signal);
+        expect(history).toContain('HISTORY_2000');
+        return history!;
+      }, { timeout: 10_000 });
+
+      tmux('send-keys', '-t', target, 'seq -f HISTORY_%04g 2101 2500', 'Enter');
+      await vi.waitFor(() => expect(tmux('capture-pane', '-p', '-t', target)).toContain('HISTORY_2500'),
+        { timeout: 10_000 });
+      const after = await vi.waitFor(async () => {
+        const history = await captureExternalHistory(review, '@0', signal);
+        expect(history).toContain('HISTORY_2450');
+        return history!;
+      }, { timeout: 10_000 });
+
+      expect(after.startsWith(before)).toBe(false);
+      expect(after).toContain('HISTORY_1000');
+      const appended = appendedExternalHistory(before, after);
+      expect(appended).toContain('HISTORY_2450');
+      expect(appended).not.toContain('HISTORY_1000');
+      expect(appended.length).toBeLessThan(10_000);
+      expect(appendedExternalHistory(after, after)).toBe('');
+    } finally {
+      try { tmux('kill-server'); } catch { /* tmux already exited */ }
+    }
   });
 });

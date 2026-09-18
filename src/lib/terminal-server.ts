@@ -16,7 +16,7 @@ import { createLogger } from '@/lib/logger';
 import { loadExtReviewDefinition } from '@/lib/ext-review-store';
 import { assertExtReviewSocketIdentity, captureExtReviewWindow, resolveExtReviewTargets } from '@/lib/ext-review-tmux';
 import { externalTerminals } from '@/lib/external-terminal-resources';
-import { sendExternalInput, areExternalClientsOnWindow, captureExternalHistory, ExternalWindowGuard } from '@/lib/external-target-terminal';
+import { sendExternalInput, areExternalClientsOnWindow, captureExternalHistory, appendedExternalHistory, ExternalWindowGuard } from '@/lib/external-target-terminal';
 import { createExternalCaptureScheduler } from '@/lib/external-capture-scheduler';
 import type { IExtReview } from '@/types/ext-review';
 
@@ -609,8 +609,7 @@ export const handleConnection = async (ws: WebSocket, request: IncomingMessage, 
       const screen = await captureExtReviewWindow(externalDefinition, externalWindowId, externalAbort.signal);
       const history = await captureExternalHistory(externalDefinition, externalWindowId, externalAbort.signal);
       if (history !== null && history !== previousExternalHistory) {
-        const appended = history.startsWith(previousExternalHistory)
-          ? history.slice(previousExternalHistory.length) : history;
+        const appended = appendedExternalHistory(previousExternalHistory, history);
         previousExternalHistory = history;
         if (appended) sendCheckedStdout(`\x1b[${conn.currentRows};1H${appended.replace(/\n/g, '\r\n')}`);
       }
