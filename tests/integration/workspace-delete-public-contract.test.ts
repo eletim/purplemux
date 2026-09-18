@@ -64,6 +64,7 @@ describe('external Review public boundary contract', () => {
     tmux('new-session', '-d', '-s', 'external', '-n', 'approved', '-x', '90', '-y', '30',
       'echo EXTERNAL_APPROVED; exec bash --noprofile --norc');
     tmux('new-window', '-d', '-t', 'external', '-n', 'hidden', 'echo HIDDEN_SECRET; exec sleep 300');
+    tmux('set-option', '-t', 'external', 'status-right', 'UNREGISTERED_STATUS_SECRET');
     const state = () => tmux('list-panes', '-a', '-F',
       '#{pid}:#{session_id}:#{session_name}:#{window_id}:#{window_name}:#{pane_id}:#{pane_width}:#{pane_height}:#{pane_pid}');
     let initial = state();
@@ -109,6 +110,7 @@ exec ${quote(realTmux)} "$@"
       ...process.env, HOME: home, TMUX_TMPDIR: home, PORT: '0', HOST: 'localhost',
       PATH: `${bin}:${process.env.PATH}`, SHELL: '/bin/bash',
       INIT_PASSWORD: 'review-test-password', NEXT_TELEMETRY_DISABLED: '1', NO_UPDATE_NOTIFIER: '1',
+      IS_WEBPACK_TEST: '1', WATCHPACK_POLLING: 'true',
     };
     delete env.__PMUX_PRISTINE_ENV;
     const server = spawn(process.execPath, ['--import', 'tsx', 'server.ts'], { cwd: repoRoot, env, stdio: 'ignore' });
@@ -255,17 +257,21 @@ exec ${quote(realTmux)} "$@"
     const external = await connect(`externalTargetId=${interactive.id}&windowId=%400&cols=90&rows=30`, true);
     await waitFor(() => expect(external.output()).toContain('EXTERNAL_APPROVED'));
     expect(external.output()).not.toContain('HIDDEN_SECRET');
+    expect(external.output()).not.toContain('UNREGISTERED_STATUS_SECRET');
     external.ws.send(encodeStdin("printf 'EXTERNAL_%s\\n' 'INPUT'\r"));
     await waitFor(() => expect(external.output()).toContain('EXTERNAL_INPUT'));
     external.ws.send(encodeWebStdin("printf 'EXTERNAL_%s\\n' 'WEB_INPUT'\r"));
     await waitFor(() => expect(external.output()).toContain('EXTERNAL_WEB_INPUT'));
+    external.ws.send(encodeWebStdin("for n in {1..70}; do printf 'SCROLLBACK_%03d\\n' \"$n\"; done\r"));
+    await waitFor(() => expect(external.output()).toContain('SCROLLBACK_070'));
+    expect(external.output()).toContain('SCROLLBACK_001');
     // Prefix navigation is delivered to the approved pane, not to the tmux client.
     external.ws.send(encodeStdin('\x02n'));
     await waitFor(() => expect(tmux('list-clients', '-F', '#{window_id}').split('\n').every((id) => id === '@0')).toBe(true));
     expect(external.output()).not.toContain('HIDDEN_SECRET');
     external.ws.send(encodeResize(100, 40));
-    // The external server retains its own one-row tmux status bar.
-    await waitFor(() => expect(tmux('display-message', '-p', '-t', '$0:@0', '#{pane_width}:#{pane_height}')).toBe('100:39'));
+    // Control mode has no status row, so the approved pane uses the full size.
+    await waitFor(() => expect(tmux('display-message', '-p', '-t', '$0:@0', '#{pane_width}:#{pane_height}')).toBe('100:40'));
     external.ws.close(1000);
     await waitFor(() => expect(external.code()).toBe(1000));
     expect(tmux('display-message', '-p', '-t', '$0:@0', '#{window_id}')).toBe('@0');
@@ -307,7 +313,7 @@ exec ${quote(realTmux)} "$@"
 
     const shutdownReview = await create();
     const shutdownViewer = await connect(`reviewId=${shutdownReview.id}&windowId=%400`);
-    await waitFor(() => expect(shutdownViewer.output()).toContain('EXTERNAL_APPROVED'));
+    await waitFor(() => expect(shutdownViewer.output()).toContain('SCROLLBACK_070'));
     const exited = new Promise<void>((resolve) => server.once('exit', () => resolve()));
     server.kill('SIGTERM');
     await exited;
@@ -347,6 +353,7 @@ describe('real public workspace deletion contract', () => {
         HOST: 'localhost',
         NEXT_TELEMETRY_DISABLED: '1',
         NO_UPDATE_NOTIFIER: '1',
+        IS_WEBPACK_TEST: '1', WATCHPACK_POLLING: 'true',
       },
       stdio: 'ignore',
     });

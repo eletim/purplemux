@@ -1,13 +1,31 @@
 import { execFile as execFileCallback } from 'child_process';
 import { promisify } from 'util';
 import * as pty from 'node-pty';
-import { assertExtReviewSocketIdentity } from '@/lib/ext-review-tmux';
+import { assertExtReviewSocketIdentity, resolveExtReviewTargets } from '@/lib/ext-review-tmux';
 import { exitCopyMode } from '@/lib/tmux';
 import { buildShellEnv } from '@/lib/shell-env';
 import { PRISTINE_ENV } from '@/lib/pristine-env';
 import type { IExtReview } from '@/types/ext-review';
 
 const execFile = promisify(execFileCallback);
+
+/** Read bounded tmux history only when the registered window has one pane. */
+export const captureExternalHistory = async (review: IExtReview, windowId: string,
+  signal: AbortSignal): Promise<string | null> => {
+  await resolveExtReviewTargets(review, signal);
+  const target = `${review.sessionId}:${windowId}`;
+  const list = async () => (await execFile('tmux', ['-N', '-S', review.socketPath, 'list-panes',
+    '-t', target, '-F', '#{pane_id}\t#{window_id}'], { timeout: 5000, signal })).stdout.trim();
+  const before = await list();
+  const match = /^(%\d+)\t(@\d+)$/.exec(before);
+  if (!match || match[2] !== windowId) return null;
+  const { stdout } = await execFile('tmux', ['-N', '-S', review.socketPath, 'capture-pane',
+    '-p', '-e', '-S', '-2000', '-E', '-1', '-t', `${target}.${match[1]}`],
+  { timeout: 5000, maxBuffer: 4 * 1024 * 1024, signal });
+  await resolveExtReviewTargets(review, signal);
+  if (await list() !== before) throw new Error('External pane changed during history capture');
+  return stdout;
+};
 
 export const sendExternalInput = async (review: IExtReview, target: string, data: Uint8Array,
   signal: AbortSignal, webInput = false): Promise<void> => {
