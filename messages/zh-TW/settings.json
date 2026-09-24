@@ -53,8 +53,8 @@
     "themeDescription": "為各模式選擇終端機色彩主題。",
     "keyBar": "快捷鍵列",
     "keyBarDescription": "在終端機下方顯示螢幕按鍵列（Tab、Esc、Ctrl、方向鍵），在觸控裝置上很方便。",
-    "promptPrefix": "提示字元複製前綴",
-    "promptPrefixDescription": "以此文字開頭的行會顯示複製按鈕。留空可停用提示字元複製。",
+    "promptPrefix": "提示字元標記前綴",
+    "promptPrefixDescription": "以此文字開頭的行會顯示提示字元標記。留空可停用提示字元標記。",
     "keyBarOptions": {
       "auto": "自動",
       "always": "一律顯示",

@@ -89,7 +89,6 @@
   "copyPaneCaptureFailed": "Не удалось загрузить вывод терминала",
   "copyPaneCopyAll": "Копировать всё",
   "copyPaneSuccess": "Скопировано в буфер обмена",
-  "copyPromptBlockLabel": "Копировать команду и вывод",
   "copyPaneCopyFailed": "Не удалось скопировать",
   "codexNotInstalled": "Install Codex CLI: npm i -g @openai/codex or brew install --cask codex",
   "codexHookInstallFailed": "Codex hook installation failed. State detection may be inaccurate.",

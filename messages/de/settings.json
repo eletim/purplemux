@@ -53,8 +53,8 @@
     "themeDescription": "Wähle Terminal-Farbthemen für jeden Modus.",
     "keyBar": "Tastenleiste",
     "keyBarDescription": "Zeigt eine Bildschirm-Tastenleiste (Tab, Esc, Ctrl, Pfeile) unter dem Terminal an – praktisch auf Touchgeräten.",
-    "promptPrefix": "Präfix für Prompt-Kopie",
-    "promptPrefixDescription": "Zeilen, die mit diesem Text beginnen, erhalten eine Kopierschaltfläche. Leer lassen, um die Funktion zu deaktivieren.",
+    "promptPrefix": "Präfix für Prompt-Markierungen",
+    "promptPrefixDescription": "Zeilen, die mit diesem Text beginnen, erhalten eine Prompt-Markierung. Leer lassen, um die Funktion zu deaktivieren.",
     "keyBarOptions": {
       "auto": "Automatisch",
       "always": "Immer",

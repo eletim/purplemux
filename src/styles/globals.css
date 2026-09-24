@@ -21,15 +21,15 @@
 
 @custom-variant dark (&:is(.dark *));
 
-.terminal-prompt-copy-enabled .xterm {
+.terminal-prompt-markers-enabled .xterm {
   padding-left: 18px;
 }
 
-.terminal-prompt-copy-enabled .xterm .xterm-viewport {
+.terminal-prompt-markers-enabled .xterm .xterm-viewport {
   left: 18px;
 }
 
-.terminal-prompt-copy-gutter {
+.terminal-prompt-marker-gutter {
   position: absolute;
   inset: 0 auto 0 0;
   z-index: 9;
@@ -38,7 +38,7 @@
   pointer-events: none;
 }
 
-.terminal-prompt-copy-button {
+.terminal-prompt-marker {
   position: absolute;
   left: 1px;
   display: flex;
@@ -48,29 +48,15 @@
   border: 0;
   padding: 0;
   background: transparent;
-  cursor: pointer;
   opacity: 0.65;
-  pointer-events: auto;
 }
 
-.terminal-prompt-copy-button::before {
+.terminal-prompt-marker::before {
   width: 9px;
   height: 9px;
   border: 1.5px solid color-mix(in srgb, var(--terminal-fg) 82%, transparent);
   border-radius: 9999px;
   content: '';
-}
-
-.terminal-prompt-copy-button:hover,
-.terminal-prompt-copy-button:focus-visible {
-  opacity: 1;
-  outline: none;
-}
-
-.terminal-prompt-copy-button:hover::before,
-.terminal-prompt-copy-button:focus-visible::before {
-  border-color: var(--terminal-fg);
-  background: color-mix(in srgb, var(--terminal-fg) 18%, transparent);
 }
 
 :root {
