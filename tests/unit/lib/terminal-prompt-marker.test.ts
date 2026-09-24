@@ -1,8 +1,11 @@
 // @vitest-environment jsdom
 
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import {
+  collectPromptBlock,
+  getNewlyVisiblePromptRows,
   isShellPrompt,
+  snapshotPromptRows,
   syncPromptMarkers,
   type ITerminalPromptLine,
 } from '@/lib/terminal-prompt-marker';
@@ -23,6 +26,7 @@ const createBuffer = (rows: Array<string | { text: string; wrapped: boolean }>) 
 });
 
 describe('terminal prompt markers', () => {
+  const markerActions = () => ({ label: 'Copy command and output', onCopy: vi.fn() });
   it('matches only the configured prompt prefix at the start of a line', () => {
     expect(isShellPrompt('eletim@E-ryzen:~$', PROMPT_PREFIX)).toBe(true);
     expect(isShellPrompt('eletim@E-ryzen:/srv/app# command', PROMPT_PREFIX)).toBe(true);
@@ -52,6 +56,7 @@ describe('terminal prompt markers', () => {
       screenTop: 4,
       screenHeight: 60,
       promptPrefix: PROMPT_PREFIX,
+      ...markerActions(),
     });
 
     const markers = [...gutter.querySelectorAll<HTMLElement>('.terminal-prompt-marker')];
@@ -60,7 +65,7 @@ describe('terminal prompt markers', () => {
       ['4px', '20px'],
       ['44px', '20px'],
     ]);
-    expect(gutter.querySelector('button')).toBeNull();
+    expect(gutter.querySelectorAll('button')).toHaveLength(2);
   });
 
   it('updates visible circles after viewport and geometry changes', () => {
@@ -82,6 +87,7 @@ describe('terminal prompt markers', () => {
         screenTop,
         screenHeight,
         promptPrefix: PROMPT_PREFIX,
+        ...markerActions(),
       });
     };
 
@@ -114,6 +120,7 @@ describe('terminal prompt markers', () => {
       screenTop: 0,
       screenHeight: 60,
       promptPrefix: PROMPT_PREFIX,
+      ...markerActions(),
     });
 
     sync();
@@ -122,5 +129,91 @@ describe('terminal prompt markers', () => {
     rows.length = 0;
     sync();
     expect(gutter.querySelector('.terminal-prompt-marker')).toBeNull();
+  });
+
+  it('copies from the clicked prompt to just before the next visible prompt', async () => {
+    const rows = snapshotPromptRows(createBuffer([
+      'eletim@E-ryzen:~$ printf hello',
+      'hello',
+      'eletim@E-ryzen:~$ pwd',
+      '/home/eletim',
+    ]), 0, 4);
+    const loadNextRows = vi.fn();
+
+    await expect(collectPromptBlock({
+      initialRows: rows,
+      promptPrefix: PROMPT_PREFIX,
+      loadNextRows,
+    })).resolves.toBe('eletim@E-ryzen:~$ printf hello\nhello');
+    expect(loadNextRows).not.toHaveBeenCalled();
+  });
+
+  it('loads only each newly visible group of three rows until the next prompt', async () => {
+    const loadNextRows = vi.fn()
+      .mockResolvedValueOnce(snapshotPromptRows(createBuffer(['three', 'four', 'five']), 0, 3))
+      .mockResolvedValueOnce(snapshotPromptRows(createBuffer([
+        'six',
+        'eletim@E-ryzen:~$ next',
+        'next output',
+      ]), 0, 3));
+
+    await expect(collectPromptBlock({
+      initialRows: snapshotPromptRows(createBuffer([
+        'eletim@E-ryzen:~$ first',
+        'one',
+        'two',
+      ]), 0, 3),
+      promptPrefix: PROMPT_PREFIX,
+      loadNextRows,
+    })).resolves.toBe([
+      'eletim@E-ryzen:~$ first', 'one', 'two', 'three', 'four', 'five', 'six',
+    ].join('\n'));
+    expect(loadNextRows).toHaveBeenCalledTimes(2);
+  });
+
+  it('adds only the last three newly visible rows after a scroll', () => {
+    const previous = snapshotPromptRows(createBuffer(['one', 'two', 'three', 'four', 'five']), 0, 5);
+    const current = snapshotPromptRows(createBuffer(['four', 'five', 'six', 'seven', 'eight']), 0, 5);
+
+    expect(getNewlyVisiblePromptRows(previous, current).map((row) => row.text.trimEnd()))
+      .toEqual(['six', 'seven', 'eight']);
+    expect(getNewlyVisiblePromptRows(current, current)).toEqual([]);
+  });
+
+  it('keeps a wrapped logical line intact across three-row loads', async () => {
+    const loadNextRows = vi.fn().mockResolvedValueOnce(snapshotPromptRows(createBuffer([
+      { text: 'line', wrapped: true },
+      'eletim@E-ryzen:~$ next',
+      'next output',
+    ]), 0, 3));
+
+    await expect(collectPromptBlock({
+      initialRows: snapshotPromptRows(createBuffer([
+        'eletim@E-ryzen:~$ first',
+        'long ',
+      ]), 0, 2),
+      promptPrefix: PROMPT_PREFIX,
+      loadNextRows,
+    })).resolves.toBe('eletim@E-ryzen:~$ first\nlong line');
+  });
+
+  it('uses marker clicks to select the prompt row', () => {
+    const gutter = document.createElement('div');
+    const actions = markerActions();
+    syncPromptMarkers({
+      gutter,
+      buffer: createBuffer(['eletim@E-ryzen:~$ command']),
+      viewportY: 0,
+      viewportRows: 1,
+      screenTop: 0,
+      screenHeight: 20,
+      promptPrefix: PROMPT_PREFIX,
+      ...actions,
+    });
+
+    const marker = gutter.querySelector<HTMLButtonElement>('.terminal-prompt-marker');
+    expect(marker?.getAttribute('aria-label')).toBe(actions.label);
+    marker?.click();
+    expect(actions.onCopy).toHaveBeenCalledWith(0);
   });
 });

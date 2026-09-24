@@ -16,11 +16,14 @@ describe('prompt-prefix terminal wiring', () => {
     expect(source).toMatch(/useTerminal\(\{[\s\S]*?promptPrefix,[\s\S]*?\}\)/);
   });
 
-  it('uses the live prefix for prompt markers', () => {
+  it('uses the live prefix for prompt markers and sequential copies', () => {
     const source = readSource('src/hooks/use-terminal.ts');
 
     expect(source).toContain('syncPromptMarkers({');
     expect(source).toContain('promptPrefix: callbacksRef.current.promptPrefix');
+    expect(source).toContain('collectPromptBlock({');
+    expect(source).toContain("dispatchWheel('down')");
+    expect(source).toContain('getNewlyVisiblePromptRows(previousRows, currentRows)');
   });
 
   it('resyncs prompt markers after resetting the terminal', () => {

@@ -11,7 +11,12 @@ import type { ITerminalThemeColors } from "@/lib/terminal-themes";
 import { createMultilineUrlLinkProvider } from "@/lib/multiline-url-link-provider";
 import { copyToClipboard } from "@/lib/clipboard";
 import { DEFAULT_LINE_HEIGHT } from "@/lib/terminal-line-height";
-import { syncPromptMarkers } from "@/lib/terminal-prompt-marker";
+import {
+  collectPromptBlock,
+  getNewlyVisiblePromptRows,
+  snapshotPromptRows,
+  syncPromptMarkers,
+} from "@/lib/terminal-prompt-marker";
 import isElectron from "@/hooks/use-is-electron";
 
 interface IUseTerminalOptions {
@@ -28,6 +33,9 @@ interface IUseTerminalOptions {
 }
 
 const COPY_TOAST_ID = 'terminal-copy';
+const PROMPT_COPY_SCROLL_RENDER_RETRIES = 4;
+const PROMPT_COPY_SCROLL_RETRY_DELAY_MS = 50;
+const MAX_PROMPT_COPY_SCROLL_STEPS = 2000;
 
 const DEFAULT_FONT_SIZE = 12;
 
@@ -245,8 +253,95 @@ const useTerminal = ({ readOnly = false, theme, fontSize = DEFAULT_FONT_SIZE, li
         containerNode.classList.add('terminal-prompt-markers-enabled');
         const gutter = document.createElement('div');
         gutter.className = 'terminal-prompt-marker-gutter';
-        gutter.setAttribute('aria-hidden', 'true');
+        gutter.setAttribute('aria-hidden', 'false');
         terminal.element.appendChild(gutter);
+
+        const screen = terminal.element.querySelector<HTMLElement>('.xterm-screen');
+
+        const dispatchWheel = (direction: 'up' | 'down'): void => {
+          if (!screen) return;
+          const rect = screen.getBoundingClientRect();
+          screen.dispatchEvent(new WheelEvent('wheel', {
+            deltaY: direction === 'down' ? 1 : -1,
+            deltaMode: WheelEvent.DOM_DELTA_LINE,
+            clientX: rect.left + rect.width / 2,
+            clientY: rect.top + rect.height / 2,
+            bubbles: true,
+            cancelable: true,
+          }));
+        };
+
+        const waitForScrollRender = (scroll: () => void): Promise<void> => new Promise((resolve) => {
+          let settledTimer = 0;
+          let fallbackTimer = 0;
+          let finished = false;
+          const finish = () => {
+            if (finished) return;
+            finished = true;
+            window.clearTimeout(settledTimer);
+            window.clearTimeout(fallbackTimer);
+            subscription.dispose();
+            resolve();
+          };
+          const subscription = terminal.onWriteParsed(() => {
+            window.clearTimeout(settledTimer);
+            settledTimer = window.setTimeout(finish, PROMPT_COPY_SCROLL_RETRY_DELAY_MS);
+          });
+
+          fallbackTimer = window.setTimeout(finish, 350);
+          scroll();
+        });
+
+        const copyPromptBlock = async (row: number) => {
+          const buffer = terminal.buffer.active;
+          const visibleEnd = Math.min(buffer.length, buffer.viewportY + terminal.rows);
+          let visibleRows = snapshotPromptRows(buffer, buffer.viewportY, visibleEnd);
+          let scrollSteps = 0;
+
+          try {
+            const text = await collectPromptBlock({
+              initialRows: snapshotPromptRows(buffer, row, visibleEnd),
+              promptPrefix: callbacksRef.current.promptPrefix,
+              loadNextRows: async () => {
+                if (scrollSteps >= MAX_PROMPT_COPY_SCROLL_STEPS) return null;
+                const previousRows = visibleRows;
+                // tmux.conf maps one wheel event to an exact three-line scroll.
+                await waitForScrollRender(() => dispatchWheel('down'));
+
+                for (let attempt = 0; attempt <= PROMPT_COPY_SCROLL_RENDER_RETRIES; attempt++) {
+                  if (attempt > 0) {
+                    await new Promise<void>((resolve) => {
+                      window.setTimeout(resolve, PROMPT_COPY_SCROLL_RETRY_DELAY_MS);
+                    });
+                  }
+                  const currentRows = snapshotPromptRows(
+                    buffer,
+                    buffer.viewportY,
+                    Math.min(buffer.length, buffer.viewportY + terminal.rows),
+                  );
+                  const newRows = getNewlyVisiblePromptRows(previousRows, currentRows);
+                  if (newRows.length > 0) {
+                    visibleRows = currentRows;
+                    scrollSteps++;
+                    return newRows;
+                  }
+                }
+                return null;
+              },
+            });
+            if (!text) return;
+            const ok = await copyToClipboard(text);
+            if (ok) {
+              toast.success(callbacksRef.current.t('copyPaneSuccess'), {
+                id: COPY_TOAST_ID,
+                duration: 1500,
+              });
+            }
+          } finally {
+            for (let step = 0; step < scrollSteps; step++) dispatchWheel('up');
+            promptMarkerSyncRef.current();
+          }
+        };
 
         const syncMarkers = () => {
           promptMarkerRaf = 0;
@@ -263,6 +358,8 @@ const useTerminal = ({ readOnly = false, theme, fontSize = DEFAULT_FONT_SIZE, li
             screenTop: screenRect.top - terminalRect.top,
             screenHeight: screenRect.height,
             promptPrefix: callbacksRef.current.promptPrefix,
+            label: callbacksRef.current.t('copyPaneLabel'),
+            onCopy: (row) => void copyPromptBlock(row),
           });
         };
 
@@ -276,7 +373,6 @@ const useTerminal = ({ readOnly = false, theme, fontSize = DEFAULT_FONT_SIZE, li
         terminal.onResize(scheduleMarkerSync);
         terminal.onWriteParsed(scheduleMarkerSync);
 
-        const screen = terminal.element.querySelector<HTMLElement>('.xterm-screen');
         if (screen) {
           promptMarkerResizeObserver = new ResizeObserver(scheduleMarkerSync);
           promptMarkerResizeObserver.observe(screen);
@@ -353,12 +449,16 @@ const useTerminal = ({ readOnly = false, theme, fontSize = DEFAULT_FONT_SIZE, li
 
       if (!readOnly && isTouchDevice && screenEl) {
         let lastY = 0;
+        let touchStartedOnPromptMarker = false;
 
         const onTouchStart = (e: TouchEvent) => {
+          touchStartedOnPromptMarker = e.target instanceof Element
+            && e.target.closest('.terminal-prompt-marker') !== null;
           lastY = e.touches[0].clientY;
         };
 
         const onTouchMove = (e: TouchEvent) => {
+          if (touchStartedOnPromptMarker) return;
           const currentY = e.touches[0].clientY;
           const deltaY = lastY - currentY;
           lastY = currentY;
