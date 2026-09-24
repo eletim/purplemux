@@ -18,6 +18,7 @@ export interface IPromptSnapshotIdentity {
   text: string;
   before: string[];
   after: string[];
+  clickStart: string[];
   clickEnd: string[];
   matchingOccurrenceFromStart: number;
   matchingOccurrenceFromEnd: number;
@@ -25,6 +26,7 @@ export interface IPromptSnapshotIdentity {
 }
 
 const PROMPT_IDENTITY_CONTEXT_LINES = 8;
+const CLICK_START_CONTEXT_LINES = 8;
 const CLICK_END_CONTEXT_LINES = 8;
 
 const normalizePromptCandidate = (text: string): string => text
@@ -165,6 +167,7 @@ export const getPromptSnapshotIdentity = (
   const prompt = logicalLines[promptIndex];
   if (!prompt || !isShellPrompt(prompt.text, promptPrefix)) return null;
 
+  const nonBlankStart = logicalLines.findIndex((line) => normalizeContextLine(line.text).length > 0);
   const nonBlankEnd = logicalLines.findLastIndex((line) => normalizeContextLine(line.text).length > 0);
   if (nonBlankEnd < promptIndex) return null;
   const nextPrompt = logicalLines
@@ -181,6 +184,9 @@ export const getPromptSnapshotIdentity = (
         promptIndex + 1 + PROMPT_IDENTITY_CONTEXT_LINES,
         nonBlankEnd + 1,
       ))
+      .map((line) => normalizeContextLine(line.text)),
+    clickStart: logicalLines
+      .slice(nonBlankStart, Math.min(nonBlankStart + CLICK_START_CONTEXT_LINES, nonBlankEnd + 1))
       .map((line) => normalizeContextLine(line.text)),
     clickEnd: logicalLines
       .slice(Math.max(0, nonBlankEnd - CLICK_END_CONTEXT_LINES + 1), nonBlankEnd + 1)
@@ -243,6 +249,15 @@ const findContextEnds = (
   return ends;
 };
 
+const findContextStarts = (lines: string[], context: string[]): number[] => {
+  if (context.length === 0) return [];
+  const starts: number[] = [];
+  for (let row = 0; row <= lines.length - context.length; row++) {
+    if (contextMatches(lines, row, context)) starts.push(row);
+  }
+  return starts;
+};
+
 export const getPromptBlockFromSnapshot = (
   snapshot: string,
   identity: IPromptSnapshotIdentity,
@@ -259,16 +274,21 @@ export const getPromptBlockFromSnapshot = (
 
   if (promptRow === undefined && matchingRows.length > 0) {
     const candidates = new Set<number>();
-    for (const clickEnd of findContextEnds(
-      lines,
-      identity.clickEnd,
-      identity.nextPrompt === null,
-    )) {
-      const matchesBeforeClickEnd = matchingRows.filter((row) => row < clickEnd);
-      const candidateIndex = matchesBeforeClickEnd.length - identity.matchingOccurrenceFromEnd;
-      if (candidateIndex + 1 !== identity.matchingOccurrenceFromStart) continue;
-      const candidate = matchesBeforeClickEnd[candidateIndex];
-      if (candidate !== undefined) candidates.add(candidate);
+    for (const clickStart of findContextStarts(lines, identity.clickStart)) {
+      for (const clickEnd of findContextEnds(
+        lines,
+        identity.clickEnd,
+        identity.nextPrompt === null,
+      )) {
+        if (clickStart >= clickEnd) continue;
+        const matchesInClickBuffer = matchingRows.filter(
+          (row) => row >= clickStart && row < clickEnd,
+        );
+        const candidateIndex = matchesInClickBuffer.length - identity.matchingOccurrenceFromEnd;
+        if (candidateIndex + 1 !== identity.matchingOccurrenceFromStart) continue;
+        const candidate = matchesInClickBuffer[candidateIndex];
+        if (candidate !== undefined) candidates.add(candidate);
+      }
     }
     if (candidates.size === 1) [promptRow] = candidates;
   }

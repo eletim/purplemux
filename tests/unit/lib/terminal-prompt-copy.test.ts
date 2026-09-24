@@ -223,6 +223,29 @@ describe('terminal prompt copy boundaries', () => {
     expect(getPromptBlockFromSnapshot(snapshotWithLocalDivergence, identity!, PROMPT_PREFIX)).toBeNull();
   });
 
+  it('ignores older identical blocks outside the xterm start boundary', () => {
+    const repeatedOutput = Array.from({ length: 12 }, () => 'same output');
+    const xtermAtClick = [
+      'eletim@E-ryzen:~$ repeat',
+      ...repeatedOutput,
+      'current tail',
+    ];
+    const identity = getPromptSnapshotIdentity(createBuffer(xtermAtClick), 0, PROMPT_PREFIX);
+    const snapshotWithOlderTmuxHistory = [
+      'eletim@E-ryzen:~$ repeat',
+      ...repeatedOutput,
+      ...xtermAtClick,
+    ].join('\n');
+
+    expect(identity).toMatchObject({
+      matchingOccurrenceFromStart: 1,
+      matchingOccurrenceFromEnd: 1,
+    });
+    expect(getPromptBlockFromSnapshot(snapshotWithOlderTmuxHistory, identity!, PROMPT_PREFIX)).toBe(
+      xtermAtClick.join('\n'),
+    );
+  });
+
   it('continues past the xterm tail through the backend snapshot end', () => {
     const clickRows = [
       'eletim@E-ryzen:~$ final',
