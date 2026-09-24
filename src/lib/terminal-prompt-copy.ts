@@ -249,9 +249,11 @@ export const getPromptBlockFromSnapshot = (
   const lines = snapshot.replace(/\r\n/g, '\n').split('\n').map(normalizeContextLine);
 
   const matchingRows = findPromptIdentityMatches(lines, identity, promptPrefix);
-  let promptRow = matchingRows.length === 1 ? matchingRows[0] : undefined;
+  let promptRow = matchingRows.length === 1 && identity.matchingOccurrenceFromEnd === 1
+    ? matchingRows[0]
+    : undefined;
 
-  if (promptRow === undefined && matchingRows.length > 1) {
+  if (promptRow === undefined && matchingRows.length > 0) {
     const candidates = new Set<number>();
     for (const clickEnd of findContextEnds(
       lines,

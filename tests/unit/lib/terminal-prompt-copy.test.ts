@@ -166,6 +166,29 @@ describe('terminal prompt copy boundaries', () => {
     );
   });
 
+  it('rejects a later repeated block when divergence removes the selected occurrence', () => {
+    const repeatedOutput = Array.from({ length: 12 }, () => 'same output');
+    const xtermAtClick = [
+      'eletim@E-ryzen:~$ repeat',
+      ...repeatedOutput,
+      'eletim@E-ryzen:~$ repeat',
+      ...repeatedOutput,
+      'current tail',
+    ];
+    const identity = getPromptSnapshotIdentity(createBuffer(xtermAtClick), 0, PROMPT_PREFIX);
+    const snapshotWithLocalDivergence = [
+      'eletim@E-ryzen:~$ repeat',
+      'different first output in tmux',
+      ...repeatedOutput.slice(1),
+      'eletim@E-ryzen:~$ repeat',
+      ...repeatedOutput,
+      'current tail',
+    ].join('\n');
+
+    expect(identity?.matchingOccurrenceFromEnd).toBe(2);
+    expect(getPromptBlockFromSnapshot(snapshotWithLocalDivergence, identity!, PROMPT_PREFIX)).toBeNull();
+  });
+
   it('continues past the xterm tail through the backend snapshot end', () => {
     const clickRows = [
       'eletim@E-ryzen:~$ final',
