@@ -14,10 +14,18 @@ interface ILogicalBufferLine {
   text: string;
 }
 
+export interface IPromptSnapshotIdentity {
+  text: string;
+  occurrenceFromEnd: number;
+}
+
 const PROMPT_COPY_CHUNK_ROWS = 40;
 
 const normalizePromptCandidate = (text: string): string => text
   .replace(/^[\s\u200B\u200C\u200D\uFEFF]+/, '');
+
+const normalizePromptIdentity = (text: string): string =>
+  normalizePromptCandidate(text).trimEnd();
 
 export const isShellPrompt = (text: string, promptPrefix: string): boolean =>
   promptPrefix.length > 0 && normalizePromptCandidate(text).startsWith(promptPrefix);
@@ -169,4 +177,51 @@ export const getPromptBlockText = (
   }
 
   return copiedLines.length > 0 ? copiedLines.join('\n').replace(/\n+$/, '') : null;
+};
+
+export const getPromptSnapshotIdentity = (
+  buffer: ITerminalPromptBuffer,
+  promptRow: number,
+  promptPrefix: string,
+): IPromptSnapshotIdentity | null => {
+  const logicalLines = readLogicalLines(buffer, promptRow);
+  const prompt = logicalLines.find((line) => line.startRow === promptRow);
+  if (!prompt || !isShellPrompt(prompt.text, promptPrefix)) return null;
+
+  const text = normalizePromptIdentity(prompt.text);
+  const occurrenceFromEnd = logicalLines.filter(
+    (line) => isShellPrompt(line.text, promptPrefix)
+      && normalizePromptIdentity(line.text) === text,
+  ).length;
+
+  return occurrenceFromEnd > 0 ? { text, occurrenceFromEnd } : null;
+};
+
+export const getPromptBlockFromSnapshot = (
+  snapshot: string,
+  identity: IPromptSnapshotIdentity,
+  promptPrefix: string,
+): string | null => {
+  if (!Number.isInteger(identity.occurrenceFromEnd) || identity.occurrenceFromEnd < 1) return null;
+
+  const lines = snapshot.replace(/\r\n/g, '\n').split('\n');
+  const matchingRows = lines.reduce<number[]>((rows, line, row) => {
+    if (isShellPrompt(line, promptPrefix)
+      && normalizePromptIdentity(line) === normalizePromptIdentity(identity.text)) {
+      rows.push(row);
+    }
+    return rows;
+  }, []);
+  const promptRow = matchingRows[matchingRows.length - identity.occurrenceFromEnd];
+  if (promptRow === undefined) return null;
+
+  let endRow = lines.length;
+  for (let row = promptRow + 1; row < lines.length; row++) {
+    if (isShellPrompt(lines[row], promptPrefix)) {
+      endRow = row;
+      break;
+    }
+  }
+
+  return lines.slice(promptRow, endRow).join('\n').replace(/\n+$/, '');
 };

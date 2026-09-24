@@ -594,12 +594,18 @@ export const capturePaneContent = async (sessionName: string): Promise<string | 
 
 export const capturePaneContentWithHistory = async (
   sessionName: string,
-  historyLines: number,
+  historyLines: number | 'all',
+  options: { joinWrapped?: boolean } = {},
 ): Promise<string | null> => {
   try {
+    const startLine = historyLines === 'all' ? '-' : `-${historyLines}`;
     const { stdout } = await execFile(
       'tmux',
-      ['-L', TMUX_SOCKET, 'capture-pane', '-p', '-S', `-${historyLines}`, '-t', sessionName],
+      [
+        '-L', TMUX_SOCKET, 'capture-pane', '-p',
+        ...(options.joinWrapped ? ['-J'] : []),
+        '-S', startLine, '-t', sessionName,
+      ],
       { timeout: CMD_TIMEOUT },
     );
     return stdout;

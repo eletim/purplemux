@@ -3,7 +3,9 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
   findShellPromptRows,
+  getPromptBlockFromSnapshot,
   getPromptBlockText,
+  getPromptSnapshotIdentity,
   isShellPrompt,
   syncPromptCopyButtons,
   type ITerminalPromptBuffer,
@@ -177,6 +179,71 @@ describe('terminal prompt copy boundaries', () => {
 
   it('rejects a row that is not a prompt boundary', () => {
     expect(getPromptBlockText(createBuffer(['plain output']), 0, PROMPT_PREFIX)).toBeNull();
+  });
+
+  it('identifies a clicked prompt by its duplicate occurrence from the buffer end', () => {
+    const buffer = createBuffer([
+      'eletim@E-ryzen:~$ make test',
+      'first run',
+      'eletim@E-ryzen:~$ make test',
+      'second run',
+      'eletim@E-ryzen:~$ pwd',
+    ]);
+
+    expect(getPromptSnapshotIdentity(buffer, 0, PROMPT_PREFIX)).toEqual({
+      text: 'eletim@E-ryzen:~$ make test',
+      occurrenceFromEnd: 2,
+    });
+    expect(getPromptSnapshotIdentity(buffer, 2, PROMPT_PREFIX)).toEqual({
+      text: 'eletim@E-ryzen:~$ make test',
+      occurrenceFromEnd: 1,
+    });
+  });
+
+  it('copies from tmux history even when older content is absent from xterm', () => {
+    const xtermBuffer = createBuffer([
+      'eletim@E-ryzen:~$ selected',
+      'recent output only',
+      'eletim@E-ryzen:~$ next',
+    ]);
+    const identity = getPromptSnapshotIdentity(xtermBuffer, 0, PROMPT_PREFIX);
+    const historicalOutput = Array.from({ length: 120 }, (_, row) => `historical output ${row}`);
+    const snapshot = [
+      'older prompt and output missing from xterm',
+      'eletim@E-ryzen:~$ selected',
+      ...historicalOutput,
+      'wrapped output reconstructed as one logical line',
+      'eletim@E-ryzen:~$ next',
+      'new block',
+    ].join('\n');
+
+    expect(identity).not.toBeNull();
+    expect(getPromptBlockFromSnapshot(snapshot, identity!, PROMPT_PREFIX)).toBe([
+      'eletim@E-ryzen:~$ selected',
+      ...historicalOutput,
+      'wrapped output reconstructed as one logical line',
+    ].join('\n'));
+  });
+
+  it('uses the matching duplicate prompt and the click-time snapshot end', () => {
+    const identity = { text: 'eletim@E-ryzen:~$ repeat', occurrenceFromEnd: 2 };
+    const snapshot = [
+      'eletim@E-ryzen:~$ repeat',
+      'selected output',
+      'eletim@E-ryzen:~$ other',
+      'other output',
+      'eletim@E-ryzen:~$ repeat',
+      'latest output',
+    ].join('\n');
+
+    expect(getPromptBlockFromSnapshot(snapshot, identity, PROMPT_PREFIX)).toBe(
+      'eletim@E-ryzen:~$ repeat\nselected output',
+    );
+    expect(getPromptBlockFromSnapshot(
+      'eletim@E-ryzen:~$ final\noutput present at click\n\n',
+      { text: 'eletim@E-ryzen:~$ final', occurrenceFromEnd: 1 },
+      PROMPT_PREFIX,
+    )).toBe('eletim@E-ryzen:~$ final\noutput present at click');
   });
 
   it('creates positioned buttons only for prompts in the viewport', () => {
