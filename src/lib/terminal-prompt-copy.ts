@@ -29,6 +29,7 @@ export interface IPromptSnapshotIdentity {
 const PROMPT_IDENTITY_CONTEXT_LINES = 8;
 const CLICK_START_CONTEXT_LINES = 8;
 const CLICK_END_CONTEXT_LINES = 8;
+const MAX_CLICK_SPAN_DIFFERENCE_LINES = 1;
 
 const normalizePromptCandidate = (text: string): string => text
   .replace(/^[\s\u200B\u200C\u200D\uFEFF]+/, '');
@@ -282,6 +283,7 @@ export const getPromptBlockFromSnapshot = (
       )) {
         if (clickStart >= clickEnd) continue;
         const spanDifference = Math.abs(clickEnd - clickStart - identity.clickLineCount);
+        if (spanDifference > MAX_CLICK_SPAN_DIFFERENCE_LINES) continue;
         if (spanDifference < clickSpanDifference) {
           clickBounds = [clickStart, clickEnd];
           clickSpanDifference = spanDifference;

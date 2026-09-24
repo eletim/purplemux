@@ -246,7 +246,10 @@ describe('terminal prompt copy boundaries', () => {
     );
   });
 
-  it('rejects a history match bounded by click anchors from different occurrences', () => {
+  it.each([
+    ['the live click-start remains', false],
+    ['local divergence alters the live click-start', true],
+  ])('rejects a history match bounded by different occurrences when %s', (_, divergeClickStart) => {
     const clickStart = Array.from({ length: 8 }, (_, row) => `xterm start ${row}`);
     const promptContext = Array.from({ length: 8 }, (_, row) => `prompt context ${row}`);
     const expectedOutput = Array.from({ length: 8 }, (_, row) => `expected output ${row}`);
@@ -274,7 +277,9 @@ describe('terminal prompt copy boundaries', () => {
       ...expectedOutput,
       nextPrompt,
       'older next output',
-      ...clickStart,
+      ...(divergeClickStart
+        ? ['different first click-start line in tmux', ...clickStart.slice(1)]
+        : clickStart),
       ...promptContext,
       prompt,
       'different first output in tmux',
