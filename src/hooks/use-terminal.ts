@@ -14,6 +14,7 @@ import { DEFAULT_LINE_HEIGHT } from "@/lib/terminal-line-height";
 import {
   collectPromptBlock,
   getNewlyVisiblePromptRows,
+  restorePromptViewport,
   snapshotPromptRows,
   syncPromptMarkers,
 } from "@/lib/terminal-prompt-marker";
@@ -257,6 +258,16 @@ const useTerminal = ({ readOnly = false, theme, fontSize = DEFAULT_FONT_SIZE, li
         terminal.element.appendChild(gutter);
 
         const screen = terminal.element.querySelector<HTMLElement>('.xterm-screen');
+        let promptCopyQueue = Promise.resolve();
+
+        const readVisibleRows = () => snapshotPromptRows(
+          terminal.buffer.active,
+          terminal.buffer.active.viewportY,
+          Math.min(
+            terminal.buffer.active.length,
+            terminal.buffer.active.viewportY + terminal.rows,
+          ),
+        );
 
         const dispatchWheel = (direction: 'up' | 'down'): void => {
           if (!screen) return;
@@ -295,7 +306,8 @@ const useTerminal = ({ readOnly = false, theme, fontSize = DEFAULT_FONT_SIZE, li
         const copyPromptBlock = async (row: number) => {
           const buffer = terminal.buffer.active;
           const visibleEnd = Math.min(buffer.length, buffer.viewportY + terminal.rows);
-          let visibleRows = snapshotPromptRows(buffer, buffer.viewportY, visibleEnd);
+          const initialVisibleRows = readVisibleRows();
+          let visibleRows = initialVisibleRows;
           let scrollSteps = 0;
 
           try {
@@ -314,11 +326,7 @@ const useTerminal = ({ readOnly = false, theme, fontSize = DEFAULT_FONT_SIZE, li
                       window.setTimeout(resolve, PROMPT_COPY_SCROLL_RETRY_DELAY_MS);
                     });
                   }
-                  const currentRows = snapshotPromptRows(
-                    buffer,
-                    buffer.viewportY,
-                    Math.min(buffer.length, buffer.viewportY + terminal.rows),
-                  );
+                  const currentRows = readVisibleRows();
                   const newRows = getNewlyVisiblePromptRows(previousRows, currentRows);
                   if (newRows.length > 0) {
                     visibleRows = currentRows;
@@ -338,9 +346,22 @@ const useTerminal = ({ readOnly = false, theme, fontSize = DEFAULT_FONT_SIZE, li
               });
             }
           } finally {
-            for (let step = 0; step < scrollSteps; step++) dispatchWheel('up');
+            await restorePromptViewport({
+              targetRows: initialVisibleRows,
+              readRows: readVisibleRows,
+              scrollUp: () => waitForScrollRender(() => dispatchWheel('up')),
+              // At the live bottom tmux exits copy-mode. The first upward wheel
+              // only re-enters it, so allow one observed no-op before restoring.
+              maxAttempts: scrollSteps + 1,
+            });
             promptMarkerSyncRef.current();
           }
+        };
+
+        const enqueuePromptCopy = (row: number) => {
+          promptCopyQueue = promptCopyQueue
+            .then(() => copyPromptBlock(row))
+            .catch(() => {});
         };
 
         const syncMarkers = () => {
@@ -359,7 +380,7 @@ const useTerminal = ({ readOnly = false, theme, fontSize = DEFAULT_FONT_SIZE, li
             screenHeight: screenRect.height,
             promptPrefix: callbacksRef.current.promptPrefix,
             label: callbacksRef.current.t('copyPaneLabel'),
-            onCopy: (row) => void copyPromptBlock(row),
+            onCopy: enqueuePromptCopy,
           });
         };
 

@@ -89,7 +89,7 @@ const promptBlockFromRows = (
   };
 };
 
-const sameRows = (
+export const arePromptRowsEqual = (
   left: readonly ITerminalPromptRow[],
   right: readonly ITerminalPromptRow[],
 ): boolean => left.length === right.length && left.every((row, index) => (
@@ -100,8 +100,36 @@ export const getNewlyVisiblePromptRows = (
   previous: readonly ITerminalPromptRow[],
   current: readonly ITerminalPromptRow[],
 ): ITerminalPromptRow[] => {
-  if (sameRows(previous, current)) return [];
+  const maxOverlap = Math.min(previous.length, current.length);
+  for (let overlap = maxOverlap; overlap > 0; overlap--) {
+    if (arePromptRowsEqual(previous.slice(-overlap), current.slice(0, overlap))) {
+      return current.slice(Math.max(overlap, current.length - 3));
+    }
+  }
+
+  // One tmux wheel step exposes at most three rows. If a full redraw leaves no
+  // comparable overlap, retain only those potentially new bottom rows.
   return current.slice(-3);
+};
+
+interface IRestorePromptViewportOptions {
+  targetRows: readonly ITerminalPromptRow[];
+  readRows: () => readonly ITerminalPromptRow[];
+  scrollUp: () => Promise<void>;
+  maxAttempts: number;
+}
+
+export const restorePromptViewport = async ({
+  targetRows,
+  readRows,
+  scrollUp,
+  maxAttempts,
+}: IRestorePromptViewportOptions): Promise<boolean> => {
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    if (arePromptRowsEqual(readRows(), targetRows)) return true;
+    await scrollUp();
+  }
+  return arePromptRowsEqual(readRows(), targetRows);
 };
 
 interface ICollectPromptBlockOptions {

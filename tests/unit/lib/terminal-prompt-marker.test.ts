@@ -5,6 +5,7 @@ import {
   collectPromptBlock,
   getNewlyVisiblePromptRows,
   isShellPrompt,
+  restorePromptViewport,
   snapshotPromptRows,
   syncPromptMarkers,
   type ITerminalPromptLine,
@@ -171,13 +172,40 @@ describe('terminal prompt markers', () => {
     expect(loadNextRows).toHaveBeenCalledTimes(2);
   });
 
-  it('adds only the last three newly visible rows after a scroll', () => {
+  it('adds only newly visible rows after a full or partial three-row scroll', () => {
     const previous = snapshotPromptRows(createBuffer(['one', 'two', 'three', 'four', 'five']), 0, 5);
-    const current = snapshotPromptRows(createBuffer(['four', 'five', 'six', 'seven', 'eight']), 0, 5);
+    const advancedThree = snapshotPromptRows(createBuffer(['four', 'five', 'six', 'seven', 'eight']), 0, 5);
+    const advancedTwo = snapshotPromptRows(createBuffer(['three', 'four', 'five', 'six', 'seven']), 0, 5);
+    const advancedOne = snapshotPromptRows(createBuffer(['two', 'three', 'four', 'five', 'six']), 0, 5);
 
-    expect(getNewlyVisiblePromptRows(previous, current).map((row) => row.text.trimEnd()))
+    expect(getNewlyVisiblePromptRows(previous, advancedThree).map((row) => row.text.trimEnd()))
       .toEqual(['six', 'seven', 'eight']);
-    expect(getNewlyVisiblePromptRows(current, current)).toEqual([]);
+    expect(getNewlyVisiblePromptRows(previous, advancedTwo).map((row) => row.text.trimEnd()))
+      .toEqual(['six', 'seven']);
+    expect(getNewlyVisiblePromptRows(previous, advancedOne).map((row) => row.text.trimEnd()))
+      .toEqual(['six']);
+    expect(getNewlyVisiblePromptRows(advancedThree, advancedThree)).toEqual([]);
+  });
+
+  it('restores by observed rows when the first upward scroll only re-enters copy-mode', async () => {
+    const screens = [
+      snapshotPromptRows(createBuffer(['four', 'five', 'six']), 0, 3),
+      snapshotPromptRows(createBuffer(['one', 'two', 'three']), 0, 3),
+    ];
+    const targetRows = screens[1];
+    let currentScreen = 0;
+    let scrolls = 0;
+
+    await expect(restorePromptViewport({
+      targetRows,
+      readRows: () => screens[currentScreen],
+      scrollUp: async () => {
+        scrolls++;
+        if (scrolls > 1) currentScreen = 1;
+      },
+      maxAttempts: 2,
+    })).resolves.toBe(true);
+    expect(scrolls).toBe(2);
   });
 
   it('keeps a wrapped logical line intact across three-row loads', async () => {
