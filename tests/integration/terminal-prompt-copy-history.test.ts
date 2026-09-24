@@ -1,3 +1,5 @@
+// @vitest-environment jsdom
+
 import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -6,6 +8,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   getPromptBlockFromSnapshot,
   getPromptSnapshotIdentity,
+  syncPromptCopyButtons,
   type ITerminalPromptLine,
 } from '@/lib/terminal-prompt-copy';
 import { capturePaneContentWithHistory } from '@/lib/tmux';
@@ -36,35 +39,65 @@ afterEach(() => {
 });
 
 describe('terminal prompt copy tmux history', () => {
-  it('copies off-screen history when xterm contains only the visible viewport', async () => {
+  it('copies an old prompt block when xterm also contains many later rows and the current tail', async () => {
     const session = `pt-issue-59-${process.pid}-${Date.now()}`;
     const wrapped = `WRAPPED_${'x'.repeat(70)}`;
     const command = [
       "printf 'user@host:~$ first\\n'",
       "seq -f 'OUTPUT_%04g' 1 130",
       `printf '${wrapped}\\n'`,
-      "printf 'user@host:~$ second\\nSECOND_OUTPUT\\n'",
+      "printf 'user@host:~$ second\\n'",
+      "seq -f 'LATER_%04g' 1 100",
+      "printf 'CURRENT_TAIL\\n'",
       'sleep 30',
     ].join('; ');
 
     startSession(session, command);
     await vi.waitFor(() => {
-      expect(tmux('capture-pane', '-p', '-t', session)).toContain('SECOND_OUTPUT');
+      expect(tmux('capture-pane', '-p', '-t', session)).toContain('CURRENT_TAIL');
     }, { timeout: 10_000 });
 
     const snapshot = (await capturePaneContentWithHistory(session, 'all', { joinWrapped: true }))!;
     const tmuxLines = snapshot.split('\n');
     const selectedRow = tmuxLines.findIndex((line) => line.trimEnd() === 'user@host:~$ first');
-    const xtermLines = tmuxLines.slice(selectedRow, selectedRow + 4);
-    const identity = getPromptSnapshotIdentity(createBuffer(xtermLines), 0, 'user@host:');
-    expect(identity).not.toBeNull();
-    const copied = getPromptBlockFromSnapshot(snapshot, identity!, 'user@host:');
+    const nextPromptRow = tmuxLines.findIndex(
+      (line, row) => row > selectedRow && line.trimEnd() === 'user@host:~$ second',
+    );
+    // A terminal redraw can make xterm's logical rows differ from capture-pane even though
+    // it retains the old prompt, substantial later scrollback, and the live tail.
+    const xtermLines = tmuxLines
+      .slice(selectedRow)
+      .filter((line) => line.trimEnd() !== 'LATER_0042');
+    expect(xtermLines.length).toBeGreaterThan(200);
+    expect(xtermLines.findLast((line) => line.trimEnd().length > 0)?.trimEnd()).toBe('CURRENT_TAIL');
 
+    const gutter = document.createElement('div');
+    let copied: string | null = null;
+    const buffer = createBuffer(xtermLines);
+    syncPromptCopyButtons({
+      gutter,
+      buffer,
+      viewportY: 0,
+      viewportRows: 8,
+      screenTop: 0,
+      screenHeight: 80,
+      label: 'Copy command block',
+      onCopy: (promptRow) => {
+        const identity = getPromptSnapshotIdentity(buffer, promptRow, 'user@host:');
+        copied = identity ? getPromptBlockFromSnapshot(snapshot, identity, 'user@host:') : null;
+      },
+      promptPrefix: 'user@host:',
+    });
+    gutter.querySelector<HTMLButtonElement>('[data-buffer-row="0"]')?.click();
+
+    expect(copied).toBe(
+      tmuxLines.slice(selectedRow, nextPromptRow).map((line) => line.trimEnd()).join('\n'),
+    );
     expect(copied).toContain('OUTPUT_0001');
     expect(copied).toContain('OUTPUT_0130');
     expect(copied).toContain(wrapped);
     expect(copied).not.toContain('user@host:~$ second');
-    expect(copied).not.toContain('SECOND_OUTPUT');
+    expect(copied).not.toContain('CURRENT_TAIL');
   });
 
   it('uses click-local context when a later identical prompt exists beyond the viewed copy-mode block', async () => {

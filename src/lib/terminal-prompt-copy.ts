@@ -19,7 +19,7 @@ export interface IPromptSnapshotIdentity {
   before: string[];
   after: string[];
   clickEnd: string[];
-  clickEndOffset: number;
+  matchingOccurrenceFromEnd: number;
   nextPrompt: string | null;
 }
 
@@ -170,7 +170,7 @@ export const getPromptSnapshotIdentity = (
     .slice(promptIndex + 1)
     .find((line) => isShellPrompt(line.text, promptPrefix));
 
-  return {
+  const identity = {
     text: normalizePromptIdentity(prompt.text),
     before: logicalLines
       .slice(Math.max(0, promptIndex - PROMPT_IDENTITY_CONTEXT_LINES), promptIndex)
@@ -184,8 +184,19 @@ export const getPromptSnapshotIdentity = (
     clickEnd: logicalLines
       .slice(Math.max(0, nonBlankEnd - CLICK_END_CONTEXT_LINES + 1), nonBlankEnd + 1)
       .map((line) => normalizeContextLine(line.text)),
-    clickEndOffset: nonBlankEnd - promptIndex + 1,
     nextPrompt: nextPrompt ? normalizePromptIdentity(nextPrompt.text) : null,
+  };
+  const matchingRows = findPromptIdentityMatches(
+    logicalLines.map((line) => normalizeContextLine(line.text)),
+    identity,
+    promptPrefix,
+  );
+  const matchingIndex = matchingRows.indexOf(promptIndex);
+  if (matchingIndex < 0) return null;
+
+  return {
+    ...identity,
+    matchingOccurrenceFromEnd: matchingRows.length - matchingIndex,
   };
 };
 
@@ -201,6 +212,35 @@ const contextMatches = (
     : actual === expected;
 });
 
+const findPromptIdentityMatches = (
+  lines: string[],
+  identity: Pick<IPromptSnapshotIdentity, 'text' | 'before' | 'after' | 'nextPrompt'>,
+  promptPrefix: string,
+): number[] => lines.reduce<number[]>((rows, line, row) => {
+  if (isShellPrompt(line, promptPrefix)
+    && normalizePromptIdentity(line) === normalizePromptIdentity(identity.text)
+    && contextMatches(lines, row - identity.before.length, identity.before)
+    && contextMatches(lines, row + 1, identity.after, identity.nextPrompt === null)) {
+    rows.push(row);
+  }
+  return rows;
+}, []);
+
+const findContextEnds = (
+  lines: string[],
+  context: string[],
+  allowLastLineGrowth: boolean,
+): number[] => {
+  if (context.length === 0) return [];
+  const ends: number[] = [];
+  for (let row = 0; row <= lines.length - context.length; row++) {
+    if (contextMatches(lines, row, context, allowLastLineGrowth)) {
+      ends.push(row + context.length);
+    }
+  }
+  return ends;
+};
+
 export const getPromptBlockFromSnapshot = (
   snapshot: string,
   identity: IPromptSnapshotIdentity,
@@ -208,23 +248,26 @@ export const getPromptBlockFromSnapshot = (
 ): string | null => {
   const lines = snapshot.replace(/\r\n/g, '\n').split('\n').map(normalizeContextLine);
 
-  const matchingRows = lines.reduce<number[]>((rows, line, row) => {
-    const clickEndStart = row + identity.clickEndOffset - identity.clickEnd.length;
-    if (isShellPrompt(line, promptPrefix)
-      && normalizePromptIdentity(line) === normalizePromptIdentity(identity.text)
-      && contextMatches(
-        lines,
-        row - identity.before.length,
-        identity.before,
-      )
-      && contextMatches(lines, row + 1, identity.after, identity.nextPrompt === null)
-      && contextMatches(lines, clickEndStart, identity.clickEnd, identity.nextPrompt === null)) {
-      rows.push(row);
+  const matchingRows = findPromptIdentityMatches(lines, identity, promptPrefix);
+  let promptRow = matchingRows.length === 1 ? matchingRows[0] : undefined;
+
+  if (promptRow === undefined && matchingRows.length > 1) {
+    const candidates = new Set<number>();
+    for (const clickEnd of findContextEnds(
+      lines,
+      identity.clickEnd,
+      identity.nextPrompt === null,
+    )) {
+      const matchesBeforeClickEnd = matchingRows.filter((row) => row < clickEnd);
+      const candidate = matchesBeforeClickEnd[
+        matchesBeforeClickEnd.length - identity.matchingOccurrenceFromEnd
+      ];
+      if (candidate !== undefined) candidates.add(candidate);
     }
-    return rows;
-  }, []);
-  if (matchingRows.length !== 1) return null;
-  const promptRow = matchingRows[0];
+    if (candidates.size === 1) [promptRow] = candidates;
+  }
+
+  if (promptRow === undefined) return null;
 
   let endRow = lines.length;
   for (let row = promptRow + 1; row < lines.length; row++) {

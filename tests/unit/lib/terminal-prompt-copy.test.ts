@@ -148,6 +148,24 @@ describe('terminal prompt copy boundaries', () => {
     );
   });
 
+  it('uses tail correspondence to disambiguate identical repeated prompt blocks', () => {
+    const repeatedOutput = Array.from({ length: 12 }, () => 'same output');
+    const xtermAtClick = [
+      'eletim@E-ryzen:~$ repeat',
+      ...repeatedOutput,
+      'eletim@E-ryzen:~$ repeat',
+      ...repeatedOutput,
+      'current tail',
+    ];
+    const identity = getPromptSnapshotIdentity(createBuffer(xtermAtClick), 0, PROMPT_PREFIX);
+
+    expect(identity).not.toBeNull();
+    expect(identity?.matchingOccurrenceFromEnd).toBe(2);
+    expect(getPromptBlockFromSnapshot(xtermAtClick.join('\n'), identity!, PROMPT_PREFIX)).toBe(
+      ['eletim@E-ryzen:~$ repeat', ...repeatedOutput].join('\n'),
+    );
+  });
+
   it('continues past the xterm tail through the backend snapshot end', () => {
     const clickRows = [
       'eletim@E-ryzen:~$ final',
