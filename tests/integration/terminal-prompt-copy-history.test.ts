@@ -63,11 +63,9 @@ describe('terminal prompt copy tmux history', () => {
     const nextPromptRow = tmuxLines.findIndex(
       (line, row) => row > selectedRow && line.trimEnd() === 'user@host:~$ second',
     );
-    // A terminal redraw can make xterm's logical rows differ from capture-pane even though
-    // it retains the old prompt, substantial later scrollback, and the live tail.
-    const xtermLines = tmuxLines
-      .slice(selectedRow)
-      .filter((line) => line.trimEnd() !== 'LATER_0042');
+    // xterm can omit older tmux history while retaining the selected prompt,
+    // substantial later scrollback, and the live tail.
+    const xtermLines = tmuxLines.slice(selectedRow);
     expect(xtermLines.length).toBeGreaterThan(200);
     expect(xtermLines.findLast((line) => line.trimEnd().length > 0)?.trimEnd()).toBe('CURRENT_TAIL');
 

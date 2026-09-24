@@ -295,6 +295,32 @@ describe('terminal prompt copy boundaries', () => {
     expect(getPromptBlockFromSnapshot(snapshotWithLocalDivergence, identity!, PROMPT_PREFIX)).toBeNull();
   });
 
+  it('rejects a history prompt pulled inside the click bounds by one line of span drift', () => {
+    const output = Array.from({ length: 8 }, (_, row) => `expected output ${row}`);
+    const clickEnd = Array.from({ length: 8 }, (_, row) => `xterm end ${row}`);
+    const prompt = 'eletim@E-ryzen:~$ selected';
+    const nextPrompt = 'eletim@E-ryzen:~$ next';
+    const xtermAtClick = [
+      'xterm start',
+      prompt,
+      ...output,
+      nextPrompt,
+      ...clickEnd,
+    ];
+    const identity = getPromptSnapshotIdentity(createBuffer(xtermAtClick), 1, PROMPT_PREFIX);
+    const snapshotWithBoundaryDivergence = [
+      'xterm start',
+      prompt,
+      ...output,
+      nextPrompt,
+      'different first line at the live boundary',
+      ...clickEnd,
+    ].join('\n');
+
+    expect(identity).not.toBeNull();
+    expect(getPromptBlockFromSnapshot(snapshotWithBoundaryDivergence, identity!, PROMPT_PREFIX)).toBeNull();
+  });
+
   it('continues past the xterm tail through the backend snapshot end', () => {
     const clickRows = [
       'eletim@E-ryzen:~$ final',
