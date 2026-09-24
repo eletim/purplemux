@@ -246,6 +246,89 @@ describe('terminal prompt copy boundaries', () => {
     );
   });
 
+  it.each([
+    ['the live click-start remains', false],
+    ['local divergence alters the live click-start', true],
+  ])('rejects a history match bounded by different occurrences when %s', (_, divergeClickStart) => {
+    const clickStart = Array.from({ length: 8 }, (_, row) => `xterm start ${row}`);
+    const promptContext = Array.from({ length: 8 }, (_, row) => `prompt context ${row}`);
+    const expectedOutput = Array.from({ length: 8 }, (_, row) => `expected output ${row}`);
+    const clickEnd = Array.from({ length: 8 }, (_, row) => `xterm end ${row}`);
+    const prompt = 'eletim@E-ryzen:~$ selected';
+    const nextPrompt = 'eletim@E-ryzen:~$ next';
+    const xtermAtClick = [
+      ...clickStart,
+      ...promptContext,
+      prompt,
+      ...expectedOutput,
+      nextPrompt,
+      ...clickEnd,
+    ];
+    const identity = getPromptSnapshotIdentity(
+      createBuffer(xtermAtClick),
+      clickStart.length + promptContext.length,
+      PROMPT_PREFIX,
+    );
+    const snapshotWithLocalDivergence = [
+      'older tmux history',
+      ...clickStart,
+      ...promptContext,
+      prompt,
+      ...expectedOutput,
+      nextPrompt,
+      'older next output',
+      ...(divergeClickStart
+        ? ['different first click-start line in tmux', ...clickStart.slice(1)]
+        : clickStart),
+      ...promptContext,
+      prompt,
+      'different first output in tmux',
+      ...expectedOutput.slice(1),
+      nextPrompt,
+      ...clickEnd,
+    ].join('\n');
+
+    expect(identity).toMatchObject({
+      matchingOccurrenceFromStart: 1,
+      matchingOccurrenceFromEnd: 1,
+    });
+    expect(getPromptBlockFromSnapshot(snapshotWithLocalDivergence, identity!, PROMPT_PREFIX)).toBeNull();
+  });
+
+  it('rejects one line of click-start-side drift before a history prompt', () => {
+    const clickStart = Array.from({ length: 8 }, (_, row) => `xterm start ${row}`);
+    const promptContext = Array.from({ length: 8 }, (_, row) => `prompt context ${row}`);
+    const output = Array.from({ length: 8 }, (_, row) => `expected output ${row}`);
+    const clickEnd = Array.from({ length: 8 }, (_, row) => `xterm end ${row}`);
+    const prompt = 'eletim@E-ryzen:~$ selected';
+    const nextPrompt = 'eletim@E-ryzen:~$ next';
+    const xtermAtClick = [
+      ...clickStart,
+      ...promptContext,
+      prompt,
+      ...output,
+      nextPrompt,
+      ...clickEnd,
+    ];
+    const identity = getPromptSnapshotIdentity(
+      createBuffer(xtermAtClick),
+      clickStart.length + promptContext.length,
+      PROMPT_PREFIX,
+    );
+    const snapshotWithBoundaryDivergence = [
+      ...clickStart,
+      'different first line at the live boundary',
+      ...promptContext,
+      prompt,
+      ...output,
+      nextPrompt,
+      ...clickEnd,
+    ].join('\n');
+
+    expect(identity).not.toBeNull();
+    expect(getPromptBlockFromSnapshot(snapshotWithBoundaryDivergence, identity!, PROMPT_PREFIX)).toBeNull();
+  });
+
   it('continues past the xterm tail through the backend snapshot end', () => {
     const clickRows = [
       'eletim@E-ryzen:~$ final',
