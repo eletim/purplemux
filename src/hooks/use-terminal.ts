@@ -185,6 +185,18 @@ const useTerminal = ({ readOnly = false, theme, fontSize = DEFAULT_FONT_SIZE, li
     let resizeObserver: ResizeObserver | null = null;
     let promptMarkerResizeObserver: ResizeObserver | null = null;
     let cleanupTouch: (() => void) | null = null;
+    const pendingPromptCopyWaits = new Set<() => void>();
+
+    const waitForPromptCopyDelay = (delay: number): Promise<void> => new Promise((resolve) => {
+      let timer = 0;
+      const finish = () => {
+        window.clearTimeout(timer);
+        pendingPromptCopyWaits.delete(finish);
+        resolve();
+      };
+      pendingPromptCopyWaits.add(finish);
+      timer = window.setTimeout(finish, delay);
+    });
 
     loadFonts().then(() => {
       if (disposed) return;
@@ -290,6 +302,7 @@ const useTerminal = ({ readOnly = false, theme, fontSize = DEFAULT_FONT_SIZE, li
             finished = true;
             window.clearTimeout(settledTimer);
             window.clearTimeout(fallbackTimer);
+            pendingPromptCopyWaits.delete(finish);
             subscription.dispose();
             resolve();
           };
@@ -299,10 +312,13 @@ const useTerminal = ({ readOnly = false, theme, fontSize = DEFAULT_FONT_SIZE, li
           });
 
           fallbackTimer = window.setTimeout(finish, 350);
+          pendingPromptCopyWaits.add(finish);
           scroll();
         });
 
         const copyPromptBlock = async (row: number) => {
+          if (disposed || gutter.inert) return;
+          gutter.inert = true;
           const buffer = terminal.buffer.active;
           const visibleEnd = Math.min(buffer.length, buffer.viewportY + terminal.rows);
           const initialVisibleRows = readVisibleRows();
@@ -314,16 +330,16 @@ const useTerminal = ({ readOnly = false, theme, fontSize = DEFAULT_FONT_SIZE, li
               initialRows: snapshotPromptRows(buffer, row, visibleEnd),
               promptPrefix: callbacksRef.current.promptPrefix,
               loadNextRows: async () => {
-                if (scrollSteps >= MAX_PROMPT_COPY_SCROLL_STEPS) return null;
+                if (disposed || scrollSteps >= MAX_PROMPT_COPY_SCROLL_STEPS) return null;
                 const previousRows = visibleRows;
                 // tmux.conf maps one wheel event to an exact three-line scroll.
                 await waitForScrollRender(() => dispatchWheel('down'));
+                if (disposed) return null;
 
                 for (let attempt = 0; attempt <= PROMPT_COPY_SCROLL_RENDER_RETRIES; attempt++) {
                   if (attempt > 0) {
-                    await new Promise<void>((resolve) => {
-                      window.setTimeout(resolve, PROMPT_COPY_SCROLL_RETRY_DELAY_MS);
-                    });
+                    await waitForPromptCopyDelay(PROMPT_COPY_SCROLL_RETRY_DELAY_MS);
+                    if (disposed) return null;
                   }
                   const currentRows = readVisibleRows();
                   const newRows = getNewlyVisiblePromptRows(previousRows, currentRows);
@@ -336,24 +352,31 @@ const useTerminal = ({ readOnly = false, theme, fontSize = DEFAULT_FONT_SIZE, li
                 return null;
               },
             });
-            if (!text) return;
+            if (!text || disposed) return;
             const ok = await copyToClipboard(text);
-            if (ok) {
+            if (ok && !disposed) {
               toast.success(callbacksRef.current.t('copyPaneSuccess'), {
                 id: COPY_TOAST_ID,
                 duration: 1500,
               });
             }
           } finally {
-            await restorePromptViewport({
-              targetRows: initialVisibleRows,
-              readRows: readVisibleRows,
-              scrollUp: () => waitForScrollRender(() => dispatchWheel('up')),
-              // At the live bottom tmux exits copy-mode. The first upward wheel
-              // only re-enters it, so allow one observed no-op before restoring.
-              maxAttempts: scrollSteps + 1,
-            });
-            promptMarkerSyncRef.current();
+            if (!disposed) {
+              await restorePromptViewport({
+                targetRows: initialVisibleRows,
+                readRows: () => disposed ? initialVisibleRows : readVisibleRows(),
+                scrollUp: () => disposed
+                  ? Promise.resolve()
+                  : waitForScrollRender(() => dispatchWheel('up')),
+                // At the live bottom tmux exits copy-mode. The first upward wheel
+                // only re-enters it, so allow one observed no-op before restoring.
+                maxAttempts: scrollSteps + 1,
+              });
+            }
+            if (!disposed) {
+              gutter.inert = false;
+              promptMarkerSyncRef.current();
+            }
           }
         };
 
@@ -501,6 +524,7 @@ const useTerminal = ({ readOnly = false, theme, fontSize = DEFAULT_FONT_SIZE, li
 
     return () => {
       disposed = true;
+      for (const finish of [...pendingPromptCopyWaits]) finish();
       setIsReady(false);
       cancelAnimationFrame(resizeRaf);
       cancelAnimationFrame(promptMarkerRaf);

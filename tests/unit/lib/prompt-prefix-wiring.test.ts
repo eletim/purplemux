@@ -26,6 +26,10 @@ describe('prompt-prefix terminal wiring', () => {
     expect(source).toContain('getNewlyVisiblePromptRows(previousRows, currentRows)');
     expect(source).toContain('restorePromptViewport({');
     expect(source).not.toContain('promptCopyQueue');
+    expect(source).toContain('if (disposed || gutter.inert) return;');
+    expect(source).toContain('gutter.inert = true;');
+    expect(source).toContain('for (const finish of [...pendingPromptCopyWaits]) finish();');
+    expect(source).toMatch(/if \(!text \|\| disposed\) return;[\s\S]*?copyToClipboard\(text\)/);
   });
 
   it('resyncs prompt markers after resetting the terminal', () => {
