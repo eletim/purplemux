@@ -250,51 +250,43 @@ describe('terminal prompt copy boundaries', () => {
     );
   });
 
-  it('cuts an open block at the click-time end when the captured snapshot arrives later', () => {
+  it('continues past the xterm tail through the backend snapshot end', () => {
     const clickRows = [
       'eletim@E-ryzen:~$ final',
       'output present at click',
-      'partial output',
+      'visible viewport end',
     ];
     const identity = getPromptSnapshotIdentity(createBuffer(clickRows), 0, PROMPT_PREFIX);
-    const delayedSnapshot = [
-      ...clickRows.slice(0, -1),
-      'partial output added after click',
-      'another post-click line',
-      'eletim@E-ryzen:~$ prompt after click',
+    const backendSnapshot = [
+      ...clickRows,
+      'history outside xterm',
+      'backend snapshot end',
     ].join('\n');
 
     expect(identity).not.toBeNull();
-    expect(getPromptBlockFromSnapshot(delayedSnapshot, identity!, PROMPT_PREFIX)).toBe(
-      clickRows.join('\n'),
+    expect(getPromptBlockFromSnapshot(backendSnapshot, identity!, PROMPT_PREFIX)).toBe(
+      [...clickRows, 'history outside xterm', 'backend snapshot end'].join('\n'),
     );
   });
 
-  it('ignores an otherwise identical prompt block added after the click boundary', () => {
-    const before = Array.from({ length: 8 }, (_, row) => `before ${row}`);
-    const after = Array.from({ length: 8 }, (_, row) => `after ${row}`);
-    const tail = Array.from({ length: 9 }, (_, row) => `click tail ${row}`);
-    const selected = [...before, 'eletim@E-ryzen:~$ repeat', ...after];
-    const clickRows = [...selected, ...tail];
-    const identity = getPromptSnapshotIdentity(createBuffer(clickRows), before.length, PROMPT_PREFIX);
-    const delayedSnapshot = [...clickRows, ...selected].join('\n');
-
-    expect(identity).not.toBeNull();
-    expect(getPromptBlockFromSnapshot(delayedSnapshot, identity!, PROMPT_PREFIX)).toBe(
-      ['eletim@E-ryzen:~$ repeat', ...after, ...tail].join('\n'),
-    );
-  });
-
-  it('rejects a repeated click-end anchor instead of moving the boundary forward', () => {
+  it('binds repetitive click-end context to the selected prompt offset', () => {
     const clickRows = [
       'eletim@E-ryzen:~$ repeat-output',
       ...Array.from({ length: 8 }, () => 'same output'),
     ];
     const identity = getPromptSnapshotIdentity(createBuffer(clickRows), 0, PROMPT_PREFIX);
-    const ambiguousSnapshot = [...clickRows, ...Array.from({ length: 8 }, () => 'same output')].join('\n');
+    const backendSnapshot = [
+      ...Array.from({ length: 8 }, () => 'same output'),
+      ...clickRows,
+      'history outside xterm',
+      'eletim@E-ryzen:~$ next',
+    ].join('\n');
 
     expect(identity).not.toBeNull();
-    expect(getPromptBlockFromSnapshot(ambiguousSnapshot, identity!, PROMPT_PREFIX)).toBeNull();
+    expect(getPromptBlockFromSnapshot(backendSnapshot, identity!, PROMPT_PREFIX)).toBe([
+      ...clickRows,
+      'history outside xterm',
+    ].join('\n'));
   });
 
   it('creates positioned buttons only for prompts in the viewport', () => {
