@@ -22,4 +22,12 @@ describe('prompt-prefix terminal wiring', () => {
     expect(source).toContain('syncPromptMarkers({');
     expect(source).toContain('promptPrefix: callbacksRef.current.promptPrefix');
   });
+
+  it('resyncs prompt markers after resetting the terminal', () => {
+    const source = readSource('src/hooks/use-terminal.ts');
+
+    expect(source).toMatch(
+      /const reset = useCallback\(\(\) => \{[\s\S]*?terminalInstance\.current\?\.reset\(\);\s*promptMarkerSyncRef\.current\(\);/,
+    );
+  });
 });

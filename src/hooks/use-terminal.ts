@@ -159,6 +159,7 @@ const useTerminal = ({ readOnly = false, theme, fontSize = DEFAULT_FONT_SIZE, li
     writeQueueRef.current = [];
     isWritingRef.current = false;
     terminalInstance.current?.reset();
+    promptMarkerSyncRef.current();
   }, []);
 
   const focus = useCallback(() => {

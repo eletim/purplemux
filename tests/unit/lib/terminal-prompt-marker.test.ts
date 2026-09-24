@@ -10,7 +10,7 @@ import {
 const PROMPT_PREFIX = 'eletim@E-ryzen:';
 
 const createBuffer = (rows: Array<string | { text: string; wrapped: boolean }>) => ({
-  length: rows.length,
+  get length() { return rows.length; },
   getLine: (row: number): ITerminalPromptLine | undefined => {
     const value = rows[row];
     if (value === undefined) return undefined;
@@ -100,5 +100,27 @@ describe('terminal prompt markers', () => {
     rows[4] = 'eletim@E-ryzen:~$ written';
     sync(2, 2, 75);
     expect(gutter.querySelector('[data-buffer-row="4"]')).not.toBeNull();
+  });
+
+  it('removes stale circles when the buffer is reset', () => {
+    const gutter = document.createElement('div');
+    const rows = ['eletim@E-ryzen:~$ command'];
+    const buffer = createBuffer(rows);
+    const sync = () => syncPromptMarkers({
+      gutter,
+      buffer,
+      viewportY: 0,
+      viewportRows: 3,
+      screenTop: 0,
+      screenHeight: 60,
+      promptPrefix: PROMPT_PREFIX,
+    });
+
+    sync();
+    expect(gutter.querySelector('.terminal-prompt-marker')).not.toBeNull();
+
+    rows.length = 0;
+    sync();
+    expect(gutter.querySelector('.terminal-prompt-marker')).toBeNull();
   });
 });
