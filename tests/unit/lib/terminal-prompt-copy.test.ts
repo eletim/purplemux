@@ -2,9 +2,12 @@
 
 import { describe, expect, it, vi } from 'vitest';
 import {
+  findNewPromptRows,
   findShellPromptRows,
   getPromptBlockText,
+  getPromptBlockTextWithScroll,
   isShellPrompt,
+  snapshotPromptRows,
   syncPromptCopyButtons,
   type ITerminalPromptBuffer,
   type ITerminalPromptLine,
@@ -146,6 +149,80 @@ describe('terminal prompt copy boundaries', () => {
     );
   });
 
+  it.each([18, 64, 148])(
+    'loads more rows until it finds a prompt %i rows after the clicked prompt',
+    async (distance) => {
+      const allRows = [
+        'old scrollback',
+        'eletim@E-ryzen:~$ first',
+        ...Array.from({ length: distance - 1 }, (_, row) => `output ${row}`),
+        'eletim@E-ryzen:~$ second',
+        'second output',
+      ];
+      const initiallyLoaded = Math.min(24, allRows.length);
+      const buffer = createBuffer(allRows.slice(0, initiallyLoaded));
+      let loaded = initiallyLoaded;
+      const loadMore = vi.fn(async () => {
+        if (loaded >= allRows.length) return null;
+        const next = allRows.slice(loaded, loaded + 20);
+        loaded += next.length;
+        return snapshotPromptRows(createBuffer(next));
+      });
+      const restore = vi.fn(async () => {});
+
+      await expect(getPromptBlockTextWithScroll(buffer, 1, PROMPT_PREFIX, {
+        loadMore,
+        restore,
+      })).resolves.toBe(allRows.slice(1, 1 + distance).join('\n'));
+      expect(loadMore).toHaveBeenCalledTimes(Math.max(0, Math.ceil((distance + 2 - initiallyLoaded) / 20)));
+      expect(restore).toHaveBeenCalledOnce();
+    },
+  );
+
+  it('returns the click-time tail when no later prompt exists', async () => {
+    const allRows = [
+      'old scrollback',
+      'eletim@E-ryzen:~$ first',
+      ...Array.from({ length: 125 }, (_, row) => `output ${row}`),
+    ];
+    const buffer = createBuffer(allRows.slice(0, 24));
+    let loaded = 24;
+
+    await expect(getPromptBlockTextWithScroll(buffer, 1, PROMPT_PREFIX, {
+      loadMore: async () => {
+        if (loaded >= allRows.length) return null;
+        const next = allRows.slice(loaded, loaded + 20);
+        loaded += next.length;
+        return snapshotPromptRows(createBuffer(next));
+      },
+      restore: async () => {},
+    })).resolves.toBe(allRows.slice(1).join('\n'));
+  });
+
+  it('joins a wrapped line split across separately loaded ranges', async () => {
+    const buffer = createBuffer([
+      'eletim@E-ryzen:~$ first',
+      'long ',
+    ]);
+    const loadMore = vi.fn()
+      .mockResolvedValueOnce(snapshotPromptRows(createBuffer([
+        { text: 'line', wrapped: true },
+        'eletim@E-ryzen:~$ second',
+      ])));
+
+    await expect(getPromptBlockTextWithScroll(buffer, 0, PROMPT_PREFIX, {
+      loadMore,
+      restore: async () => {},
+    })).resolves.toBe('eletim@E-ryzen:~$ first\nlong line');
+  });
+
+  it('extracts only rows newly revealed below an overlapping screen', () => {
+    const previous = snapshotPromptRows(createBuffer(['one', 'two', 'three', 'four']));
+    const current = snapshotPromptRows(createBuffer(['three', 'four', 'five', 'six']));
+    expect(findNewPromptRows(previous, current).map((row) => row.text)).toEqual(['five', 'six']);
+    expect(findNewPromptRows(current, current)).toEqual([]);
+  });
+
   it('keeps hash-led comments inside command output', () => {
     const buffer = createBuffer([
       'eletim@E-ryzen:~$ cat config.yml',
@@ -213,6 +290,56 @@ describe('terminal prompt copy boundaries', () => {
 
     buttons[0].click();
     expect(onCopy).toHaveBeenCalledWith(2);
+  });
+
+  it('copies 150 offscreen output rows and can show success from a visible button', async () => {
+    const gutter = document.createElement('div');
+    const allRows = [
+      'old scrollback',
+      'eletim@E-ryzen:~$ long-command',
+      ...Array.from({ length: 150 }, (_, row) => `long output ${row}`),
+      'eletim@E-ryzen:~$ next-command',
+      'next output',
+    ];
+    const viewportRows = 24;
+    const buffer = createBuffer(allRows.slice(0, viewportRows));
+    let loaded = viewportRows;
+    const clipboard = vi.fn(async (_text: string) => true);
+    const successToast = vi.fn((_message: string) => {});
+    let copyFinished: Promise<void> | undefined;
+
+    syncPromptCopyButtons({
+      gutter,
+      buffer,
+      viewportY: 0,
+      viewportRows,
+      screenTop: 0,
+      screenHeight: 480,
+      label: 'Copy command block',
+      promptPrefix: PROMPT_PREFIX,
+      onCopy: (row) => {
+        copyFinished = getPromptBlockTextWithScroll(buffer, row, PROMPT_PREFIX, {
+          loadMore: async () => {
+            if (loaded >= allRows.length) return null;
+            const next = allRows.slice(loaded, loaded + 20);
+            loaded += next.length;
+            return snapshotPromptRows(createBuffer(next));
+          },
+          restore: async () => {},
+        }).then(async (text) => {
+          expect(text).not.toBeNull();
+          if (text && await clipboard(text)) successToast('Copied');
+        });
+      },
+    });
+
+    const button = gutter.querySelector<HTMLButtonElement>('[data-buffer-row="1"]');
+    expect(button).not.toBeNull();
+    button?.click();
+    await copyFinished;
+
+    expect(clipboard).toHaveBeenCalledWith(allRows.slice(1, 152).join('\n'));
+    expect(successToast).toHaveBeenCalledWith('Copied');
   });
 
   it.each(['normal', 'alternate'] as const)(

@@ -11,7 +11,12 @@ import type { ITerminalThemeColors } from "@/lib/terminal-themes";
 import { createMultilineUrlLinkProvider } from "@/lib/multiline-url-link-provider";
 import { copyToClipboard } from "@/lib/clipboard";
 import { DEFAULT_LINE_HEIGHT } from "@/lib/terminal-line-height";
-import { getPromptBlockText, syncPromptCopyButtons } from "@/lib/terminal-prompt-copy";
+import {
+  findNewPromptRows,
+  getPromptBlockTextWithScroll,
+  snapshotPromptRows,
+  syncPromptCopyButtons,
+} from "@/lib/terminal-prompt-copy";
 import isElectron from "@/hooks/use-is-electron";
 
 interface IUseTerminalOptions {
@@ -28,6 +33,7 @@ interface IUseTerminalOptions {
 }
 
 const COPY_TOAST_ID = 'terminal-copy';
+const MAX_PROMPT_COPY_SCROLL_STEPS = 2000;
 
 const DEFAULT_FONT_SIZE = 12;
 
@@ -255,16 +261,105 @@ const useTerminal = ({ readOnly = false, theme, fontSize = DEFAULT_FONT_SIZE, li
         gutter.setAttribute('aria-hidden', 'false');
         terminal.element.appendChild(gutter);
 
+        const screen = terminal.element.querySelector<HTMLElement>('.xterm-screen');
+        let isCopyingPrompt = false;
+
+        const waitForScrollRender = (scroll: () => void): Promise<void> => new Promise((resolve) => {
+          let settledTimer = 0;
+          let fallbackTimer = 0;
+          let finished = false;
+          const finish = () => {
+            if (finished) return;
+            finished = true;
+            window.clearTimeout(settledTimer);
+            window.clearTimeout(fallbackTimer);
+            subscription.dispose();
+            resolve();
+          };
+          const subscription = terminal.onWriteParsed(() => {
+            window.clearTimeout(settledTimer);
+            settledTimer = window.setTimeout(finish, 40);
+          });
+
+          fallbackTimer = window.setTimeout(finish, 350);
+          scroll();
+        });
+
+        const dispatchWheel = (direction: 'up' | 'down', count = 1): Promise<void> => {
+          if (!screen) return Promise.resolve();
+          const rect = screen.getBoundingClientRect();
+          return waitForScrollRender(() => {
+            for (let event = 0; event < count; event++) {
+              screen.dispatchEvent(new WheelEvent('wheel', {
+                deltaY: direction === 'down' ? 1 : -1,
+                deltaMode: WheelEvent.DOM_DELTA_LINE,
+                clientX: rect.left + rect.width / 2,
+                clientY: rect.top + rect.height / 2,
+                bubbles: true,
+                cancelable: true,
+              }));
+            }
+          });
+        };
+
         const copyPromptBlock = async (row: number) => {
+          if (isCopyingPrompt) return;
+          isCopyingPrompt = true;
           const buffer = terminal.buffer.active;
-          const text = getPromptBlockText(buffer, row, callbacksRef.current.promptPrefix);
-          if (!text) return;
-          const ok = await copyToClipboard(text);
-          if (ok) {
-            toast.success(callbacksRef.current.t('copyPaneSuccess'), {
-              id: COPY_TOAST_ID,
-              duration: 1500,
-            });
+          let visibleRows = snapshotPromptRows(
+            buffer,
+            Math.max(0, buffer.length - terminal.rows),
+          );
+          let successfulScrolls = 0;
+          let attemptedScrolls = 0;
+          let tmuxRedrewInPlace = false;
+          let reachedEnd = false;
+
+          try {
+            const text = await getPromptBlockTextWithScroll(
+              buffer,
+              row,
+              callbacksRef.current.promptPrefix,
+              {
+                loadMore: async () => {
+                  if (attemptedScrolls >= MAX_PROMPT_COPY_SCROLL_STEPS) return null;
+                  attemptedScrolls++;
+                  const viewportY = buffer.viewportY;
+                  await dispatchWheel('down');
+                  const currentRows = snapshotPromptRows(
+                    buffer,
+                    Math.max(0, buffer.length - terminal.rows),
+                  );
+                  const newRows = findNewPromptRows(visibleRows, currentRows);
+                  if (newRows.length === 0) {
+                    reachedEnd = true;
+                    return null;
+                  }
+                  successfulScrolls++;
+                  tmuxRedrewInPlace ||= buffer.viewportY === viewportY;
+                  visibleRows = currentRows;
+                  return newRows;
+                },
+                restore: async () => {
+                  if (successfulScrolls === 0) return;
+                  // tmux exits copy-mode at the bottom. Its first upward wheel only
+                  // re-enters copy-mode, so it does not undo a prior scroll step.
+                  const reenterCopyMode = reachedEnd && tmuxRedrewInPlace ? 1 : 0;
+                  await dispatchWheel('up', successfulScrolls + reenterCopyMode);
+                },
+              },
+            );
+            if (!text) return;
+            const ok = await copyToClipboard(text);
+            if (ok) {
+              toast.success(callbacksRef.current.t('copyPaneSuccess'), {
+                id: COPY_TOAST_ID,
+                duration: 1500,
+              });
+            }
+          } finally {
+            isCopyingPrompt = false;
+            schedulePromptButtonSync();
           }
         };
 
@@ -298,7 +393,6 @@ const useTerminal = ({ readOnly = false, theme, fontSize = DEFAULT_FONT_SIZE, li
         terminal.onResize(schedulePromptButtonSync);
         terminal.onWriteParsed(schedulePromptButtonSync);
 
-        const screen = terminal.element.querySelector<HTMLElement>('.xterm-screen');
         if (screen) {
           promptCopyResizeObserver = new ResizeObserver(schedulePromptButtonSync);
           promptCopyResizeObserver.observe(screen);

@@ -8,6 +8,11 @@ export interface ITerminalPromptBuffer {
   getLine(y: number): ITerminalPromptLine | undefined;
 }
 
+export interface ITerminalPromptRow {
+  readonly isWrapped: boolean;
+  readonly text: string;
+}
+
 interface ILogicalBufferLine {
   startRow: number;
   endRow: number;
@@ -58,6 +63,104 @@ const readLogicalLines = (
   }
 
   return logicalLines;
+};
+
+export const snapshotPromptRows = (
+  buffer: ITerminalPromptBuffer,
+  startRow = 0,
+  endRow = buffer.length,
+): ITerminalPromptRow[] => {
+  const rows: ITerminalPromptRow[] = [];
+  const snapshotEnd = Math.max(0, Math.min(endRow, buffer.length));
+  for (let row = Math.max(0, startRow); row < snapshotEnd; row++) {
+    const line = buffer.getLine(row);
+    if (!line) continue;
+    rows.push({ isWrapped: line.isWrapped, text: line.translateToString(false) });
+  }
+  return rows;
+};
+
+const bufferFromRows = (rows: readonly ITerminalPromptRow[]): ITerminalPromptBuffer => ({
+  length: rows.length,
+  getLine: (row) => {
+    const line = rows[row];
+    if (!line) return undefined;
+    return {
+      isWrapped: line.isWrapped,
+      translateToString: (trimRight = false) => trimRight ? line.text.trimEnd() : line.text,
+    };
+  },
+});
+
+const promptBlockFromRows = (
+  rows: readonly ITerminalPromptRow[],
+  promptPrefix: string,
+): { text: string | null; hasNextPrompt: boolean } => {
+  const logicalLines = readLogicalLines(bufferFromRows(rows));
+  if (logicalLines.length === 0 || !isShellPrompt(logicalLines[0].text, promptPrefix)) {
+    return { text: null, hasNextPrompt: false };
+  }
+
+  const nextPrompt = logicalLines.findIndex((line, index) => (
+    index > 0 && isShellPrompt(line.text, promptPrefix)
+  ));
+  const blockLines = nextPrompt === -1 ? logicalLines : logicalLines.slice(0, nextPrompt);
+  return {
+    text: blockLines.map((line) => line.text).join('\n').replace(/\n+$/, ''),
+    hasNextPrompt: nextPrompt !== -1,
+  };
+};
+
+export const findNewPromptRows = (
+  previous: readonly ITerminalPromptRow[],
+  current: readonly ITerminalPromptRow[],
+): ITerminalPromptRow[] => {
+  const sameRow = (left: ITerminalPromptRow, right: ITerminalPromptRow) => (
+    left.isWrapped === right.isWrapped && left.text === right.text
+  );
+  const maxOverlap = Math.min(previous.length, current.length);
+
+  for (let overlap = maxOverlap; overlap > 0; overlap--) {
+    const previousStart = previous.length - overlap;
+    let matches = true;
+    for (let row = 0; row < overlap; row++) {
+      if (!sameRow(previous[previousStart + row], current[row])) {
+        matches = false;
+        break;
+      }
+    }
+    if (matches) return current.slice(overlap);
+  }
+
+  return [...current];
+};
+
+interface IPromptBlockScrollOptions {
+  loadMore: () => Promise<readonly ITerminalPromptRow[] | null>;
+  restore: () => Promise<void>;
+}
+
+export const getPromptBlockTextWithScroll = async (
+  buffer: ITerminalPromptBuffer,
+  promptRow: number,
+  promptPrefix: string,
+  { loadMore, restore }: IPromptBlockScrollOptions,
+): Promise<string | null> => {
+  if (promptRow < 0 || promptRow >= buffer.length) return null;
+  const rows = snapshotPromptRows(buffer, promptRow);
+
+  try {
+    while (true) {
+      const block = promptBlockFromRows(rows, promptPrefix);
+      if (!block.text || block.hasNextPrompt) return block.text;
+
+      const more = await loadMore();
+      if (!more || more.length === 0) return block.text;
+      rows.push(...more);
+    }
+  } finally {
+    await restore();
+  }
 };
 
 export const findShellPromptRows = (

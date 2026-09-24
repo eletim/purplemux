@@ -20,6 +20,6 @@ describe('prompt-prefix terminal wiring', () => {
     const source = readSource('src/hooks/use-terminal.ts');
 
     expect(source).toContain('promptPrefix: callbacksRef.current.promptPrefix');
-    expect(source).toContain('getPromptBlockText(buffer, row, callbacksRef.current.promptPrefix)');
+    expect(source).toMatch(/getPromptBlockTextWithScroll\([\s\S]*?buffer,[\s\S]*?row,[\s\S]*?callbacksRef\.current\.promptPrefix/);
   });
 });
