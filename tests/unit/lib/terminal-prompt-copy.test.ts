@@ -189,6 +189,40 @@ describe('terminal prompt copy boundaries', () => {
     expect(getPromptBlockFromSnapshot(snapshotWithLocalDivergence, identity!, PROMPT_PREFIX)).toBeNull();
   });
 
+  it('rejects a prior repeated block when divergence removes the newest occurrence', () => {
+    const repeatedOutput = Array.from({ length: 12 }, () => 'same output');
+    const leadingContext = Array.from({ length: 8 }, () => 'same output');
+    const xtermAtClick = [
+      ...leadingContext,
+      'eletim@E-ryzen:~$ repeat',
+      ...repeatedOutput,
+      'eletim@E-ryzen:~$ repeat',
+      ...repeatedOutput,
+      'current tail',
+    ];
+    const newestPromptRow = leadingContext.length + repeatedOutput.length + 1;
+    const identity = getPromptSnapshotIdentity(
+      createBuffer(xtermAtClick),
+      newestPromptRow,
+      PROMPT_PREFIX,
+    );
+    const snapshotWithLocalDivergence = [
+      ...leadingContext,
+      'eletim@E-ryzen:~$ repeat',
+      ...repeatedOutput,
+      'eletim@E-ryzen:~$ repeat',
+      'different first output in tmux',
+      ...repeatedOutput.slice(1),
+      'current tail',
+    ].join('\n');
+
+    expect(identity).toMatchObject({
+      matchingOccurrenceFromStart: 2,
+      matchingOccurrenceFromEnd: 1,
+    });
+    expect(getPromptBlockFromSnapshot(snapshotWithLocalDivergence, identity!, PROMPT_PREFIX)).toBeNull();
+  });
+
   it('continues past the xterm tail through the backend snapshot end', () => {
     const clickRows = [
       'eletim@E-ryzen:~$ final',

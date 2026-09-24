@@ -19,6 +19,7 @@ export interface IPromptSnapshotIdentity {
   before: string[];
   after: string[];
   clickEnd: string[];
+  matchingOccurrenceFromStart: number;
   matchingOccurrenceFromEnd: number;
   nextPrompt: string | null;
 }
@@ -196,6 +197,7 @@ export const getPromptSnapshotIdentity = (
 
   return {
     ...identity,
+    matchingOccurrenceFromStart: matchingIndex + 1,
     matchingOccurrenceFromEnd: matchingRows.length - matchingIndex,
   };
 };
@@ -249,7 +251,9 @@ export const getPromptBlockFromSnapshot = (
   const lines = snapshot.replace(/\r\n/g, '\n').split('\n').map(normalizeContextLine);
 
   const matchingRows = findPromptIdentityMatches(lines, identity, promptPrefix);
-  let promptRow = matchingRows.length === 1 && identity.matchingOccurrenceFromEnd === 1
+  let promptRow = matchingRows.length === 1
+    && identity.matchingOccurrenceFromStart === 1
+    && identity.matchingOccurrenceFromEnd === 1
     ? matchingRows[0]
     : undefined;
 
@@ -261,9 +265,9 @@ export const getPromptBlockFromSnapshot = (
       identity.nextPrompt === null,
     )) {
       const matchesBeforeClickEnd = matchingRows.filter((row) => row < clickEnd);
-      const candidate = matchesBeforeClickEnd[
-        matchesBeforeClickEnd.length - identity.matchingOccurrenceFromEnd
-      ];
+      const candidateIndex = matchesBeforeClickEnd.length - identity.matchingOccurrenceFromEnd;
+      if (candidateIndex + 1 !== identity.matchingOccurrenceFromStart) continue;
+      const candidate = matchesBeforeClickEnd[candidateIndex];
       if (candidate !== undefined) candidates.add(candidate);
     }
     if (candidates.size === 1) [promptRow] = candidates;
