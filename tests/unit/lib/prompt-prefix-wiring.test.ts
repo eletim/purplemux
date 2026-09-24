@@ -25,7 +25,7 @@ describe('prompt-prefix terminal wiring', () => {
     expect(source).toContain("dispatchWheel('down')");
     expect(source).toContain('getNewlyVisiblePromptRows(previousRows, currentRows)');
     expect(source).toContain('restorePromptViewport({');
-    expect(source).toMatch(/promptCopyQueue\s*=\s*promptCopyQueue[\s\S]*?\.then\(\(\) => copyPromptBlock\(row\)\)/);
+    expect(source).not.toContain('promptCopyQueue');
   });
 
   it('resyncs prompt markers after resetting the terminal', () => {

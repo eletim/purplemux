@@ -258,7 +258,6 @@ const useTerminal = ({ readOnly = false, theme, fontSize = DEFAULT_FONT_SIZE, li
         terminal.element.appendChild(gutter);
 
         const screen = terminal.element.querySelector<HTMLElement>('.xterm-screen');
-        let promptCopyQueue = Promise.resolve();
 
         const readVisibleRows = () => snapshotPromptRows(
           terminal.buffer.active,
@@ -358,12 +357,6 @@ const useTerminal = ({ readOnly = false, theme, fontSize = DEFAULT_FONT_SIZE, li
           }
         };
 
-        const enqueuePromptCopy = (row: number) => {
-          promptCopyQueue = promptCopyQueue
-            .then(() => copyPromptBlock(row))
-            .catch(() => {});
-        };
-
         const syncMarkers = () => {
           promptMarkerRaf = 0;
           const buffer = terminal.buffer.active;
@@ -380,7 +373,7 @@ const useTerminal = ({ readOnly = false, theme, fontSize = DEFAULT_FONT_SIZE, li
             screenHeight: screenRect.height,
             promptPrefix: callbacksRef.current.promptPrefix,
             label: callbacksRef.current.t('copyPaneLabel'),
-            onCopy: enqueuePromptCopy,
+            onCopy: (row) => void copyPromptBlock(row),
           });
         };
 

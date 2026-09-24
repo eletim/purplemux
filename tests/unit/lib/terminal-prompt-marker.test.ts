@@ -172,7 +172,7 @@ describe('terminal prompt markers', () => {
     expect(loadNextRows).toHaveBeenCalledTimes(2);
   });
 
-  it('adds only newly visible rows after a full or partial three-row scroll', () => {
+  it('adds exactly three rows only after an exact three-row scroll', () => {
     const previous = snapshotPromptRows(createBuffer(['one', 'two', 'three', 'four', 'five']), 0, 5);
     const advancedThree = snapshotPromptRows(createBuffer(['four', 'five', 'six', 'seven', 'eight']), 0, 5);
     const advancedTwo = snapshotPromptRows(createBuffer(['three', 'four', 'five', 'six', 'seven']), 0, 5);
@@ -180,11 +180,11 @@ describe('terminal prompt markers', () => {
 
     expect(getNewlyVisiblePromptRows(previous, advancedThree).map((row) => row.text.trimEnd()))
       .toEqual(['six', 'seven', 'eight']);
-    expect(getNewlyVisiblePromptRows(previous, advancedTwo).map((row) => row.text.trimEnd()))
-      .toEqual(['six', 'seven']);
-    expect(getNewlyVisiblePromptRows(previous, advancedOne).map((row) => row.text.trimEnd()))
-      .toEqual(['six']);
+    expect(getNewlyVisiblePromptRows(previous, advancedTwo)).toEqual([]);
+    expect(getNewlyVisiblePromptRows(previous, advancedOne)).toEqual([]);
     expect(getNewlyVisiblePromptRows(advancedThree, advancedThree)).toEqual([]);
+    const threeRowScreen = snapshotPromptRows(createBuffer(['six', 'seven', 'eight']), 0, 3);
+    expect(getNewlyVisiblePromptRows(threeRowScreen, threeRowScreen)).toEqual([]);
   });
 
   it('restores by observed rows when the first upward scroll only re-enters copy-mode', async () => {

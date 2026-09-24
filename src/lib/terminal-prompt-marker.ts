@@ -100,16 +100,14 @@ export const getNewlyVisiblePromptRows = (
   previous: readonly ITerminalPromptRow[],
   current: readonly ITerminalPromptRow[],
 ): ITerminalPromptRow[] => {
-  const maxOverlap = Math.min(previous.length, current.length);
-  for (let overlap = maxOverlap; overlap > 0; overlap--) {
-    if (arePromptRowsEqual(previous.slice(-overlap), current.slice(0, overlap))) {
-      return current.slice(Math.max(overlap, current.length - 3));
-    }
+  if (arePromptRowsEqual(previous, current)) return [];
+  const overlap = current.length - 3;
+  if (overlap < 0 || overlap > previous.length) return [];
+  const previousOverlap = overlap === 0 ? [] : previous.slice(-overlap);
+  if (!arePromptRowsEqual(previousOverlap, current.slice(0, overlap))) {
+    return [];
   }
-
-  // One tmux wheel step exposes at most three rows. If a full redraw leaves no
-  // comparable overlap, retain only those potentially new bottom rows.
-  return current.slice(-3);
+  return current.slice(overlap);
 };
 
 interface IRestorePromptViewportOptions {
