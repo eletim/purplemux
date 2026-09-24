@@ -270,6 +270,33 @@ describe('terminal prompt copy boundaries', () => {
     );
   });
 
+  it('ignores an otherwise identical prompt block added after the click boundary', () => {
+    const before = Array.from({ length: 8 }, (_, row) => `before ${row}`);
+    const after = Array.from({ length: 8 }, (_, row) => `after ${row}`);
+    const tail = Array.from({ length: 9 }, (_, row) => `click tail ${row}`);
+    const selected = [...before, 'eletim@E-ryzen:~$ repeat', ...after];
+    const clickRows = [...selected, ...tail];
+    const identity = getPromptSnapshotIdentity(createBuffer(clickRows), before.length, PROMPT_PREFIX);
+    const delayedSnapshot = [...clickRows, ...selected].join('\n');
+
+    expect(identity).not.toBeNull();
+    expect(getPromptBlockFromSnapshot(delayedSnapshot, identity!, PROMPT_PREFIX)).toBe(
+      ['eletim@E-ryzen:~$ repeat', ...after, ...tail].join('\n'),
+    );
+  });
+
+  it('rejects a repeated click-end anchor instead of moving the boundary forward', () => {
+    const clickRows = [
+      'eletim@E-ryzen:~$ repeat-output',
+      ...Array.from({ length: 8 }, () => 'same output'),
+    ];
+    const identity = getPromptSnapshotIdentity(createBuffer(clickRows), 0, PROMPT_PREFIX);
+    const ambiguousSnapshot = [...clickRows, ...Array.from({ length: 8 }, () => 'same output')].join('\n');
+
+    expect(identity).not.toBeNull();
+    expect(getPromptBlockFromSnapshot(ambiguousSnapshot, identity!, PROMPT_PREFIX)).toBeNull();
+  });
+
   it('creates positioned buttons only for prompts in the viewport', () => {
     const gutter = document.createElement('div');
     const onCopy = vi.fn();

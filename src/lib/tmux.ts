@@ -16,6 +16,8 @@ const execFile = promisify(execFileCb);
 const TMUX_SOCKET = 'purple';
 const TMUX_CONFIG_PATH = path.join(process.env.__PMUX_APP_DIR_UNPACKED || process.env.__PMUX_APP_DIR || process.cwd(), 'src', 'config', 'tmux.conf');
 const CMD_TIMEOUT = 5000;
+// `capture-pane -J` preserves padding, so a wide 5,000-row history can exceed Node's 1 MiB default.
+const HISTORY_CAPTURE_MAX_BUFFER = 64 * 1024 * 1024;
 
 export const listSessions = async (): Promise<string[]> => {
   try {
@@ -606,7 +608,7 @@ export const capturePaneContentWithHistory = async (
         ...(options.joinWrapped ? ['-J'] : []),
         '-S', startLine, '-t', sessionName,
       ],
-      { timeout: CMD_TIMEOUT },
+      { timeout: CMD_TIMEOUT, maxBuffer: HISTORY_CAPTURE_MAX_BUFFER },
     );
     return stdout;
   } catch {

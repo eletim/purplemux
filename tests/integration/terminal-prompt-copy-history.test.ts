@@ -22,10 +22,10 @@ const createBuffer = (rows: string[]) => ({
   }),
 });
 
-const startSession = (session: string, command: string) => {
+const startSession = (session: string, command: string, cols = 30) => {
   sessions.push(session);
   tmux('-f', `${process.cwd()}/src/config/tmux.conf`, 'new-session', '-d', '-s', session,
-    '-x', '30', '-y', '8', `sh -c "${command}"`);
+    '-x', String(cols), '-y', '8', `sh -c "${command}"`);
 };
 
 afterEach(() => {
@@ -118,5 +118,24 @@ describe('terminal prompt copy tmux history', () => {
     expect(getPromptBlockFromSnapshot(delayedSnapshot, identity!, 'user@host:')).toBe(
       'user@host:~$ running\nAT_CLICK\nPARTIAL',
     );
+  });
+
+  it('captures wide full history beyond the default execFile buffer limit', async () => {
+    const session = `pt-issue-59-wide-${process.pid}-${Date.now()}`;
+    const wideLine = 'x'.repeat(280);
+    const command = [
+      `yes '${wideLine}' | head -n 4500`,
+      "printf 'WIDE_DONE\\n'",
+      'sleep 30',
+    ].join('; ');
+    startSession(session, command, 320);
+    await vi.waitFor(() => expect(tmux('capture-pane', '-p', '-t', session)).toContain('WIDE_DONE'),
+      { timeout: 10_000 });
+
+    const snapshot = await capturePaneContentWithHistory(session, 'all', { joinWrapped: true });
+
+    expect(snapshot).not.toBeNull();
+    expect(Buffer.byteLength(snapshot!)).toBeGreaterThan(1024 * 1024);
+    expect(snapshot).toContain('WIDE_DONE');
   });
 });

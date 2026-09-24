@@ -240,10 +240,13 @@ const contextMatches = (
 
 const findClickEnd = (lines: string[], clickEnd: string[]): number | null => {
   if (clickEnd.length === 0) return null;
-  for (let row = lines.length - clickEnd.length; row >= 0; row--) {
-    if (contextMatches(lines, row, clickEnd, true)) return row + clickEnd.length;
+  let matchEnd: number | null = null;
+  for (let row = 0; row <= lines.length - clickEnd.length; row++) {
+    if (!contextMatches(lines, row, clickEnd, true)) continue;
+    if (matchEnd !== null) return null;
+    matchEnd = row + clickEnd.length;
   }
-  return null;
+  return matchEnd;
 };
 
 export const getPromptBlockFromSnapshot = (
@@ -255,7 +258,7 @@ export const getPromptBlockFromSnapshot = (
   const snapshotEnd = findClickEnd(lines, identity.clickEnd);
   if (snapshotEnd === null) return null;
 
-  const matchingRows = lines.reduce<number[]>((rows, line, row) => {
+  const matchingRows = lines.slice(0, snapshotEnd).reduce<number[]>((rows, line, row) => {
     if (isShellPrompt(line, promptPrefix)
       && normalizePromptIdentity(line) === normalizePromptIdentity(identity.text)
       && contextMatches(
