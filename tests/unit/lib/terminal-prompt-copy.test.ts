@@ -370,6 +370,55 @@ describe('terminal prompt copy boundaries', () => {
     );
   });
 
+  it('allows unrelated later prompts to differ after the selected block', () => {
+    const selectedOutput = Array.from({ length: 8 }, (_, row) => `selected output ${row}`);
+    const clickEnd = Array.from({ length: 8 }, (_, row) => `xterm end ${row}`);
+    const clickRows = [
+      'eletim@E-ryzen:~$ selected',
+      ...selectedOutput,
+      'eletim@E-ryzen:~$ next',
+      'next output',
+      'eletim@E-ryzen:~$ unrelated later prompt',
+      'later output',
+      ...clickEnd,
+    ];
+    const identity = getPromptSnapshotIdentity(createBuffer(clickRows), 0, PROMPT_PREFIX);
+    const backendSnapshot = [
+      'eletim@E-ryzen:~$ selected',
+      ...selectedOutput,
+      'eletim@E-ryzen:~$ next',
+      'different next output',
+      ...clickEnd,
+    ].join('\n');
+
+    expect(identity).not.toBeNull();
+    expect(getPromptBlockFromSnapshot(backendSnapshot, identity!, PROMPT_PREFIX)).toBe(
+      ['eletim@E-ryzen:~$ selected', ...selectedOutput].join('\n'),
+    );
+  });
+
+  it('indexes repetitive boundary anchors without pairing every occurrence', () => {
+    const repeatedBoundary = Array.from({ length: 2000 }, () => 'same boundary output');
+    const selectedOutput = Array.from({ length: 8 }, (_, row) => `selected output ${row}`);
+    const clickRows = [
+      ...repeatedBoundary,
+      'eletim@E-ryzen:~$ selected',
+      ...selectedOutput,
+      'eletim@E-ryzen:~$ next',
+      ...repeatedBoundary,
+    ];
+    const identity = getPromptSnapshotIdentity(
+      createBuffer(clickRows),
+      repeatedBoundary.length,
+      PROMPT_PREFIX,
+    );
+
+    expect(identity).not.toBeNull();
+    expect(getPromptBlockFromSnapshot(clickRows.join('\n'), identity!, PROMPT_PREFIX)).toBe(
+      ['eletim@E-ryzen:~$ selected', ...selectedOutput].join('\n'),
+    );
+  });
+
   it('binds repetitive click-end context to the selected prompt offset', () => {
     const clickRows = [
       'eletim@E-ryzen:~$ repeat-output',

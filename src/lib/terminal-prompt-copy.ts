@@ -21,7 +21,6 @@ export interface IPromptSnapshotIdentity {
   clickStart: string[];
   clickEnd: string[];
   clickLineCount: number;
-  clickPromptCount: number;
   promptOffsetFromClickStart: number;
   nextPromptOffsetFromClickStart: number | null;
   matchingOccurrenceFromStart: number;
@@ -197,27 +196,26 @@ export const getPromptSnapshotIdentity = (
       .slice(Math.max(0, nonBlankEnd - CLICK_END_CONTEXT_LINES + 1), nonBlankEnd + 1)
       .map((line) => normalizeContextLine(line.text)),
     clickLineCount: nonBlankEnd - nonBlankStart + 1,
-    clickPromptCount: logicalLines
-      .slice(nonBlankStart, nonBlankEnd + 1)
-      .filter((line) => isShellPrompt(line.text, promptPrefix)).length,
     promptOffsetFromClickStart: promptIndex - nonBlankStart,
     nextPromptOffsetFromClickStart: nextPrompt
       ? nextPromptIndex - nonBlankStart
       : null,
     nextPrompt: nextPrompt ? normalizePromptIdentity(nextPrompt.text) : null,
   };
-  const matchingRows = findPromptIdentityMatches(
-    logicalLines.map((line) => normalizeContextLine(line.text)),
+  const normalizedLines = logicalLines.map((line) => normalizeContextLine(line.text));
+  if (!findPromptIdentityMatches(
+    normalizedLines,
     identity,
     promptPrefix,
-  );
-  const matchingIndex = matchingRows.indexOf(promptIndex);
-  if (matchingIndex < 0) return null;
+  ).includes(promptIndex)) return null;
+  const promptIdentityRows = findPromptIdentityRows(normalizedLines, identity.text, promptPrefix);
+  const promptIdentityIndex = promptIdentityRows.indexOf(promptIndex);
+  if (promptIdentityIndex < 0) return null;
 
   return {
     ...identity,
-    matchingOccurrenceFromStart: matchingIndex + 1,
-    matchingOccurrenceFromEnd: matchingRows.length - matchingIndex,
+    matchingOccurrenceFromStart: promptIdentityIndex + 1,
+    matchingOccurrenceFromEnd: promptIdentityRows.length - promptIdentityIndex,
   };
 };
 
@@ -246,6 +244,29 @@ const findPromptIdentityMatches = (
   }
   return rows;
 }, []);
+
+const findPromptIdentityRows = (
+  lines: string[],
+  text: string,
+  promptPrefix: string,
+): number[] => lines.reduce<number[]>((rows, line, row) => {
+  if (isShellPrompt(line, promptPrefix)
+    && normalizePromptIdentity(line) === normalizePromptIdentity(text)) {
+    rows.push(row);
+  }
+  return rows;
+}, []);
+
+const lowerBound = (rows: number[], target: number): number => {
+  let low = 0;
+  let high = rows.length;
+  while (low < high) {
+    const middle = Math.floor((low + high) / 2);
+    if (rows[middle] < target) low = middle + 1;
+    else high = middle;
+  }
+  return low;
+};
 
 const findContextEnds = (
   lines: string[],
@@ -287,40 +308,37 @@ export const getPromptBlockFromSnapshot = (
       if (isShellPrompt(line, promptPrefix)) rows.push(row);
       return rows;
     }, []);
-    for (const clickStart of findContextStarts(lines, identity.clickStart)) {
-      for (const clickEnd of findContextEnds(
-        lines,
-        identity.clickEnd,
-        identity.nextPrompt === null,
-      )) {
-        if (clickStart >= clickEnd) continue;
-        const promptRowsInClickBuffer = shellPromptRows.filter(
-          (row) => row >= clickStart && row < clickEnd,
-        );
-        if (promptRowsInClickBuffer.length !== identity.clickPromptCount) continue;
+    const promptIdentityRows = findPromptIdentityRows(lines, identity.text, promptPrefix);
+    const clickStarts = new Set(findContextStarts(lines, identity.clickStart));
+    const clickEnds = findContextEnds(lines, identity.clickEnd, identity.nextPrompt === null);
 
-        const matchesInClickBuffer = matchingRows.filter(
-          (row) => row >= clickStart && row < clickEnd,
-        );
-        const candidateIndex = matchesInClickBuffer.length - identity.matchingOccurrenceFromEnd;
-        if (candidateIndex + 1 !== identity.matchingOccurrenceFromStart) continue;
+    for (const candidate of matchingRows) {
+      const clickStart = candidate - identity.promptOffsetFromClickStart;
+      if (!clickStarts.has(clickStart)) continue;
 
-        const candidate = matchesInClickBuffer[candidateIndex];
-        const promptOffsetMatches = candidate - clickStart === identity.promptOffsetFromClickStart;
-        if (!promptOffsetMatches) continue;
+      const promptIdentityIndex = lowerBound(promptIdentityRows, candidate);
+      if (promptIdentityRows[promptIdentityIndex] !== candidate) continue;
+      const firstPromptIdentityIndex = lowerBound(promptIdentityRows, clickStart);
+      if (promptIdentityIndex - firstPromptIdentityIndex + 1
+        !== identity.matchingOccurrenceFromStart) continue;
 
-        if (identity.nextPromptOffsetFromClickStart === null) {
-          candidates.add(candidate);
-        } else {
-          const nextPromptRow = lines.findIndex(
-            (line, row) => row > candidate && isShellPrompt(line, promptPrefix),
-          );
-          if (nextPromptRow - clickStart === identity.nextPromptOffsetFromClickStart
-            && normalizePromptIdentity(lines[nextPromptRow]) === identity.nextPrompt) {
-            candidates.add(candidate);
-          }
-        }
+      const lastPromptIdentityIndex = promptIdentityIndex + identity.matchingOccurrenceFromEnd - 1;
+      const lastPromptIdentityRow = promptIdentityRows[lastPromptIdentityIndex];
+      if (lastPromptIdentityRow === undefined) continue;
+      const nextPromptIdentityRow = promptIdentityRows[lastPromptIdentityIndex + 1];
+      const clickEndIndex = lowerBound(clickEnds, lastPromptIdentityRow + 1);
+      const clickEnd = clickEnds[clickEndIndex];
+      if (clickEnd === undefined
+        || (nextPromptIdentityRow !== undefined && clickEnd > nextPromptIdentityRow)) continue;
+
+      if (identity.nextPromptOffsetFromClickStart !== null) {
+        const shellPromptIndex = lowerBound(shellPromptRows, candidate + 1);
+        const nextPromptRow = shellPromptRows[shellPromptIndex];
+        if (nextPromptRow - clickStart !== identity.nextPromptOffsetFromClickStart
+          || normalizePromptIdentity(lines[nextPromptRow]) !== identity.nextPrompt) continue;
       }
+
+      candidates.add(candidate);
     }
     if (candidates.size === 1) promptRow = candidates.values().next().value;
   }
