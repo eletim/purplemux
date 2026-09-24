@@ -4,7 +4,6 @@ import { describe, expect, it, vi } from 'vitest';
 import {
   findShellPromptRows,
   getPromptBlockFromSnapshot,
-  getPromptBlockText,
   getPromptSnapshotIdentity,
   isShellPrompt,
   syncPromptCopyButtons,
@@ -80,107 +79,6 @@ describe('terminal prompt copy boundaries', () => {
     expect(reads).toBeLessThan(100);
   });
 
-  it('copies through the row before the next prompt', () => {
-    const buffer = createBuffer([
-      'eletim@E-ryzen:~$ printf hello',
-      'hello',
-      'eletim@E-ryzen:~$ pwd',
-      '/home/eletim',
-    ]);
-
-    expect(getPromptBlockText(buffer, 0, PROMPT_PREFIX)).toBe('eletim@E-ryzen:~$ printf hello\nhello');
-    expect(getPromptBlockText(buffer, 2, PROMPT_PREFIX)).toBe('eletim@E-ryzen:~$ pwd\n/home/eletim');
-  });
-
-  it('reads forward in chunks and stops at the next prompt', () => {
-    const rows = Array.from({ length: 160 }, (_, row) => `output ${row}`);
-    rows[5] = 'eletim@E-ryzen:~$ first';
-    rows[87] = 'eletim@E-ryzen:~$ second';
-    const reads: number[] = [];
-    const source = createBuffer(rows);
-    const buffer: ITerminalPromptBuffer = {
-      length: source.length,
-      getLine: (row) => {
-        reads.push(row);
-        return source.getLine(row);
-      },
-    };
-
-    expect(getPromptBlockText(buffer, 5, PROMPT_PREFIX)).toBe(rows.slice(5, 87).join('\n'));
-    expect(reads.every((row) => row >= 5 && row < 126)).toBe(true);
-    expect(reads.length).toBeLessThan(300);
-  });
-
-  it('keeps the click-time end when output is appended during a chunk read', () => {
-    const rows = Array.from({ length: 45 }, (_, row) => row === 0
-      ? 'eletim@E-ryzen:~$ first'
-      : `output ${row}`);
-    const source = createBuffer(rows);
-    const reads: number[] = [];
-    let appended = false;
-    const buffer: ITerminalPromptBuffer = {
-      get length() { return rows.length; },
-      getLine: (row) => {
-        reads.push(row);
-        if (row === 40 && !appended) {
-          appended = true;
-          rows.push('eletim@E-ryzen:~$ later', 'later output');
-        }
-        return source.getLine(row);
-      },
-    };
-
-    expect(getPromptBlockText(buffer, 0, PROMPT_PREFIX)).toBe(rows.slice(0, 45).join('\n'));
-    expect(Math.max(...reads)).toBe(44);
-  });
-
-  it('joins wrapped lines that cross a chunk boundary', () => {
-    const rows: Array<string | { text: string; wrapped: boolean }> = [
-      'eletim@E-ryzen:~$ first',
-      ...Array.from({ length: 38 }, (_, row) => `output ${row}`),
-      'long ',
-      { text: 'line', wrapped: true },
-      'eletim@E-ryzen:~$ second',
-    ];
-
-    expect(getPromptBlockText(createBuffer(rows), 0, PROMPT_PREFIX)).toBe(
-      [...rows.slice(0, 39), 'long line'].join('\n'),
-    );
-  });
-
-  it('keeps hash-led comments inside command output', () => {
-    const buffer = createBuffer([
-      'eletim@E-ryzen:~$ cat config.yml',
-      '# generated configuration',
-      'enabled: true',
-      'eletim@E-ryzen:~$ next-command',
-    ]);
-
-    expect(getPromptBlockText(buffer, 0, PROMPT_PREFIX)).toBe(
-      'eletim@E-ryzen:~$ cat config.yml\n# generated configuration\nenabled: true',
-    );
-  });
-
-  it('joins wrapped buffer rows and omits trailing blank rows', () => {
-    const buffer = createBuffer([
-      'eletim@E-ryzen:~$ printf a-very-long-',
-      { text: 'value', wrapped: true },
-      'a-very-long-',
-      { text: 'value', wrapped: true },
-      '',
-      '',
-    ]);
-
-    expect(findShellPromptRows(buffer, PROMPT_PREFIX)).toEqual([0]);
-    expect(getPromptBlockText(buffer, 0, PROMPT_PREFIX)).toBe(
-      'eletim@E-ryzen:~$ printf a-very-long-value\na-very-long-value',
-    );
-  });
-
-  it('rejects a row that is not a prompt boundary', () => {
-    expect(getPromptBlockText(createBuffer(['plain output']), 0, PROMPT_PREFIX)).toBeNull();
-  });
-
   it('identifies a clicked prompt with stable surrounding and click-end context', () => {
     const buffer = createBuffer([
       'eletim@E-ryzen:~$ make test',
@@ -250,23 +148,22 @@ describe('terminal prompt copy boundaries', () => {
     );
   });
 
-  it('cuts an open block at the click-time end when the captured snapshot arrives later', () => {
+  it('continues past the xterm tail through the backend snapshot end', () => {
     const clickRows = [
       'eletim@E-ryzen:~$ final',
       'output present at click',
-      'partial output',
+      'visible viewport end',
     ];
     const identity = getPromptSnapshotIdentity(createBuffer(clickRows), 0, PROMPT_PREFIX);
-    const delayedSnapshot = [
-      ...clickRows.slice(0, -1),
-      'partial output added after click',
-      'another post-click line',
-      'eletim@E-ryzen:~$ prompt after click',
+    const backendSnapshot = [
+      ...clickRows,
+      'history outside xterm',
+      'backend snapshot end',
     ].join('\n');
 
     expect(identity).not.toBeNull();
-    expect(getPromptBlockFromSnapshot(delayedSnapshot, identity!, PROMPT_PREFIX)).toBe(
-      clickRows.join('\n'),
+    expect(getPromptBlockFromSnapshot(backendSnapshot, identity!, PROMPT_PREFIX)).toBe(
+      [...clickRows, 'history outside xterm', 'backend snapshot end'].join('\n'),
     );
   });
 
@@ -285,7 +182,7 @@ describe('terminal prompt copy boundaries', () => {
 
     expect(identity).not.toBeNull();
     expect(getPromptBlockFromSnapshot(backendSnapshot, identity!, PROMPT_PREFIX)).toBe(
-      clickRows.join('\n'),
+      [...clickRows, 'history outside xterm'].join('\n'),
     );
   });
 
@@ -334,7 +231,7 @@ describe('terminal prompt copy boundaries', () => {
         '  \u200beletim@E-ryzen:~$ printf hello',
         'hello',
       ], type);
-      const copied: string[] = [];
+      const onCopy = vi.fn();
 
       syncPromptCopyButtons({
         gutter,
@@ -344,10 +241,7 @@ describe('terminal prompt copy boundaries', () => {
         screenTop: 0,
         screenHeight: 60,
         label: 'Copy command block',
-        onCopy: (row) => {
-          const text = getPromptBlockText(buffer, row, PROMPT_PREFIX);
-          if (text) copied.push(text);
-        },
+        onCopy,
         promptPrefix: PROMPT_PREFIX,
       });
 
@@ -360,7 +254,7 @@ describe('terminal prompt copy boundaries', () => {
       expect(mouseDown.defaultPrevented).toBe(true);
       expect(gutterMouseDown).not.toHaveBeenCalled();
       button?.click();
-      expect(copied).toEqual(['  \u200beletim@E-ryzen:~$ printf hello\nhello']);
+      expect(onCopy).toHaveBeenCalledWith(1);
     },
   );
 

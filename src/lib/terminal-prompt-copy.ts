@@ -23,7 +23,6 @@ export interface IPromptSnapshotIdentity {
   nextPrompt: string | null;
 }
 
-const PROMPT_COPY_CHUNK_ROWS = 40;
 const PROMPT_IDENTITY_CONTEXT_LINES = 8;
 const CLICK_END_CONTEXT_LINES = 8;
 
@@ -149,44 +148,6 @@ export const syncPromptCopyButtons = ({
   }
 };
 
-export const getPromptBlockText = (
-  buffer: ITerminalPromptBuffer,
-  promptRow: number,
-  promptPrefix: string,
-): string | null => {
-  const snapshotEnd = buffer.length;
-  if (promptRow < 0 || promptRow >= snapshotEnd) return null;
-
-  const snapshotBuffer: ITerminalPromptBuffer = {
-    length: snapshotEnd,
-    getLine: (row) => row < snapshotEnd ? buffer.getLine(row) : undefined,
-  };
-  const copiedLines: string[] = [];
-  let nextRow = promptRow;
-
-  while (nextRow < snapshotEnd) {
-    const chunk = readLogicalLines(
-      snapshotBuffer,
-      nextRow,
-      Math.min(nextRow + PROMPT_COPY_CHUNK_ROWS, snapshotEnd),
-    );
-    if (chunk.length === 0) break;
-
-    for (const line of chunk) {
-      if (copiedLines.length === 0) {
-        if (line.startRow !== promptRow || !isShellPrompt(line.text, promptPrefix)) return null;
-      } else if (isShellPrompt(line.text, promptPrefix)) {
-        return copiedLines.join('\n').replace(/\n+$/, '');
-      }
-      copiedLines.push(line.text);
-    }
-
-    nextRow = chunk[chunk.length - 1].endRow + 1;
-  }
-
-  return copiedLines.length > 0 ? copiedLines.join('\n').replace(/\n+$/, '') : null;
-};
-
 export const getPromptSnapshotIdentity = (
   buffer: ITerminalPromptBuffer,
   promptRow: number,
@@ -264,18 +225,13 @@ export const getPromptBlockFromSnapshot = (
   }, []);
   if (matchingRows.length !== 1) return null;
   const promptRow = matchingRows[0];
-  const clickEndRow = promptRow + identity.clickEndOffset;
 
-  let endRow = Math.min(clickEndRow, lines.length);
-  for (let row = promptRow + 1; row < endRow; row++) {
+  let endRow = lines.length;
+  for (let row = promptRow + 1; row < lines.length; row++) {
     if (isShellPrompt(lines[row], promptPrefix)) {
       endRow = row;
       break;
     }
   }
-  const copiedLines = lines.slice(promptRow, endRow);
-  if (endRow === clickEndRow && identity.clickEnd.length > 0) {
-    copiedLines[copiedLines.length - 1] = identity.clickEnd[identity.clickEnd.length - 1];
-  }
-  return copiedLines.join('\n').replace(/\n+$/, '');
+  return lines.slice(promptRow, endRow).join('\n').replace(/\n+$/, '');
 };
