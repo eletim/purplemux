@@ -246,6 +246,49 @@ describe('terminal prompt copy boundaries', () => {
     );
   });
 
+  it('rejects a lone history match when the clicked block diverges inside xterm bounds', () => {
+    const clickStart = Array.from({ length: 8 }, (_, row) => `xterm start ${row}`);
+    const promptContext = Array.from({ length: 8 }, (_, row) => `prompt context ${row}`);
+    const expectedOutput = Array.from({ length: 8 }, (_, row) => `expected output ${row}`);
+    const clickEnd = Array.from({ length: 8 }, (_, row) => `xterm end ${row}`);
+    const prompt = 'eletim@E-ryzen:~$ selected';
+    const nextPrompt = 'eletim@E-ryzen:~$ next';
+    const xtermAtClick = [
+      ...clickStart,
+      ...promptContext,
+      prompt,
+      ...expectedOutput,
+      nextPrompt,
+      ...clickEnd,
+    ];
+    const identity = getPromptSnapshotIdentity(
+      createBuffer(xtermAtClick),
+      clickStart.length + promptContext.length,
+      PROMPT_PREFIX,
+    );
+    const snapshotWithLocalDivergence = [
+      'older tmux history',
+      ...promptContext,
+      prompt,
+      ...expectedOutput,
+      nextPrompt,
+      'older next output',
+      ...clickStart,
+      ...promptContext,
+      prompt,
+      'different first output in tmux',
+      ...expectedOutput.slice(1),
+      nextPrompt,
+      ...clickEnd,
+    ].join('\n');
+
+    expect(identity).toMatchObject({
+      matchingOccurrenceFromStart: 1,
+      matchingOccurrenceFromEnd: 1,
+    });
+    expect(getPromptBlockFromSnapshot(snapshotWithLocalDivergence, identity!, PROMPT_PREFIX)).toBeNull();
+  });
+
   it('continues past the xterm tail through the backend snapshot end', () => {
     const clickRows = [
       'eletim@E-ryzen:~$ final',
