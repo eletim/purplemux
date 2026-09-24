@@ -246,7 +246,7 @@ describe('terminal prompt copy boundaries', () => {
     );
   });
 
-  it('rejects a lone history match when the clicked block diverges inside xterm bounds', () => {
+  it('rejects a history match bounded by click anchors from different occurrences', () => {
     const clickStart = Array.from({ length: 8 }, (_, row) => `xterm start ${row}`);
     const promptContext = Array.from({ length: 8 }, (_, row) => `prompt context ${row}`);
     const expectedOutput = Array.from({ length: 8 }, (_, row) => `expected output ${row}`);
@@ -268,6 +268,7 @@ describe('terminal prompt copy boundaries', () => {
     );
     const snapshotWithLocalDivergence = [
       'older tmux history',
+      ...clickStart,
       ...promptContext,
       prompt,
       ...expectedOutput,

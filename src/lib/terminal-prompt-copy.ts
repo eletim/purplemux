@@ -20,6 +20,7 @@ export interface IPromptSnapshotIdentity {
   after: string[];
   clickStart: string[];
   clickEnd: string[];
+  clickLineCount: number;
   matchingOccurrenceFromStart: number;
   matchingOccurrenceFromEnd: number;
   nextPrompt: string | null;
@@ -191,6 +192,7 @@ export const getPromptSnapshotIdentity = (
     clickEnd: logicalLines
       .slice(Math.max(0, nonBlankEnd - CLICK_END_CONTEXT_LINES + 1), nonBlankEnd + 1)
       .map((line) => normalizeContextLine(line.text)),
+    clickLineCount: nonBlankEnd - nonBlankStart + 1,
     nextPrompt: nextPrompt ? normalizePromptIdentity(nextPrompt.text) : null,
   };
   const matchingRows = findPromptIdentityMatches(
@@ -269,7 +271,9 @@ export const getPromptBlockFromSnapshot = (
   let promptRow: number | undefined;
 
   if (matchingRows.length > 0) {
-    const candidates = new Set<number>();
+    let clickBounds: [number, number] | undefined;
+    let clickSpanDifference = Number.POSITIVE_INFINITY;
+    let clickBoundsAmbiguous = false;
     for (const clickStart of findContextStarts(lines, identity.clickStart)) {
       for (const clickEnd of findContextEnds(
         lines,
@@ -277,16 +281,26 @@ export const getPromptBlockFromSnapshot = (
         identity.nextPrompt === null,
       )) {
         if (clickStart >= clickEnd) continue;
-        const matchesInClickBuffer = matchingRows.filter(
-          (row) => row >= clickStart && row < clickEnd,
-        );
-        const candidateIndex = matchesInClickBuffer.length - identity.matchingOccurrenceFromEnd;
-        if (candidateIndex + 1 !== identity.matchingOccurrenceFromStart) continue;
-        const candidate = matchesInClickBuffer[candidateIndex];
-        if (candidate !== undefined) candidates.add(candidate);
+        const spanDifference = Math.abs(clickEnd - clickStart - identity.clickLineCount);
+        if (spanDifference < clickSpanDifference) {
+          clickBounds = [clickStart, clickEnd];
+          clickSpanDifference = spanDifference;
+          clickBoundsAmbiguous = false;
+        } else if (spanDifference === clickSpanDifference) {
+          clickBoundsAmbiguous = true;
+        }
       }
     }
-    if (candidates.size === 1) [promptRow] = candidates;
+    if (clickBounds && !clickBoundsAmbiguous) {
+      const [clickStart, clickEnd] = clickBounds;
+      const matchesInClickBuffer = matchingRows.filter(
+        (row) => row >= clickStart && row < clickEnd,
+      );
+      const candidateIndex = matchesInClickBuffer.length - identity.matchingOccurrenceFromEnd;
+      if (candidateIndex + 1 === identity.matchingOccurrenceFromStart) {
+        promptRow = matchesInClickBuffer[candidateIndex];
+      }
+    }
   }
 
   if (promptRow === undefined) return null;
