@@ -348,6 +348,28 @@ describe('terminal prompt copy boundaries', () => {
     );
   });
 
+  it('allows unrelated row drift between a selected block and the click-end anchor', () => {
+    const selectedOutput = Array.from({ length: 8 }, (_, row) => `selected output ${row}`);
+    const clickRows = [
+      'eletim@E-ryzen:~$ selected',
+      ...selectedOutput,
+      'eletim@E-ryzen:~$ next',
+      'later output 1',
+      'later output 2',
+      'later output 3',
+      ...Array.from({ length: 8 }, (_, row) => `xterm end ${row}`),
+    ];
+    const identity = getPromptSnapshotIdentity(createBuffer(clickRows), 0, PROMPT_PREFIX);
+    const backendSnapshot = clickRows
+      .filter((line) => line !== 'later output 1' && line !== 'later output 2')
+      .join('\n');
+
+    expect(identity).not.toBeNull();
+    expect(getPromptBlockFromSnapshot(backendSnapshot, identity!, PROMPT_PREFIX)).toBe(
+      ['eletim@E-ryzen:~$ selected', ...selectedOutput].join('\n'),
+    );
+  });
+
   it('binds repetitive click-end context to the selected prompt offset', () => {
     const clickRows = [
       'eletim@E-ryzen:~$ repeat-output',

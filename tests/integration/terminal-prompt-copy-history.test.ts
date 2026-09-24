@@ -67,7 +67,7 @@ describe('terminal prompt copy tmux history', () => {
     // it retains the old prompt, substantial later scrollback, and the live tail.
     const xtermLines = tmuxLines
       .slice(selectedRow)
-      .filter((line) => line.trimEnd() !== 'LATER_0042');
+      .filter((line) => !['LATER_0042', 'LATER_0077'].includes(line.trimEnd()));
     expect(xtermLines.length).toBeGreaterThan(200);
     expect(xtermLines.findLast((line) => line.trimEnd().length > 0)?.trimEnd()).toBe('CURRENT_TAIL');
 
