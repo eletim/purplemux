@@ -16,16 +16,23 @@ interface ILogicalBufferLine {
 
 export interface IPromptSnapshotIdentity {
   text: string;
-  occurrenceFromEnd: number;
+  before: string[];
+  after: string[];
+  clickEnd: string[];
+  nextPrompt: string | null;
 }
 
 const PROMPT_COPY_CHUNK_ROWS = 40;
+const PROMPT_IDENTITY_CONTEXT_LINES = 8;
+const CLICK_END_CONTEXT_LINES = 8;
 
 const normalizePromptCandidate = (text: string): string => text
   .replace(/^[\s\u200B\u200C\u200D\uFEFF]+/, '');
 
 const normalizePromptIdentity = (text: string): string =>
   normalizePromptCandidate(text).trimEnd();
+
+const normalizeContextLine = (text: string): string => text.trimEnd();
 
 export const isShellPrompt = (text: string, promptPrefix: string): boolean =>
   promptPrefix.length > 0 && normalizePromptCandidate(text).startsWith(promptPrefix);
@@ -184,17 +191,59 @@ export const getPromptSnapshotIdentity = (
   promptRow: number,
   promptPrefix: string,
 ): IPromptSnapshotIdentity | null => {
-  const logicalLines = readLogicalLines(buffer, promptRow);
-  const prompt = logicalLines.find((line) => line.startRow === promptRow);
+  const snapshotEnd = buffer.length;
+  if (promptRow < 0 || promptRow >= snapshotEnd) return null;
+  const snapshotBuffer: ITerminalPromptBuffer = {
+    length: snapshotEnd,
+    getLine: (row) => row < snapshotEnd ? buffer.getLine(row) : undefined,
+  };
+  const logicalLines = readLogicalLines(snapshotBuffer);
+  const promptIndex = logicalLines.findIndex((line) => line.startRow === promptRow);
+  const prompt = logicalLines[promptIndex];
   if (!prompt || !isShellPrompt(prompt.text, promptPrefix)) return null;
 
-  const text = normalizePromptIdentity(prompt.text);
-  const occurrenceFromEnd = logicalLines.filter(
-    (line) => isShellPrompt(line.text, promptPrefix)
-      && normalizePromptIdentity(line.text) === text,
-  ).length;
+  const nonBlankEnd = logicalLines.findLastIndex((line) => normalizeContextLine(line.text).length > 0);
+  if (nonBlankEnd < promptIndex) return null;
+  const nextPrompt = logicalLines
+    .slice(promptIndex + 1)
+    .find((line) => isShellPrompt(line.text, promptPrefix));
 
-  return occurrenceFromEnd > 0 ? { text, occurrenceFromEnd } : null;
+  return {
+    text: normalizePromptIdentity(prompt.text),
+    before: logicalLines
+      .slice(Math.max(0, promptIndex - PROMPT_IDENTITY_CONTEXT_LINES), promptIndex)
+      .map((line) => normalizeContextLine(line.text)),
+    after: logicalLines
+      .slice(promptIndex + 1, Math.min(
+        promptIndex + 1 + PROMPT_IDENTITY_CONTEXT_LINES,
+        nonBlankEnd + 1,
+      ))
+      .map((line) => normalizeContextLine(line.text)),
+    clickEnd: logicalLines
+      .slice(Math.max(0, nonBlankEnd - CLICK_END_CONTEXT_LINES + 1), nonBlankEnd + 1)
+      .map((line) => normalizeContextLine(line.text)),
+    nextPrompt: nextPrompt ? normalizePromptIdentity(nextPrompt.text) : null,
+  };
+};
+
+const contextMatches = (
+  lines: string[],
+  startRow: number,
+  context: string[],
+  allowLastLineGrowth = false,
+): boolean => context.every((expected, offset) => {
+  const actual = normalizeContextLine(lines[startRow + offset] ?? '');
+  return allowLastLineGrowth && offset === context.length - 1
+    ? actual.startsWith(expected)
+    : actual === expected;
+});
+
+const findClickEnd = (lines: string[], clickEnd: string[]): number | null => {
+  if (clickEnd.length === 0) return null;
+  for (let row = lines.length - clickEnd.length; row >= 0; row--) {
+    if (contextMatches(lines, row, clickEnd, true)) return row + clickEnd.length;
+  }
+  return null;
 };
 
 export const getPromptBlockFromSnapshot = (
@@ -202,26 +251,43 @@ export const getPromptBlockFromSnapshot = (
   identity: IPromptSnapshotIdentity,
   promptPrefix: string,
 ): string | null => {
-  if (!Number.isInteger(identity.occurrenceFromEnd) || identity.occurrenceFromEnd < 1) return null;
+  const lines = snapshot.replace(/\r\n/g, '\n').split('\n').map(normalizeContextLine);
+  const snapshotEnd = findClickEnd(lines, identity.clickEnd);
+  if (snapshotEnd === null) return null;
 
-  const lines = snapshot.replace(/\r\n/g, '\n').split('\n');
   const matchingRows = lines.reduce<number[]>((rows, line, row) => {
     if (isShellPrompt(line, promptPrefix)
-      && normalizePromptIdentity(line) === normalizePromptIdentity(identity.text)) {
+      && normalizePromptIdentity(line) === normalizePromptIdentity(identity.text)
+      && contextMatches(
+        lines,
+        row - identity.before.length,
+        identity.before,
+      )
+      && contextMatches(lines, row + 1, identity.after, identity.nextPrompt === null)) {
       rows.push(row);
     }
     return rows;
   }, []);
-  const promptRow = matchingRows[matchingRows.length - identity.occurrenceFromEnd];
-  if (promptRow === undefined) return null;
+  if (matchingRows.length !== 1) return null;
+  const promptRow = matchingRows[0];
 
-  let endRow = lines.length;
+  let nextPromptRow: number | null = null;
   for (let row = promptRow + 1; row < lines.length; row++) {
     if (isShellPrompt(lines[row], promptPrefix)) {
-      endRow = row;
+      nextPromptRow = row;
       break;
     }
   }
+  const nextPromptWasPresentAtClick = nextPromptRow !== null
+    && identity.nextPrompt !== null
+    && normalizePromptIdentity(lines[nextPromptRow]) === normalizePromptIdentity(identity.nextPrompt);
+  const endRow = nextPromptRow !== null && (nextPromptRow < snapshotEnd || nextPromptWasPresentAtClick)
+    ? nextPromptRow
+    : snapshotEnd;
 
-  return lines.slice(promptRow, endRow).join('\n').replace(/\n+$/, '');
+  const copiedLines = lines.slice(promptRow, endRow);
+  if (endRow === snapshotEnd && identity.clickEnd.length > 0) {
+    copiedLines[copiedLines.length - 1] = identity.clickEnd[identity.clickEnd.length - 1];
+  }
+  return copiedLines.join('\n').replace(/\n+$/, '');
 };

@@ -263,21 +263,24 @@ const useTerminal = ({ readOnly = false, theme, fontSize = DEFAULT_FONT_SIZE, li
         const copyPromptBlock = async (row: number) => {
           const buffer = terminal.buffer.active;
           const { promptPrefix: livePromptPrefix, promptCopySession: session } = callbacksRef.current;
+          if (!session) return;
+          const snapshotPromise = (async (): Promise<string | null> => {
+            try {
+              const response = await fetch(`/api/tmux/history?session=${encodeURIComponent(session)}`);
+              if (!response.ok) return null;
+              const data: unknown = await response.json();
+              return typeof data === 'object' && data !== null && 'content' in data
+                && typeof data.content === 'string'
+                ? data.content
+                : null;
+            } catch {
+              return null;
+            }
+          })();
           const identity = getPromptSnapshotIdentity(buffer, row, livePromptPrefix);
-          if (!identity || !session) return;
+          if (!identity) return;
 
-          let snapshot: string | null = null;
-          try {
-            const response = await fetch(`/api/tmux/history?session=${encodeURIComponent(session)}`);
-            if (!response.ok) return;
-            const data: unknown = await response.json();
-            snapshot = typeof data === 'object' && data !== null && 'content' in data
-              && typeof data.content === 'string'
-              ? data.content
-              : null;
-          } catch {
-            return;
-          }
+          const snapshot = await snapshotPromise;
           if (snapshot === null) return;
 
           const text = getPromptBlockFromSnapshot(snapshot, identity, livePromptPrefix);

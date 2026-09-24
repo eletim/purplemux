@@ -181,7 +181,7 @@ describe('terminal prompt copy boundaries', () => {
     expect(getPromptBlockText(createBuffer(['plain output']), 0, PROMPT_PREFIX)).toBeNull();
   });
 
-  it('identifies a clicked prompt by its duplicate occurrence from the buffer end', () => {
+  it('identifies a clicked prompt with stable surrounding and click-end context', () => {
     const buffer = createBuffer([
       'eletim@E-ryzen:~$ make test',
       'first run',
@@ -190,24 +190,30 @@ describe('terminal prompt copy boundaries', () => {
       'eletim@E-ryzen:~$ pwd',
     ]);
 
-    expect(getPromptSnapshotIdentity(buffer, 0, PROMPT_PREFIX)).toEqual({
+    expect(getPromptSnapshotIdentity(buffer, 0, PROMPT_PREFIX)).toMatchObject({
       text: 'eletim@E-ryzen:~$ make test',
-      occurrenceFromEnd: 2,
+      before: [],
+      after: ['first run', 'eletim@E-ryzen:~$ make test', 'second run', 'eletim@E-ryzen:~$ pwd'],
+      nextPrompt: 'eletim@E-ryzen:~$ make test',
     });
-    expect(getPromptSnapshotIdentity(buffer, 2, PROMPT_PREFIX)).toEqual({
+    expect(getPromptSnapshotIdentity(buffer, 2, PROMPT_PREFIX)).toMatchObject({
       text: 'eletim@E-ryzen:~$ make test',
-      occurrenceFromEnd: 1,
+      before: ['eletim@E-ryzen:~$ make test', 'first run'],
+      after: ['second run', 'eletim@E-ryzen:~$ pwd'],
+      nextPrompt: 'eletim@E-ryzen:~$ pwd',
     });
   });
 
   it('copies from tmux history even when older content is absent from xterm', () => {
+    const historicalOutput = Array.from({ length: 120 }, (_, row) => `historical output ${row}`);
     const xtermBuffer = createBuffer([
       'eletim@E-ryzen:~$ selected',
-      'recent output only',
+      ...historicalOutput,
+      'wrapped output reconstructed as one logical line',
       'eletim@E-ryzen:~$ next',
+      'new block',
     ]);
     const identity = getPromptSnapshotIdentity(xtermBuffer, 0, PROMPT_PREFIX);
-    const historicalOutput = Array.from({ length: 120 }, (_, row) => `historical output ${row}`);
     const snapshot = [
       'older prompt and output missing from xterm',
       'eletim@E-ryzen:~$ selected',
@@ -225,25 +231,43 @@ describe('terminal prompt copy boundaries', () => {
     ].join('\n'));
   });
 
-  it('uses the matching duplicate prompt and the click-time snapshot end', () => {
-    const identity = { text: 'eletim@E-ryzen:~$ repeat', occurrenceFromEnd: 2 };
-    const snapshot = [
+  it('uses surrounding context instead of xterm tail position for repeated prompts', () => {
+    const xtermAtClick = [
+      'unique context for selected prompt',
       'eletim@E-ryzen:~$ repeat',
       'selected output',
       'eletim@E-ryzen:~$ other',
       'other output',
+      'unique context for later prompt',
       'eletim@E-ryzen:~$ repeat',
       'latest output',
-    ].join('\n');
+    ];
+    const identity = getPromptSnapshotIdentity(createBuffer(xtermAtClick), 1, PROMPT_PREFIX);
 
-    expect(getPromptBlockFromSnapshot(snapshot, identity, PROMPT_PREFIX)).toBe(
+    expect(identity).not.toBeNull();
+    expect(getPromptBlockFromSnapshot(xtermAtClick.join('\n'), identity!, PROMPT_PREFIX)).toBe(
       'eletim@E-ryzen:~$ repeat\nselected output',
     );
-    expect(getPromptBlockFromSnapshot(
-      'eletim@E-ryzen:~$ final\noutput present at click\n\n',
-      { text: 'eletim@E-ryzen:~$ final', occurrenceFromEnd: 1 },
-      PROMPT_PREFIX,
-    )).toBe('eletim@E-ryzen:~$ final\noutput present at click');
+  });
+
+  it('cuts an open block at the click-time end when the captured snapshot arrives later', () => {
+    const clickRows = [
+      'eletim@E-ryzen:~$ final',
+      'output present at click',
+      'partial output',
+    ];
+    const identity = getPromptSnapshotIdentity(createBuffer(clickRows), 0, PROMPT_PREFIX);
+    const delayedSnapshot = [
+      ...clickRows.slice(0, -1),
+      'partial output added after click',
+      'another post-click line',
+      'eletim@E-ryzen:~$ prompt after click',
+    ].join('\n');
+
+    expect(identity).not.toBeNull();
+    expect(getPromptBlockFromSnapshot(delayedSnapshot, identity!, PROMPT_PREFIX)).toBe(
+      clickRows.join('\n'),
+    );
   });
 
   it('creates positioned buttons only for prompts in the viewport', () => {
