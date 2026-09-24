@@ -14,12 +14,15 @@ describe('prompt-prefix terminal wiring', () => {
 
     expect(source).toContain('useConfigStore((s) => s.promptPrefix)');
     expect(source).toMatch(/useTerminal\(\{[\s\S]*?promptPrefix,[\s\S]*?\}\)/);
+    expect(source).toContain('promptCopySession: activeTab?.sessionName');
   });
 
   it('uses the live prefix for prompt markers and copied blocks', () => {
     const source = readSource('src/hooks/use-terminal.ts');
 
     expect(source).toContain('promptPrefix: callbacksRef.current.promptPrefix');
-    expect(source).toContain('getPromptBlockText(buffer, row, callbacksRef.current.promptPrefix)');
+    expect(source).toContain('getPromptSnapshotIdentity(buffer, row, livePromptPrefix)');
+    expect(source).toContain('/api/tmux/history?session=');
+    expect(source).toContain('getPromptBlockFromSnapshot(snapshot, identity, livePromptPrefix)');
   });
 });

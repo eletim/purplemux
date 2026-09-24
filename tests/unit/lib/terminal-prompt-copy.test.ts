@@ -3,7 +3,9 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
   findShellPromptRows,
+  getPromptBlockFromSnapshot,
   getPromptBlockText,
+  getPromptSnapshotIdentity,
   isShellPrompt,
   syncPromptCopyButtons,
   type ITerminalPromptBuffer,
@@ -177,6 +179,114 @@ describe('terminal prompt copy boundaries', () => {
 
   it('rejects a row that is not a prompt boundary', () => {
     expect(getPromptBlockText(createBuffer(['plain output']), 0, PROMPT_PREFIX)).toBeNull();
+  });
+
+  it('identifies a clicked prompt with stable surrounding and click-end context', () => {
+    const buffer = createBuffer([
+      'eletim@E-ryzen:~$ make test',
+      'first run',
+      'eletim@E-ryzen:~$ make test',
+      'second run',
+      'eletim@E-ryzen:~$ pwd',
+    ]);
+
+    expect(getPromptSnapshotIdentity(buffer, 0, PROMPT_PREFIX)).toMatchObject({
+      text: 'eletim@E-ryzen:~$ make test',
+      before: [],
+      after: ['first run', 'eletim@E-ryzen:~$ make test', 'second run', 'eletim@E-ryzen:~$ pwd'],
+      nextPrompt: 'eletim@E-ryzen:~$ make test',
+    });
+    expect(getPromptSnapshotIdentity(buffer, 2, PROMPT_PREFIX)).toMatchObject({
+      text: 'eletim@E-ryzen:~$ make test',
+      before: ['eletim@E-ryzen:~$ make test', 'first run'],
+      after: ['second run', 'eletim@E-ryzen:~$ pwd'],
+      nextPrompt: 'eletim@E-ryzen:~$ pwd',
+    });
+  });
+
+  it('copies from tmux history even when older content is absent from xterm', () => {
+    const historicalOutput = Array.from({ length: 120 }, (_, row) => `historical output ${row}`);
+    const xtermBuffer = createBuffer([
+      'eletim@E-ryzen:~$ selected',
+      ...historicalOutput,
+      'wrapped output reconstructed as one logical line',
+      'eletim@E-ryzen:~$ next',
+      'new block',
+    ]);
+    const identity = getPromptSnapshotIdentity(xtermBuffer, 0, PROMPT_PREFIX);
+    const snapshot = [
+      'older prompt and output missing from xterm',
+      'eletim@E-ryzen:~$ selected',
+      ...historicalOutput,
+      'wrapped output reconstructed as one logical line',
+      'eletim@E-ryzen:~$ next',
+      'new block',
+    ].join('\n');
+
+    expect(identity).not.toBeNull();
+    expect(getPromptBlockFromSnapshot(snapshot, identity!, PROMPT_PREFIX)).toBe([
+      'eletim@E-ryzen:~$ selected',
+      ...historicalOutput,
+      'wrapped output reconstructed as one logical line',
+    ].join('\n'));
+  });
+
+  it('uses surrounding context instead of xterm tail position for repeated prompts', () => {
+    const xtermAtClick = [
+      'unique context for selected prompt',
+      'eletim@E-ryzen:~$ repeat',
+      'selected output',
+      'eletim@E-ryzen:~$ other',
+      'other output',
+      'unique context for later prompt',
+      'eletim@E-ryzen:~$ repeat',
+      'latest output',
+    ];
+    const identity = getPromptSnapshotIdentity(createBuffer(xtermAtClick), 1, PROMPT_PREFIX);
+
+    expect(identity).not.toBeNull();
+    expect(getPromptBlockFromSnapshot(xtermAtClick.join('\n'), identity!, PROMPT_PREFIX)).toBe(
+      'eletim@E-ryzen:~$ repeat\nselected output',
+    );
+  });
+
+  it('continues past the xterm tail through the backend snapshot end', () => {
+    const clickRows = [
+      'eletim@E-ryzen:~$ final',
+      'output present at click',
+      'visible viewport end',
+    ];
+    const identity = getPromptSnapshotIdentity(createBuffer(clickRows), 0, PROMPT_PREFIX);
+    const backendSnapshot = [
+      ...clickRows,
+      'history outside xterm',
+      'backend snapshot end',
+    ].join('\n');
+
+    expect(identity).not.toBeNull();
+    expect(getPromptBlockFromSnapshot(backendSnapshot, identity!, PROMPT_PREFIX)).toBe(
+      [...clickRows, 'history outside xterm', 'backend snapshot end'].join('\n'),
+    );
+  });
+
+  it('binds repetitive click-end context to the selected prompt offset', () => {
+    const clickRows = [
+      'eletim@E-ryzen:~$ repeat-output',
+      ...Array.from({ length: 8 }, () => 'same output'),
+    ];
+    const identity = getPromptSnapshotIdentity(createBuffer(clickRows), 0, PROMPT_PREFIX);
+    const backendSnapshot = [
+      ...Array.from({ length: 8 }, () => 'same output'),
+      ...clickRows,
+      'history outside xterm',
+      'eletim@E-ryzen:~$ next',
+    ].join('\n');
+
+    expect(identity).not.toBeNull();
+    expect(getPromptBlockFromSnapshot(backendSnapshot, identity!, PROMPT_PREFIX)).toBe([
+      ...clickRows,
+      'history outside xterm',
+    ].join('\n'));
   });
 
   it('creates positioned buttons only for prompts in the viewport', () => {

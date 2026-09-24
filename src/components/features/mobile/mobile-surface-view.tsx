@@ -247,6 +247,7 @@ const MobileSurfaceView = ({
   const { terminalRef, write, clear, reset, fit, focus, isReady, getBufferText } = useTerminal({
     enablePromptCopy: true,
     promptPrefix,
+    promptCopySession: activeTab?.sessionName,
     theme: terminalTheme.colors,
     fontSize: isAgentPanel ? undefined : MOBILE_FONT_SIZE,
     lineHeight: resolveLineHeight(configLineHeight, configLineHeightCustom),

@@ -11,7 +11,11 @@ import type { ITerminalThemeColors } from "@/lib/terminal-themes";
 import { createMultilineUrlLinkProvider } from "@/lib/multiline-url-link-provider";
 import { copyToClipboard } from "@/lib/clipboard";
 import { DEFAULT_LINE_HEIGHT } from "@/lib/terminal-line-height";
-import { getPromptBlockText, syncPromptCopyButtons } from "@/lib/terminal-prompt-copy";
+import {
+  getPromptBlockFromSnapshot,
+  getPromptSnapshotIdentity,
+  syncPromptCopyButtons,
+} from "@/lib/terminal-prompt-copy";
 import isElectron from "@/hooks/use-is-electron";
 
 interface IUseTerminalOptions {
@@ -25,6 +29,7 @@ interface IUseTerminalOptions {
   customKeyEventHandler?: (event: KeyboardEvent) => boolean;
   enablePromptCopy?: boolean;
   promptPrefix?: string;
+  promptCopySession?: string;
 }
 
 const COPY_TOAST_ID = 'terminal-copy';
@@ -73,7 +78,7 @@ const loadFonts = () => {
   return fontLoadPromise;
 };
 
-const useTerminal = ({ readOnly = false, theme, fontSize = DEFAULT_FONT_SIZE, lineHeight = DEFAULT_LINE_HEIGHT, onInput, onResize, onTitleChange, customKeyEventHandler, enablePromptCopy = false, promptPrefix = '' }: IUseTerminalOptions = {}) => {
+const useTerminal = ({ readOnly = false, theme, fontSize = DEFAULT_FONT_SIZE, lineHeight = DEFAULT_LINE_HEIGHT, onInput, onResize, onTitleChange, customKeyEventHandler, enablePromptCopy = false, promptPrefix = '', promptCopySession }: IUseTerminalOptions = {}) => {
   const [containerNode, setContainerNode] = useState<HTMLDivElement | null>(null);
   const terminalRef = useCallback((node: HTMLDivElement | null) => {
     setContainerNode(node);
@@ -86,11 +91,11 @@ const useTerminal = ({ readOnly = false, theme, fontSize = DEFAULT_FONT_SIZE, li
   const [isReady, setIsReady] = useState(false);
   const t = useTranslations('terminal');
 
-  const callbacksRef = useRef({ theme, fontSize, lineHeight, onInput, onResize, onTitleChange, customKeyEventHandler, promptPrefix, t });
+  const callbacksRef = useRef({ theme, fontSize, lineHeight, onInput, onResize, onTitleChange, customKeyEventHandler, promptPrefix, promptCopySession, t });
 
   useEffect(() => {
-    callbacksRef.current = { theme, fontSize, lineHeight, onInput, onResize, onTitleChange, customKeyEventHandler, promptPrefix, t };
-  }, [theme, fontSize, lineHeight, onInput, onResize, onTitleChange, customKeyEventHandler, promptPrefix, t]);
+    callbacksRef.current = { theme, fontSize, lineHeight, onInput, onResize, onTitleChange, customKeyEventHandler, promptPrefix, promptCopySession, t };
+  }, [theme, fontSize, lineHeight, onInput, onResize, onTitleChange, customKeyEventHandler, promptPrefix, promptCopySession, t]);
 
   useEffect(() => {
     promptCopySyncRef.current();
@@ -257,7 +262,28 @@ const useTerminal = ({ readOnly = false, theme, fontSize = DEFAULT_FONT_SIZE, li
 
         const copyPromptBlock = async (row: number) => {
           const buffer = terminal.buffer.active;
-          const text = getPromptBlockText(buffer, row, callbacksRef.current.promptPrefix);
+          const { promptPrefix: livePromptPrefix, promptCopySession: session } = callbacksRef.current;
+          if (!session) return;
+          const snapshotPromise = (async (): Promise<string | null> => {
+            try {
+              const response = await fetch(`/api/tmux/history?session=${encodeURIComponent(session)}`);
+              if (!response.ok) return null;
+              const data: unknown = await response.json();
+              return typeof data === 'object' && data !== null && 'content' in data
+                && typeof data.content === 'string'
+                ? data.content
+                : null;
+            } catch {
+              return null;
+            }
+          })();
+          const identity = getPromptSnapshotIdentity(buffer, row, livePromptPrefix);
+          if (!identity) return;
+
+          const snapshot = await snapshotPromise;
+          if (snapshot === null) return;
+
+          const text = getPromptBlockFromSnapshot(snapshot, identity, livePromptPrefix);
           if (!text) return;
           const ok = await copyToClipboard(text);
           if (ok) {
