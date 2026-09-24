@@ -36,7 +36,7 @@ afterEach(() => {
 });
 
 describe('terminal prompt copy tmux history', () => {
-  it('copies off-screen history when xterm contains only the visible viewport', async () => {
+  it('copies a long block from tmux history beyond the visible viewport', async () => {
     const session = `pt-issue-59-${process.pid}-${Date.now()}`;
     const wrapped = `WRAPPED_${'x'.repeat(70)}`;
     const command = [
@@ -55,7 +55,7 @@ describe('terminal prompt copy tmux history', () => {
     const snapshot = (await capturePaneContentWithHistory(session, 'all', { joinWrapped: true }))!;
     const tmuxLines = snapshot.split('\n');
     const selectedRow = tmuxLines.findIndex((line) => line.trimEnd() === 'user@host:~$ first');
-    const xtermLines = tmuxLines.slice(selectedRow, selectedRow + 4);
+    const xtermLines = tmuxLines.slice(selectedRow);
     const identity = getPromptSnapshotIdentity(createBuffer(xtermLines), 0, 'user@host:');
     expect(identity).not.toBeNull();
     const copied = getPromptBlockFromSnapshot(snapshot, identity!, 'user@host:');
@@ -116,7 +116,7 @@ describe('terminal prompt copy tmux history', () => {
     const delayedSnapshot = (await capturePaneContentWithHistory(session, 'all', { joinWrapped: true }))!;
     expect(delayedSnapshot).toContain('LATE_OUTPUT');
 
-    expect(getPromptBlockFromSnapshot(atClick, identity!, 'user@host:')).toBe(
+    expect(getPromptBlockFromSnapshot(delayedSnapshot, identity!, 'user@host:')).toBe(
       'user@host:~$ running\nAT_CLICK\nPARTIAL',
     );
   });

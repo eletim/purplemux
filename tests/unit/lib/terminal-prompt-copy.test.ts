@@ -250,22 +250,23 @@ describe('terminal prompt copy boundaries', () => {
     );
   });
 
-  it('continues past the xterm tail through the backend snapshot end', () => {
+  it('cuts an open block at the click-time end when the captured snapshot arrives later', () => {
     const clickRows = [
       'eletim@E-ryzen:~$ final',
       'output present at click',
-      'visible viewport end',
+      'partial output',
     ];
     const identity = getPromptSnapshotIdentity(createBuffer(clickRows), 0, PROMPT_PREFIX);
-    const backendSnapshot = [
-      ...clickRows,
-      'history outside xterm',
-      'backend snapshot end',
+    const delayedSnapshot = [
+      ...clickRows.slice(0, -1),
+      'partial output added after click',
+      'another post-click line',
+      'eletim@E-ryzen:~$ prompt after click',
     ].join('\n');
 
     expect(identity).not.toBeNull();
-    expect(getPromptBlockFromSnapshot(backendSnapshot, identity!, PROMPT_PREFIX)).toBe(
-      [...clickRows, 'history outside xterm', 'backend snapshot end'].join('\n'),
+    expect(getPromptBlockFromSnapshot(delayedSnapshot, identity!, PROMPT_PREFIX)).toBe(
+      clickRows.join('\n'),
     );
   });
 
@@ -283,10 +284,9 @@ describe('terminal prompt copy boundaries', () => {
     ].join('\n');
 
     expect(identity).not.toBeNull();
-    expect(getPromptBlockFromSnapshot(backendSnapshot, identity!, PROMPT_PREFIX)).toBe([
-      ...clickRows,
-      'history outside xterm',
-    ].join('\n'));
+    expect(getPromptBlockFromSnapshot(backendSnapshot, identity!, PROMPT_PREFIX)).toBe(
+      clickRows.join('\n'),
+    );
   });
 
   it('creates positioned buttons only for prompts in the viewport', () => {

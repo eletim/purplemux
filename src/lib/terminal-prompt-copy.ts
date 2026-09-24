@@ -264,13 +264,18 @@ export const getPromptBlockFromSnapshot = (
   }, []);
   if (matchingRows.length !== 1) return null;
   const promptRow = matchingRows[0];
+  const clickEndRow = promptRow + identity.clickEndOffset;
 
-  let endRow = lines.length;
-  for (let row = promptRow + 1; row < lines.length; row++) {
+  let endRow = Math.min(clickEndRow, lines.length);
+  for (let row = promptRow + 1; row < endRow; row++) {
     if (isShellPrompt(lines[row], promptPrefix)) {
       endRow = row;
       break;
     }
   }
-  return lines.slice(promptRow, endRow).join('\n').replace(/\n+$/, '');
+  const copiedLines = lines.slice(promptRow, endRow);
+  if (endRow === clickEndRow && identity.clickEnd.length > 0) {
+    copiedLines[copiedLines.length - 1] = identity.clickEnd[identity.clickEnd.length - 1];
+  }
+  return copiedLines.join('\n').replace(/\n+$/, '');
 };
