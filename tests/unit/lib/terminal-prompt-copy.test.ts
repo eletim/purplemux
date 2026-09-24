@@ -7,6 +7,7 @@ import {
   getPromptBlockText,
   getPromptBlockTextWithScroll,
   isShellPrompt,
+  loadNewPromptRowsAfterScroll,
   snapshotPromptRows,
   syncPromptCopyButtons,
   type ITerminalPromptBuffer,
@@ -219,8 +220,58 @@ describe('terminal prompt copy boundaries', () => {
   it('extracts only rows newly revealed below an overlapping screen', () => {
     const previous = snapshotPromptRows(createBuffer(['one', 'two', 'three', 'four']));
     const current = snapshotPromptRows(createBuffer(['three', 'four', 'five', 'six']));
+    const redrawn = snapshotPromptRows(createBuffer(['three', 'four', 'five', 'six']));
     expect(findNewPromptRows(previous, current).map((row) => row.text)).toEqual(['five', 'six']);
-    expect(findNewPromptRows(current, current)).toEqual([]);
+    expect(findNewPromptRows(current, redrawn)).toEqual([]);
+  });
+
+  it('waits for a delayed screen redraw and keeps loading until the next prompt', async () => {
+    const allRows = [
+      'eletim@E-ryzen:~$ first',
+      ...Array.from({ length: 7 }, (_, row) => `output ${row}`),
+      'eletim@E-ryzen:~$ second',
+      'second output',
+    ];
+    const screenSize = 4;
+    let screenStart = 0;
+    let pendingScreenStart: number | null = null;
+    let retryCount = 0;
+    const screenStartsAtRead: number[] = [];
+    const readScreen = () => {
+      screenStartsAtRead.push(screenStart);
+      return snapshotPromptRows(
+        createBuffer(allRows.slice(screenStart, screenStart + screenSize)),
+      );
+    };
+
+    const loadMore = vi.fn(async () => {
+      return loadNewPromptRowsAfterScroll({
+        readRows: readScreen,
+        scroll: async () => {
+          pendingScreenStart = Math.min(screenStart + 2, allRows.length - screenSize);
+        },
+        waitForRetry: async () => {
+          retryCount++;
+          if (pendingScreenStart !== null) {
+            screenStart = pendingScreenStart;
+            pendingScreenStart = null;
+          }
+        },
+        retries: 2,
+      });
+    });
+
+    await expect(getPromptBlockTextWithScroll(
+      createBuffer(allRows.slice(0, screenSize)),
+      0,
+      PROMPT_PREFIX,
+      { loadMore, restore: async () => {} },
+    )).resolves.toBe(allRows.slice(0, 8).join('\n'));
+
+    expect(loadMore).toHaveBeenCalledTimes(3);
+    expect(retryCount).toBe(3);
+    expect(screenStartsAtRead.slice(0, 3)).toEqual([0, 0, 2]);
+    expect(readScreen().map((row) => row.text)).toEqual(allRows.slice(6, 10));
   });
 
   it('keeps hash-led comments inside command output', () => {

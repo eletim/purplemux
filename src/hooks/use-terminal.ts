@@ -12,8 +12,8 @@ import { createMultilineUrlLinkProvider } from "@/lib/multiline-url-link-provide
 import { copyToClipboard } from "@/lib/clipboard";
 import { DEFAULT_LINE_HEIGHT } from "@/lib/terminal-line-height";
 import {
-  findNewPromptRows,
   getPromptBlockTextWithScroll,
+  loadNewPromptRowsAfterScroll,
   snapshotPromptRows,
   syncPromptCopyButtons,
 } from "@/lib/terminal-prompt-copy";
@@ -34,6 +34,8 @@ interface IUseTerminalOptions {
 
 const COPY_TOAST_ID = 'terminal-copy';
 const MAX_PROMPT_COPY_SCROLL_STEPS = 2000;
+const PROMPT_COPY_SCROLL_RENDER_RETRIES = 4;
+const PROMPT_COPY_SCROLL_RETRY_DELAY_MS = 50;
 
 const DEFAULT_FONT_SIZE = 12;
 
@@ -306,10 +308,6 @@ const useTerminal = ({ readOnly = false, theme, fontSize = DEFAULT_FONT_SIZE, li
           if (isCopyingPrompt) return;
           isCopyingPrompt = true;
           const buffer = terminal.buffer.active;
-          let visibleRows = snapshotPromptRows(
-            buffer,
-            Math.max(0, buffer.length - terminal.rows),
-          );
           let successfulScrolls = 0;
           let attemptedScrolls = 0;
           let tmuxRedrewInPlace = false;
@@ -325,19 +323,23 @@ const useTerminal = ({ readOnly = false, theme, fontSize = DEFAULT_FONT_SIZE, li
                   if (attemptedScrolls >= MAX_PROMPT_COPY_SCROLL_STEPS) return null;
                   attemptedScrolls++;
                   const viewportY = buffer.viewportY;
-                  await dispatchWheel('down');
-                  const currentRows = snapshotPromptRows(
-                    buffer,
-                    Math.max(0, buffer.length - terminal.rows),
-                  );
-                  const newRows = findNewPromptRows(visibleRows, currentRows);
-                  if (newRows.length === 0) {
+                  const newRows = await loadNewPromptRowsAfterScroll({
+                    readRows: () => snapshotPromptRows(
+                      buffer,
+                      Math.max(0, buffer.length - terminal.rows),
+                    ),
+                    scroll: () => dispatchWheel('down'),
+                    waitForRetry: () => new Promise((resolve) => {
+                      window.setTimeout(resolve, PROMPT_COPY_SCROLL_RETRY_DELAY_MS);
+                    }),
+                    retries: PROMPT_COPY_SCROLL_RENDER_RETRIES,
+                  });
+                  if (!newRows) {
                     reachedEnd = true;
                     return null;
                   }
                   successfulScrolls++;
                   tmuxRedrewInPlace ||= buffer.viewportY === viewportY;
-                  visibleRows = currentRows;
                   return newRows;
                 },
                 restore: async () => {

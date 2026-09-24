@@ -135,6 +135,32 @@ export const findNewPromptRows = (
   return [...current];
 };
 
+interface ILoadNewPromptRowsAfterScrollOptions {
+  readRows: () => readonly ITerminalPromptRow[];
+  scroll: () => Promise<void>;
+  waitForRetry: () => Promise<void>;
+  retries: number;
+}
+
+export const loadNewPromptRowsAfterScroll = async ({
+  readRows,
+  scroll,
+  waitForRetry,
+  retries,
+}: ILoadNewPromptRowsAfterScrollOptions): Promise<readonly ITerminalPromptRow[] | null> => {
+  const previous = readRows();
+  await scroll();
+
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    const rows = readRows();
+    const newRows = findNewPromptRows(previous, rows);
+    if (newRows.length > 0) return newRows;
+    if (attempt < retries) await waitForRetry();
+  }
+
+  return null;
+};
+
 interface IPromptBlockScrollOptions {
   loadMore: () => Promise<readonly ITerminalPromptRow[] | null>;
   restore: () => Promise<void>;
