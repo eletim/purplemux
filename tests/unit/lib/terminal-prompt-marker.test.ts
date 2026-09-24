@@ -172,6 +172,34 @@ describe('terminal prompt markers', () => {
     expect(loadNextRows).toHaveBeenCalledTimes(2);
   });
 
+  it('copies more than 100 output rows without gaps or duplicates before the next prompt', async () => {
+    const outputRows = Array.from({ length: 105 }, (_, index) => `output-${index + 1}`);
+    const expected = [
+      'eletim@E-ryzen:~$ long-running-command',
+      ...outputRows,
+    ];
+    const remainingRows = [
+      ...outputRows.slice(2),
+      'eletim@E-ryzen:~$ next-command',
+      'next output',
+    ];
+    const loadedGroups: string[][] = [];
+    const loadNextRows = vi.fn(async () => {
+      const nextGroup = remainingRows.splice(0, 3);
+      loadedGroups.push(nextGroup);
+      return snapshotPromptRows(createBuffer(nextGroup), 0, nextGroup.length);
+    });
+
+    await expect(collectPromptBlock({
+      initialRows: snapshotPromptRows(createBuffer(expected.slice(0, 3)), 0, 3),
+      promptPrefix: PROMPT_PREFIX,
+      loadNextRows,
+    })).resolves.toBe(expected.join('\n'));
+    expect(loadNextRows).toHaveBeenCalledTimes(35);
+    expect(loadedGroups).toHaveLength(35);
+    expect(loadedGroups.every((group) => group.length === 3)).toBe(true);
+  });
+
   it('adds exactly three rows only after an exact three-row scroll', () => {
     const previous = snapshotPromptRows(createBuffer(['one', 'two', 'three', 'four', 'five']), 0, 5);
     const advancedThree = snapshotPromptRows(createBuffer(['four', 'five', 'six', 'seven', 'eight']), 0, 5);

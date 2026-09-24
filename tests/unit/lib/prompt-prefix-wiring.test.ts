@@ -32,6 +32,14 @@ describe('prompt-prefix terminal wiring', () => {
     expect(source).toMatch(/if \(!text \|\| disposed\) return;[\s\S]*?copyToClipboard\(text\)/);
   });
 
+  it('keeps the existing success toast after a prompt block is copied', () => {
+    const source = readSource('src/hooks/use-terminal.ts');
+
+    expect(source).toMatch(
+      /const ok = await copyToClipboard\(text\);\s*if \(ok && !disposed\) \{\s*toast\.success\(callbacksRef\.current\.t\('copyPaneSuccess'\), \{\s*id: COPY_TOAST_ID,\s*duration: 1500,\s*\}\);/,
+    );
+  });
+
   it('resyncs prompt markers after resetting the terminal', () => {
     const source = readSource('src/hooks/use-terminal.ts');
 
