@@ -23,7 +23,7 @@ describe('prompt-prefix terminal wiring', () => {
     expect(source).toContain('promptPrefix: callbacksRef.current.promptPrefix');
     expect(source).toContain('collectPromptBlock({');
     expect(source).toContain("dispatchWheel('down')");
-    expect(source).toContain('getNewlyVisiblePromptRows(previousRows, currentRows)');
+    expect(source).toContain('getNewlyVisiblePromptRows(previousViewport, currentViewport)');
     expect(source).toContain('restorePromptViewport({');
     expect(source).not.toContain('promptCopyQueue');
     expect(source).toContain('if (disposed || gutter.inert) return;');
@@ -38,6 +38,15 @@ describe('prompt-prefix terminal wiring', () => {
     expect(source).toMatch(
       /const ok = await copyToClipboard\(text\);\s*if \(ok && !disposed\) \{\s*toast\.success\(callbacksRef\.current\.t\('copyPaneSuccess'\), \{\s*id: COPY_TOAST_ID,\s*duration: 1500,\s*\}\);/,
     );
+  });
+
+  it('keeps exact one-row restoration private to modified synthetic wheel events', () => {
+    const config = readSource('src/config/tmux.conf');
+
+    expect(config).toContain('bind -T root C-M-WheelUpPane copy-mode -e');
+    expect(config).toContain('bind -T copy-mode    C-M-WheelUpPane   send-keys -X -N 1 scroll-up');
+    expect(config).toContain('bind -T copy-mode-vi C-M-WheelUpPane   send-keys -X -N 1 scroll-up');
+    expect(config).toContain('bind -T copy-mode    WheelUpPane       send-keys -X -N 3 scroll-up');
   });
 
   it('resyncs prompt markers after resetting the terminal', () => {

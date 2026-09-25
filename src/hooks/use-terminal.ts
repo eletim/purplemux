@@ -271,21 +271,27 @@ const useTerminal = ({ readOnly = false, theme, fontSize = DEFAULT_FONT_SIZE, li
 
         const screen = terminal.element.querySelector<HTMLElement>('.xterm-screen');
 
-        const readVisibleRows = () => snapshotPromptRows(
-          terminal.buffer.active,
-          terminal.buffer.active.viewportY,
-          Math.min(
-            terminal.buffer.active.length,
-            terminal.buffer.active.viewportY + terminal.rows,
-          ),
-        );
+        const readVisibleViewport = () => {
+          const buffer = terminal.buffer.active;
+          const viewportY = buffer.viewportY;
+          return {
+            viewportY,
+            rows: snapshotPromptRows(
+              buffer,
+              viewportY,
+              Math.min(buffer.length, viewportY + terminal.rows),
+            ),
+          };
+        };
 
-        const dispatchWheel = (direction: 'up' | 'down'): void => {
+        const dispatchWheel = (direction: 'up' | 'down', precise = false): void => {
           if (!screen) return;
           const rect = screen.getBoundingClientRect();
           screen.dispatchEvent(new WheelEvent('wheel', {
             deltaY: direction === 'down' ? 1 : -1,
             deltaMode: WheelEvent.DOM_DELTA_LINE,
+            altKey: precise,
+            ctrlKey: precise,
             clientX: rect.left + rect.width / 2,
             clientY: rect.top + rect.height / 2,
             bubbles: true,
@@ -321,9 +327,10 @@ const useTerminal = ({ readOnly = false, theme, fontSize = DEFAULT_FONT_SIZE, li
           gutter.inert = true;
           const buffer = terminal.buffer.active;
           const visibleEnd = Math.min(buffer.length, buffer.viewportY + terminal.rows);
-          const initialVisibleRows = readVisibleRows();
-          let visibleRows = initialVisibleRows;
+          const initialViewport = readVisibleViewport();
+          let visibleViewport = initialViewport;
           let scrollSteps = 0;
+          let scrollDisplacement = 0;
           let text: string | null = null;
           let restored = false;
 
@@ -334,7 +341,7 @@ const useTerminal = ({ readOnly = false, theme, fontSize = DEFAULT_FONT_SIZE, li
                 promptPrefix: callbacksRef.current.promptPrefix,
                 loadNextRows: async () => {
                   if (disposed || scrollSteps >= MAX_PROMPT_COPY_SCROLL_STEPS) return null;
-                  const previousRows = visibleRows;
+                  const previousViewport = visibleViewport;
                   // tmux.conf requests three rows; the live bottom may advance fewer.
                   await waitForScrollRender(() => dispatchWheel('down'));
                   if (disposed) return null;
@@ -344,11 +351,12 @@ const useTerminal = ({ readOnly = false, theme, fontSize = DEFAULT_FONT_SIZE, li
                       await waitForPromptCopyDelay(PROMPT_COPY_SCROLL_RETRY_DELAY_MS);
                       if (disposed) return null;
                     }
-                    const currentRows = readVisibleRows();
-                    const newRows = getNewlyVisiblePromptRows(previousRows, currentRows);
+                    const currentViewport = readVisibleViewport();
+                    const newRows = getNewlyVisiblePromptRows(previousViewport, currentViewport);
                     if (newRows.length > 0) {
-                      visibleRows = currentRows;
+                      visibleViewport = currentViewport;
                       scrollSteps++;
+                      scrollDisplacement += currentViewport.viewportY - previousViewport.viewportY;
                       return newRows;
                     }
                   }
@@ -358,14 +366,21 @@ const useTerminal = ({ readOnly = false, theme, fontSize = DEFAULT_FONT_SIZE, li
             } finally {
               if (!disposed) {
                 restored = await restorePromptViewport({
-                  targetRows: initialVisibleRows,
-                  readRows: () => disposed ? initialVisibleRows : readVisibleRows(),
-                  scrollUp: () => disposed
-                    ? Promise.resolve()
-                    : waitForScrollRender(() => dispatchWheel('up')),
+                  targetViewport: initialViewport,
+                  readViewport: () => disposed ? initialViewport : readVisibleViewport(),
+                  scrollUp: async (rows) => {
+                    if (disposed) return;
+                    if (rows === 3) {
+                      await waitForScrollRender(() => dispatchWheel('up'));
+                      return;
+                    }
+                    for (let row = 0; row < rows && !disposed; row++) {
+                      await waitForScrollRender(() => dispatchWheel('up', true));
+                    }
+                  },
                   // At the live bottom tmux exits copy-mode. The first upward wheel
                   // only re-enters it, so allow one observed no-op before restoring.
-                  maxAttempts: scrollSteps + 1,
+                  maxAttempts: scrollDisplacement + 2,
                 });
               }
             }

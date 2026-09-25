@@ -8,8 +8,10 @@ import useTerminal from '@/hooks/use-terminal';
 const mocks = vi.hoisted(() => ({
   copyToClipboard: vi.fn(),
   toastSuccess: vi.fn(),
-  wheelDeltas: [] as number[],
-  downViewport: 2,
+  wheelEvents: [] as Array<{ deltaY: number; precise: boolean }>,
+  lines: [] as string[],
+  freezeScroll: false,
+  viewportY: 0,
 }));
 
 vi.mock('@/lib/clipboard', () => ({ copyToClipboard: mocks.copyToClipboard }));
@@ -31,23 +33,15 @@ vi.mock('@xterm/xterm', () => ({
     element: HTMLElement | undefined;
     unicode = { activeVersion: '' };
     parser = { registerCsiHandler: vi.fn() };
-    private readonly lines = [
-      'eletim@E-ryzen:~$ run',
-      'output one',
-      'output two',
-      'output three',
-      'output four',
-      'output five',
-      'eletim@E-ryzen:~$ next',
-    ];
+    private copyModeExited = false;
     private readonly writeParsedListeners = new Set<() => void>();
     private readonly scrollListeners = new Set<() => void>();
     buffer = {
       active: {
-        length: 7,
+        get length() { return mocks.lines.length; },
         viewportY: 0,
         getLine: (row: number) => {
-          const text = this.lines[row];
+          const text = mocks.lines[row];
           return text === undefined ? undefined : {
             isWrapped: false,
             translateToString: (trimRight = false) => trimRight ? text.trimEnd() : text,
@@ -81,8 +75,24 @@ vi.mock('@xterm/xterm', () => ({
       });
       screenElement.addEventListener('wheel', (event) => {
         const wheelEvent = event as WheelEvent;
-        mocks.wheelDeltas.push(wheelEvent.deltaY);
-        this.buffer.active.viewportY = wheelEvent.deltaY > 0 ? mocks.downViewport : 0;
+        const precise = wheelEvent.altKey && wheelEvent.ctrlKey;
+        mocks.wheelEvents.push({ deltaY: wheelEvent.deltaY, precise });
+        if (!mocks.freezeScroll && wheelEvent.deltaY > 0) {
+          const maxViewportY = Math.max(0, mocks.lines.length - this.rows);
+          this.buffer.active.viewportY = Math.min(
+            maxViewportY,
+            this.buffer.active.viewportY + 3,
+          );
+          if (this.buffer.active.viewportY === maxViewportY) this.copyModeExited = true;
+        } else if (!mocks.freezeScroll && this.copyModeExited) {
+          this.copyModeExited = false;
+        } else if (!mocks.freezeScroll) {
+          this.buffer.active.viewportY = Math.max(
+            0,
+            this.buffer.active.viewportY - (precise ? 1 : 3),
+          );
+        }
+        mocks.viewportY = this.buffer.active.viewportY;
         this.scrollListeners.forEach((listener) => listener());
         this.writeParsedListeners.forEach((listener) => listener());
       });
@@ -109,8 +119,18 @@ describe('useTerminal prompt copying', () => {
   beforeEach(() => {
     mocks.copyToClipboard.mockReset().mockResolvedValue(true);
     mocks.toastSuccess.mockReset();
-    mocks.wheelDeltas.length = 0;
-    mocks.downViewport = 2;
+    mocks.wheelEvents.length = 0;
+    mocks.lines = [
+      'eletim@E-ryzen:~$ run',
+      'output one',
+      'output two',
+      'output three',
+      'output four',
+      'output five',
+      'eletim@E-ryzen:~$ next',
+    ];
+    mocks.freezeScroll = false;
+    mocks.viewportY = 0;
     vi.stubGlobal('FontFace', class {
       load() { return Promise.resolve(this); }
     });
@@ -133,21 +153,29 @@ describe('useTerminal prompt copying', () => {
     vi.unstubAllGlobals();
   });
 
-  it('scrolls by wheel, copies the exact prompt block, restores, and shows success', async () => {
+  it('scrolls over 100 rows, restores the exact viewport, copies exact text, and shows success', async () => {
+    const outputRows = Array.from({ length: 106 }, (_, index) => `output ${index + 1}`);
+    mocks.lines = [
+      'eletim@E-ryzen:~$ run',
+      ...outputRows,
+      'eletim@E-ryzen:~$ next',
+    ];
     render(createElement(TerminalHarness));
 
     const marker = await screen.findByRole('button', { name: 'copyPaneLabel' });
     fireEvent.click(marker);
 
-    await waitFor(() => expect(mocks.copyToClipboard).toHaveBeenCalledTimes(1));
-    expect(mocks.wheelDeltas).toEqual([1, -1]);
+    await waitFor(
+      () => expect(mocks.copyToClipboard).toHaveBeenCalledTimes(1),
+      { timeout: 10_000 },
+    );
+    expect(mocks.wheelEvents.filter((event) => event.deltaY > 0)).toHaveLength(35);
+    expect(mocks.wheelEvents.filter((event) => event.deltaY < 0 && !event.precise)).toHaveLength(35);
+    expect(mocks.wheelEvents.filter((event) => event.deltaY < 0 && event.precise)).toHaveLength(1);
+    expect(mocks.viewportY).toBe(0);
     expect(mocks.copyToClipboard).toHaveBeenCalledWith([
       'eletim@E-ryzen:~$ run',
-      'output one',
-      'output two',
-      'output three',
-      'output four',
-      'output five',
+      ...outputRows,
     ].join('\n'));
     expect(mocks.toastSuccess).toHaveBeenCalledWith('copyPaneSuccess', {
       id: 'terminal-copy',
@@ -156,7 +184,7 @@ describe('useTerminal prompt copying', () => {
   });
 
   it('does not copy or toast when scrolling never exposes new rows', async () => {
-    mocks.downViewport = 0;
+    mocks.freezeScroll = true;
     render(createElement(TerminalHarness));
 
     const marker = await screen.findByRole('button', { name: 'copyPaneLabel' });
@@ -164,7 +192,7 @@ describe('useTerminal prompt copying', () => {
     fireEvent.click(marker);
 
     await waitFor(() => expect(gutter?.inert).toBe(false));
-    expect(mocks.wheelDeltas).toEqual([1]);
+    expect(mocks.wheelEvents).toEqual([{ deltaY: 1, precise: false }]);
     expect(mocks.copyToClipboard).not.toHaveBeenCalled();
     expect(mocks.toastSuccess).not.toHaveBeenCalled();
   });

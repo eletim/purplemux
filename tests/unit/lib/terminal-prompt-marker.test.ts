@@ -206,18 +206,42 @@ describe('terminal prompt markers', () => {
     const advancedTwo = snapshotPromptRows(createBuffer(['three', 'four', 'five', 'six', 'seven']), 0, 5);
     const advancedOne = snapshotPromptRows(createBuffer(['two', 'three', 'four', 'five', 'six']), 0, 5);
 
-    expect(getNewlyVisiblePromptRows(previous, advancedThree).map((row) => row.text.trimEnd()))
+    expect(getNewlyVisiblePromptRows(
+      { viewportY: 10, rows: previous }, { viewportY: 13, rows: advancedThree },
+    ).map((row) => row.text.trimEnd()))
       .toEqual(['six', 'seven', 'eight']);
-    expect(getNewlyVisiblePromptRows(previous, advancedTwo).map((row) => row.text.trimEnd()))
+    expect(getNewlyVisiblePromptRows(
+      { viewportY: 10, rows: previous }, { viewportY: 12, rows: advancedTwo },
+    ).map((row) => row.text.trimEnd()))
       .toEqual(['six', 'seven']);
-    expect(getNewlyVisiblePromptRows(previous, advancedOne).map((row) => row.text.trimEnd()))
+    expect(getNewlyVisiblePromptRows(
+      { viewportY: 10, rows: previous }, { viewportY: 11, rows: advancedOne },
+    ).map((row) => row.text.trimEnd()))
       .toEqual(['six']);
-    expect(getNewlyVisiblePromptRows(advancedThree, advancedThree)).toEqual([]);
-    expect(getNewlyVisiblePromptRows(previous, snapshotPromptRows(
-      createBuffer(['unrelated', 'redraw', 'without', 'validated', 'overlap']), 0, 5,
-    ))).toEqual([]);
+    expect(getNewlyVisiblePromptRows(
+      { viewportY: 13, rows: advancedThree }, { viewportY: 13, rows: advancedThree },
+    )).toEqual([]);
+    expect(getNewlyVisiblePromptRows(
+      { viewportY: 10, rows: previous },
+      {
+        viewportY: 13,
+        rows: snapshotPromptRows(
+          createBuffer(['unrelated', 'redraw', 'without', 'validated', 'overlap']), 0, 5,
+        ),
+      },
+    )).toEqual([]);
     const threeRowScreen = snapshotPromptRows(createBuffer(['six', 'seven', 'eight']), 0, 3);
-    expect(getNewlyVisiblePromptRows(threeRowScreen, threeRowScreen)).toEqual([]);
+    expect(getNewlyVisiblePromptRows(
+      { viewportY: 10, rows: threeRowScreen }, { viewportY: 10, rows: threeRowScreen },
+    )).toEqual([]);
+  });
+
+  it('uses row displacement when repeated content makes multiple overlaps possible', () => {
+    const repeatedRows = snapshotPromptRows(createBuffer(['', '', '', '', '']), 0, 5);
+
+    expect(getNewlyVisiblePromptRows(
+      { viewportY: 20, rows: repeatedRows }, { viewportY: 21, rows: repeatedRows },
+    )).toHaveLength(1);
   });
 
   it('does not return a partial block when loading the next rows fails', async () => {
@@ -231,25 +255,30 @@ describe('terminal prompt markers', () => {
     })).resolves.toBeNull();
   });
 
-  it('restores by observed rows when the first upward scroll only re-enters copy-mode', async () => {
-    const screens = [
-      snapshotPromptRows(createBuffer(['four', 'five', 'six']), 0, 3),
-      snapshotPromptRows(createBuffer(['one', 'two', 'three']), 0, 3),
-    ];
-    const targetRows = screens[1];
-    let currentScreen = 0;
-    let scrolls = 0;
+  it('restores the measured final displacement after a copy-mode re-entry no-op', async () => {
+    const targetRows = snapshotPromptRows(createBuffer(['one', 'two', 'three']), 0, 3);
+    const otherRows = snapshotPromptRows(createBuffer(['four', 'five', 'six']), 0, 3);
+    let currentY = 15;
+    let needsReentry = true;
+    const requestedRows: number[] = [];
 
     await expect(restorePromptViewport({
-      targetRows,
-      readRows: () => screens[currentScreen],
-      scrollUp: async () => {
-        scrolls++;
-        if (scrolls > 1) currentScreen = 1;
+      targetViewport: { viewportY: 10, rows: targetRows },
+      readViewport: () => ({
+        viewportY: currentY,
+        rows: currentY === 10 ? targetRows : otherRows,
+      }),
+      scrollUp: async (rows) => {
+        requestedRows.push(rows);
+        if (needsReentry) {
+          needsReentry = false;
+        } else {
+          currentY -= rows;
+        }
       },
-      maxAttempts: 2,
+      maxAttempts: 7,
     })).resolves.toBe(true);
-    expect(scrolls).toBe(2);
+    expect(requestedRows).toEqual([3, 3, 2]);
   });
 
   it('keeps a wrapped logical line intact across three-row loads', async () => {

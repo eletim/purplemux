@@ -13,6 +13,11 @@ export interface ITerminalPromptRow {
   readonly text: string;
 }
 
+export interface ITerminalPromptViewport {
+  readonly viewportY: number;
+  readonly rows: readonly ITerminalPromptRow[];
+}
+
 const normalizePromptCandidate = (text: string): string => text
   .replace(/^[\s\u200B\u200C\u200D\uFEFF]+/, '');
 
@@ -97,42 +102,42 @@ export const arePromptRowsEqual = (
 ));
 
 export const getNewlyVisiblePromptRows = (
-  previous: readonly ITerminalPromptRow[],
-  current: readonly ITerminalPromptRow[],
+  previous: ITerminalPromptViewport,
+  current: ITerminalPromptViewport,
 ): ITerminalPromptRow[] => {
-  if (arePromptRowsEqual(previous, current)) return [];
-
-  // tmux normally advances three rows per wheel event, but the final scroll
-  // may stop one or two rows short when it reaches the live bottom.
-  for (let addedRows = Math.min(3, current.length - 1); addedRows > 0; addedRows--) {
-    const overlap = current.length - addedRows;
-    if (overlap > previous.length) continue;
-    if (arePromptRowsEqual(previous.slice(-overlap), current.slice(0, overlap))) {
-      return current.slice(overlap);
-    }
-  }
-
-  return [];
+  const displacement = current.viewportY - previous.viewportY;
+  if (displacement < 1 || displacement > 3 || displacement >= current.rows.length) return [];
+  const overlap = current.rows.length - displacement;
+  if (overlap > previous.rows.length) return [];
+  return arePromptRowsEqual(previous.rows.slice(-overlap), current.rows.slice(0, overlap))
+    ? current.rows.slice(overlap)
+    : [];
 };
 
 interface IRestorePromptViewportOptions {
-  targetRows: readonly ITerminalPromptRow[];
-  readRows: () => readonly ITerminalPromptRow[];
-  scrollUp: () => Promise<void>;
+  targetViewport: ITerminalPromptViewport;
+  readViewport: () => ITerminalPromptViewport;
+  scrollUp: (rows: number) => Promise<void>;
   maxAttempts: number;
 }
 
 export const restorePromptViewport = async ({
-  targetRows,
-  readRows,
+  targetViewport,
+  readViewport,
   scrollUp,
   maxAttempts,
 }: IRestorePromptViewportOptions): Promise<boolean> => {
   for (let attempt = 0; attempt < maxAttempts; attempt++) {
-    if (arePromptRowsEqual(readRows(), targetRows)) return true;
-    await scrollUp();
+    const current = readViewport();
+    if (current.viewportY === targetViewport.viewportY
+      && arePromptRowsEqual(current.rows, targetViewport.rows)) return true;
+    const displacement = current.viewportY - targetViewport.viewportY;
+    if (displacement <= 0) return false;
+    await scrollUp(Math.min(3, displacement));
   }
-  return arePromptRowsEqual(readRows(), targetRows);
+  const current = readViewport();
+  return current.viewportY === targetViewport.viewportY
+    && arePromptRowsEqual(current.rows, targetViewport.rows);
 };
 
 interface ICollectPromptBlockOptions {
