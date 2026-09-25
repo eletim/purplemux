@@ -73,7 +73,12 @@ export const getLastTerminalOutput = (sessionName: string): number | undefined =
   terminalOutputTimestamps.get(sessionName);
 
 const attachToSession = (target: TmuxTarget, sessionName: string, cols: number, rows: number,
-  signal?: AbortSignal, controlMode?: boolean,
+  settings: {
+    signal?: AbortSignal;
+    controlMode?: boolean;
+    readOnly?: boolean;
+    onSpawn?: (client: pty.IPty) => void;
+  } = {},
 ): Promise<pty.IPty> =>
   attachTmuxPty(target, sessionName, {
     name: 'xterm-256color',
@@ -81,7 +86,7 @@ const attachToSession = (target: TmuxTarget, sessionName: string, cols: number, 
     rows,
     cwd: PRISTINE_ENV.HOME || '/',
     env: buildShellEnv(),
-  }, { signal, controlMode });
+  }, settings);
 
 const cleanup = (conn: IActiveConnection, sessionExited = false) => {
   if (conn.cleaned) return;
@@ -299,6 +304,35 @@ export const handleConnection = async (ws: WebSocket, request: IncomingMessage, 
   const externalAbort = new AbortController();
   let currentCols = 80;
   let currentRows = 24;
+  let externalValidationQueue = Promise.resolve(true);
+  let initialExternalOutput = '';
+  let initialExternalOutputDisposable: pty.IDisposable | undefined;
+
+  const externalWindowIsSafe = (): Promise<boolean> => {
+    const validation = externalValidationQueue.then(async (wasSafe) => {
+      if (!wasSafe || connectionKind === 'managed' || !externalWindowGuard || !externalWindowId) return false;
+      const pids = [externalWindowGuard.pid];
+      if (ptyProcess) pids.push(ptyProcess.pid);
+      return await areExternalClientsOnWindow(
+        tmuxTarget,
+        pids,
+        externalWindowId,
+        externalAbort.signal,
+      ) && await externalWindowGuard.check();
+    });
+    externalValidationQueue = validation.catch(() => false);
+    return validation;
+  };
+
+  const queueExternalOperation = (operation: () => void | Promise<void>): void => {
+    externalInputQueue = externalInputQueue.then(async () => {
+      if (conn?.cleaned) return;
+      if (!await externalWindowIsSafe()) throw new Error('External client left registered window');
+      await operation();
+    }).catch(() => {
+      if (ws.readyState === WebSocket.OPEN) ws.close(1008, 'External client left registered window');
+    });
+  };
 
   const parseMessage = (raw: Buffer | ArrayBuffer) => {
     const data = new Uint8Array(
@@ -322,22 +356,27 @@ export const handleConnection = async (ws: WebSocket, request: IncomingMessage, 
 
     switch (msg.type) {
       case MSG_STDIN: {
-        if (connectionKind === 'legacy-external') {
-          externalInputQueue = externalInputQueue.then(() => {
-            if (conn?.cleaned) return;
-            return sendExternalInput(externalDefinition!, sessionName, msg.payload, externalAbort.signal);
-          }).catch(() => ws.close(1011, 'External input failed'));
+        if (connectionKind !== 'managed') {
+          queueExternalOperation(() => sendExternalInput(
+            tmuxTarget,
+            sessionName,
+            msg.payload,
+            externalAbort.signal,
+          ));
           break;
         }
         ptyProcess.write(textDecoder.decode(msg.payload));
         break;
       }
       case MSG_WEB_STDIN: {
-        if (connectionKind === 'legacy-external') {
-          externalInputQueue = externalInputQueue.then(async () => {
-            if (conn?.cleaned) return;
-            await sendExternalInput(externalDefinition!, sessionName, msg.payload, externalAbort.signal, true);
-          }).catch(() => ws.close(1011, 'External input failed'));
+        if (connectionKind !== 'managed') {
+          queueExternalOperation(() => sendExternalInput(
+            tmuxTarget,
+            sessionName,
+            msg.payload,
+            externalAbort.signal,
+            true,
+          ));
           break;
         }
         const data = textDecoder.decode(msg.payload);
@@ -359,11 +398,17 @@ export const handleConnection = async (ws: WebSocket, request: IncomingMessage, 
               conn.currentRows = newRows;
               if (!conn.capturePaused) {
                 if (connectionKind === 'legacy-external') ptyProcess.write(`refresh-client -C ${newCols},${newRows}\n`);
+                else if (connectionKind === 'external-server') {
+                  queueExternalOperation(() => ptyProcess?.resize(newCols, newRows));
+                }
                 else ptyProcess.resize(newCols, newRows);
                 if (sizeChanged) startThrottleWindow('resize');
               }
             } else {
               if (connectionKind === 'legacy-external') ptyProcess.write(`refresh-client -C ${newCols},${newRows}\n`);
+              else if (connectionKind === 'external-server') {
+                queueExternalOperation(() => ptyProcess?.resize(newCols, newRows));
+              }
               else ptyProcess.resize(newCols, newRows);
             }
           }
@@ -450,15 +495,30 @@ export const handleConnection = async (ws: WebSocket, request: IncomingMessage, 
     currentCols = urlCols > 0 ? urlCols : (pending.resize?.cols || 80);
     currentRows = urlRows > 0 ? urlRows : (pending.resize?.rows || 24);
     try {
+      externalWindowGuard = await ExternalWindowGuard.create(
+        tmuxTarget,
+        externalSessionId,
+        externalWindowId,
+        externalAbort.signal,
+      );
       ptyProcess = await attachToSession(
         tmuxTarget,
         sessionName,
         currentCols,
         currentRows,
-        externalAbort.signal,
-        false,
+        {
+          signal: externalAbort.signal,
+          controlMode: false,
+          readOnly: true,
+          onSpawn: (client) => {
+            initialExternalOutputDisposable = client.onData((data) => { initialExternalOutput += data; });
+          },
+        },
       );
+      if (!await externalWindowIsSafe()) throw new Error('External window guard unavailable');
     } catch (err) {
+      externalWindowGuard?.stop();
+      ptyProcess?.kill();
       log.error(`external server tmux attach failed: ${err instanceof Error ? err.message : err}`);
       ws.close(1011, 'External terminal attach failed');
       return;
@@ -490,9 +550,19 @@ export const handleConnection = async (ws: WebSocket, request: IncomingMessage, 
     currentRows = urlRows > 0 ? urlRows : (pending.resize?.rows || 24);
     try {
       await assertExtReviewSocketIdentity(definition, externalAbort.signal);
-      externalWindowGuard = await ExternalWindowGuard.create(definition, externalWindowId, externalAbort.signal);
+      externalWindowGuard = await ExternalWindowGuard.create(
+        tmuxTarget,
+        definition.sessionId,
+        externalWindowId,
+        externalAbort.signal,
+      );
       if (!await externalWindowGuard.check()
-        || !await areExternalClientsOnWindow(definition, [externalWindowGuard.pid], externalWindowId)) {
+        || !await areExternalClientsOnWindow(
+          tmuxTarget,
+          [externalWindowGuard.pid],
+          externalWindowId,
+          externalAbort.signal,
+        )) {
         throw new Error('External window guard unavailable');
       }
       ptyProcess = await attachToSession(
@@ -500,8 +570,7 @@ export const handleConnection = async (ws: WebSocket, request: IncomingMessage, 
         sessionName,
         currentCols,
         currentRows,
-        externalAbort.signal,
-        true,
+        { signal: externalAbort.signal, controlMode: true },
       );
       ptyProcess.write(`refresh-client -C ${currentCols},${currentRows}\n`);
       await assertExtReviewSocketIdentity(definition, externalAbort.signal);
@@ -557,6 +626,14 @@ export const handleConnection = async (ws: WebSocket, request: IncomingMessage, 
     currentCols = pending.resize.cols;
     currentRows = pending.resize.rows;
     if (connectionKind === 'legacy-external') ptyProcess.write(`refresh-client -C ${currentCols},${currentRows}\n`);
+    else if (connectionKind === 'external-server') {
+      if (!await externalWindowIsSafe()) {
+        ptyProcess.kill();
+        ws.close(1008, 'External client left registered window');
+        return;
+      }
+      ptyProcess.resize(currentCols, currentRows);
+    }
     else ptyProcess.resize(currentCols, currentRows);
   }
 
@@ -610,7 +687,7 @@ export const handleConnection = async (ws: WebSocket, request: IncomingMessage, 
   };
 
   const sendCheckedStdout = (data: string) => {
-    if (connectionKind !== 'legacy-external' || !externalWindowId) return sendStdout(data);
+    if (connectionKind === 'managed' || !externalWindowId) return sendStdout(data);
     externalQueuedBytes += Buffer.byteLength(data);
     if (externalQueuedBytes > BACKPRESSURE_HIGH && !externalQueuePaused) {
       externalQueuePaused = true;
@@ -618,8 +695,7 @@ export const handleConnection = async (ws: WebSocket, request: IncomingMessage, 
     }
     externalOutputQueue = externalOutputQueue.then(async () => {
       if (conn.cleaned || ws.readyState !== WebSocket.OPEN) return;
-      if (!await areExternalClientsOnWindow(externalDefinition!, [externalWindowGuard!.pid, ptyPid], externalWindowId)
-        || !await externalWindowGuard!.check()) {
+      if (!await externalWindowIsSafe()) {
         ws.close(1008, 'External client left registered window');
         conn.detaching = true;
         cleanup(conn);
@@ -717,6 +793,9 @@ export const handleConnection = async (ws: WebSocket, request: IncomingMessage, 
       sendCheckedStdout(data);
     }),
   );
+
+  initialExternalOutputDisposable?.dispose();
+  if (initialExternalOutput) sendCheckedStdout(initialExternalOutput);
 
   if (connectionKind === 'legacy-external') captureExternalOutput();
 

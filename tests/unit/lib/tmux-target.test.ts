@@ -88,15 +88,16 @@ describe('tmux target operations', () => {
     expect(onSpawn).toHaveBeenCalledWith(mocks.ptySpawn.mock.results[0]?.value);
   });
 
-  it('uses the normal terminal attach path for an external backend when requested', async () => {
+  it('uses a read-only normal terminal client for an external backend when requested', async () => {
     const target = externalTmuxTarget('/known/tmux.sock', vi.fn().mockResolvedValue(undefined));
 
     await attachTmuxPty(target, '$1:@2', { name: 'xterm', cols: 80, rows: 24, cwd: '/' }, {
       controlMode: false,
+      readOnly: true,
     });
 
     expect(mocks.ptySpawn).toHaveBeenCalledWith('tmux', [
-      '-N', '-S', '/known/tmux.sock', '-u', 'attach-session', '-t', '$1:@2',
+      '-N', '-S', '/known/tmux.sock', '-u', 'attach-session', '-r', '-t', '$1:@2',
     ], expect.objectContaining({ name: 'xterm' }));
   });
 

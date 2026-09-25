@@ -1,8 +1,8 @@
 import type * as pty from 'node-pty';
-import { extReviewTmuxTarget, ExtReviewError, ExtReviewSnapshotRaceError, resolveExtReviewTargets } from '@/lib/ext-review-tmux';
+import { extReviewTmuxTarget, ExtReviewSnapshotRaceError, resolveExtReviewTargets } from '@/lib/ext-review-tmux';
 import { buildShellEnv } from '@/lib/shell-env';
 import { PRISTINE_ENV } from '@/lib/pristine-env';
-import { attachTmuxPty, execTmux, validateTmuxTarget } from '@/lib/tmux-target';
+import { attachTmuxPty, execTmux, validateTmuxTarget, type TmuxTarget } from '@/lib/tmux-target';
 import type { IExtReview } from '@/types/ext-review';
 
 /** Return only history not already sent when the bounded tmux capture slides. */
@@ -45,12 +45,12 @@ export const captureExternalHistory = async (review: IExtReview, windowId: strin
   return stdout;
 };
 
-export const sendExternalInput = async (review: IExtReview, target: string, data: Uint8Array,
+export const sendExternalInput = async (backend: TmuxTarget, target: string, data: Uint8Array,
   signal: AbortSignal, webInput = false): Promise<void> => {
-  const backend = extReviewTmuxTarget(review);
   if (webInput) {
-    await execTmux(backend, ['copy-mode', '-q', '-t', target], { timeout: 5000, signal }).catch((error) => {
-      if (error instanceof ExtReviewError) throw error;
+    await execTmux(backend, ['copy-mode', '-q', '-t', target], { timeout: 5000, signal }).catch(async () => {
+      // Missing copy mode is harmless, but a replaced external socket is not.
+      await validateTmuxTarget(backend, signal);
     });
   }
   // -H sends bytes to the exact target pane, without feeding tmux client keys.
@@ -62,11 +62,15 @@ export const sendExternalInput = async (review: IExtReview, target: string, data
   }
 };
 
-export const areExternalClientsOnWindow = async (review: IExtReview, pids: number[], windowId: string): Promise<boolean> => {
-  const backend = extReviewTmuxTarget(review);
+export const areExternalClientsOnWindow = async (
+  backend: TmuxTarget,
+  pids: number[],
+  windowId: string,
+  signal?: AbortSignal,
+): Promise<boolean> => {
   const { stdout } = await execTmux(backend, ['list-clients', '-F',
-    '#{client_pid}\t#{window_id}'], { timeout: 5000 });
-  await validateTmuxTarget(backend);
+    '#{client_pid}\t#{window_id}'], { timeout: 5000, signal });
+  await validateTmuxTarget(backend, signal);
   const clients = new Set(stdout.trim().split('\n'));
   return pids.every((pid) => clients.has(`${pid}\t${windowId}`));
 };
@@ -92,15 +96,20 @@ export class ExternalWindowGuard {
     }));
   }
 
-  static async create(review: IExtReview, windowId: string, signal?: AbortSignal): Promise<ExternalWindowGuard> {
+  static async create(
+    backend: TmuxTarget,
+    sessionId: string,
+    windowId: string,
+    signal?: AbortSignal,
+  ): Promise<ExternalWindowGuard> {
     let guard: ExternalWindowGuard | undefined;
-    await attachTmuxPty(extReviewTmuxTarget(review), `${review.sessionId}:${windowId}`, {
+    await attachTmuxPty(backend, `${sessionId}:${windowId}`, {
       name: 'xterm-256color', cols: 80, rows: 24,
       cwd: PRISTINE_ENV.HOME || '/', env: buildShellEnv(),
     }, {
       noOutput: true,
       signal,
-      onSpawn: (client) => { guard = new ExternalWindowGuard(client, windowId, review.sessionId); },
+      onSpawn: (client) => { guard = new ExternalWindowGuard(client, windowId, sessionId); },
     });
     return guard!;
   }

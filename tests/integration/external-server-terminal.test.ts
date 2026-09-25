@@ -87,7 +87,13 @@ describe('shared terminal path for discovered external windows', () => {
   it('shares display, input, web input, resize, scrollback, reconnect, and switching behavior', async () => {
     const first = await connect();
     await vi.waitFor(() => expect(first.output()).toContain('FIRST_WINDOW'));
+    expect(tmux('list-clients', '-F', '#{client_flags}').split('\n')
+      .every((flags) => flags.includes('read-only'))).toBe(true);
 
+    first.ws.send(encodeStdin('\x02n'));
+    await vi.waitFor(() => expect(tmux('list-clients', '-F', '#{window_id}').split('\n'))
+      .toEqual(['@0', '@0']));
+    first.ws.send(encodeStdin('\x03'));
     first.ws.send(encodeStdin("printf 'KEYBOARD_INPUT\\n'\r"));
     await vi.waitFor(() => expect(first.output()).toContain('KEYBOARD_INPUT'));
 
@@ -139,6 +145,36 @@ describe('shared terminal path for discovered external windows', () => {
     await vi.waitFor(() => expect(replaced.closed()?.code).toBe(1011));
     expect(replaced.output()).toBe('');
   }, 20_000);
+
+  it('rejects client drift before input, resize, or another window output can cross the boundary', async () => {
+    const connected = await connect();
+    await vi.waitFor(() => expect(connected.output()).toContain('FIRST_WINDOW'));
+    const clientTty = tmux('list-clients', '-F', '#{client_flags}\t#{client_tty}')
+      .split('\n').find((line) => !line.includes('no-output'))?.split('\t')[1];
+    expect(clientTty).toBeTruthy();
+
+    tmux('switch-client', '-c', clientTty!, '-t', '$0:@1');
+    const secondSize = tmux('display-message', '-p', '-t', '$0:@1', '#{pane_width}:#{pane_height}');
+    connected.ws.send(encodeStdin("printf 'MISROUTED_INPUT\\n'\r"));
+    connected.ws.send(encodeResize(120, 50));
+
+    await vi.waitFor(() => expect(connected.closed()?.code).toBe(1008));
+    expect(tmux('capture-pane', '-p', '-t', '$0:@1')).not.toContain('MISROUTED_INPUT');
+    expect(tmux('display-message', '-p', '-t', '$0:@1', '#{pane_width}:#{pane_height}'))
+      .toBe(secondSize);
+    expect(connected.output()).not.toContain('SECOND_WINDOW');
+  });
+
+  it('does not follow an exact window after that window is deleted', async () => {
+    const connected = await connect();
+    await vi.waitFor(() => expect(connected.output()).toContain('FIRST_WINDOW'));
+
+    tmux('kill-window', '-t', '$0:@0');
+
+    await vi.waitFor(() => expect(connected.closed()?.code).toBe(1008));
+    expect(connected.output()).not.toContain('SECOND_WINDOW');
+    expect(tmux('display-message', '-p', '-t', '$0:@1', '#{window_id}')).toBe('@1');
+  });
 
   it('disconnects registration-backed terminals without killing external resources', async () => {
     const connected = await connect();

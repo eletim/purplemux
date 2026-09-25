@@ -2,11 +2,20 @@ import { useEffect } from 'react';
 import useTerminal from '@/hooks/use-terminal';
 import useTerminalWebSocket from '@/hooks/use-terminal-websocket';
 import useTerminalTheme from '@/hooks/use-terminal-theme';
+import type { IExternalTerminalTarget } from '@/types/terminal';
 
-export default function ExternalTargetTerminal({ targetId, windowId }: { targetId: string; windowId: string }) {
+type TExternalTargetTerminalProps =
+  | { targetId: string; windowId: string; externalTerminalTarget?: never }
+  | { targetId?: never; windowId?: never; externalTerminalTarget: IExternalTerminalTarget };
+
+export default function ExternalTargetTerminal(props: TExternalTargetTerminalProps) {
+  const externalTerminalTarget = props.externalTerminalTarget;
+  const targetId = props.targetId;
+  const windowId = externalTerminalTarget?.windowId ?? props.windowId!;
   const { theme } = useTerminalTheme();
   const { status, disconnectReason, externalTargetFailure, connect, disconnect, sendStdin, sendResize } = useTerminalWebSocket({
-    externalTarget: { id: targetId, windowId },
+    externalTarget: targetId ? { id: targetId, windowId } : undefined,
+    externalTerminalTarget,
     onData: (data) => write(data),
   });
   const { terminalRef, write, fit, isReady } = useTerminal({
@@ -18,9 +27,12 @@ export default function ExternalTargetTerminal({ targetId, windowId }: { targetI
   useEffect(() => {
     if (!isReady) return;
     const { cols, rows } = fit();
-    connect(`${targetId}:${windowId}`, cols, rows);
+    const connectionKey = externalTerminalTarget
+      ? `${externalTerminalTarget.serverId}:${externalTerminalTarget.sessionId}:${windowId}`
+      : `${targetId}:${windowId}`;
+    connect(connectionKey, cols, rows);
     return disconnect;
-  }, [isReady, targetId, windowId, fit, connect, disconnect]);
+  }, [isReady, targetId, windowId, externalTerminalTarget, fit, connect, disconnect]);
 
   return (
     <section aria-label={`External terminal ${windowId}`}>
