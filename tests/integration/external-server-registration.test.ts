@@ -61,6 +61,26 @@ describe('external tmux server registrations', () => {
     expect(tmux('list-windows', '-t', 'external', '-F', '#{window_id}').split('\n')).toHaveLength(2);
   });
 
+  it('marks selector-shaped names only on their newly created sessions', async () => {
+    vi.spyOn(os, 'homedir').mockReturnValue(directory);
+    vi.resetModules();
+    const store = await import('@/lib/external-server-store');
+    const server = await store.registerExternalServer({ name: 'external', socketPath: socket });
+
+    for (const [index, name] of ['$0', '=external', '@0', '%0'].entries()) {
+      const requestId = `selector-${index}`;
+      const created = await store.createExternalTerminal(server.id, { requestId, name });
+      expect(created).toMatchObject({ name, provenance: { requestId } });
+      const inventory = await discoverExternalServer((await store.listExternalServers())[0]);
+      expect(inventory.sessions.find(({ id }) => id === '$0')).toMatchObject({
+        name: 'external', owned: false,
+      });
+      expect(inventory.sessions.find(({ id }) => id === created?.sessionId)).toMatchObject({
+        name, owned: true, provenance: created?.provenance,
+      });
+    }
+  });
+
   it('creates a marked session and records its history without adopting existing resources', async () => {
     vi.spyOn(os, 'homedir').mockReturnValue(directory);
     vi.resetModules();

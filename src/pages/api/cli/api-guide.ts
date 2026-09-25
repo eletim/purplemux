@@ -68,10 +68,9 @@ GET /api/cli/external-servers
 
 POST /api/cli/external-servers/<serverId>/terminals
   Body: { "requestId": "client-stable-id", "name"?: "terminal-name" }
-  Names that tmux would parse as a session selector (for example $0 or =name)
-  are rejected before creation.
   Creates a new tmux session (never an implicit window in an existing session) and
-  sets its authoritative PurpleMux ownership marker. The same provenance is recorded
+  sets its authoritative PurpleMux ownership marker directly on that new session,
+  without resolving the supplied name as a target. The same provenance is recorded
   separately as idempotency/audit history.
   Returns { "serverId", "sessionId", "sessionCreated", "windowId", "name",
             "provenance": { "id", "requestId", "owner":"purplemux", "resourceType":"session",

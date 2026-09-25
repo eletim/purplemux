@@ -40,15 +40,23 @@ describe('external tmux runtime decoding', () => {
     });
   });
 
-  it.each(['  $0  ', '=external'])('rejects selector-shaped name %j before targeting a session', async (name) => {
-    const identity = { id: '123456789012345678901', requestId: 'selector-name',
-      createdAt: '2026-09-26T00:00:00.000Z' };
+  it.each(['  $0  ', '=external', '@0', '%0'])(
+    'marks selector-shaped name %j on the newly created command target', async (name) => {
+      const identity = { id: '123456789012345678901', requestId: 'selector-name',
+        createdAt: '2026-09-26T00:00:00.000Z' };
+      mocks.exec.mockResolvedValueOnce({ stdout: inventoryLine(), stderr: '' })
+        .mockResolvedValueOnce({ stdout: '$4\t1750000001\t@7\n', stderr: '' });
 
-    await expect(createExternalTerminal(server,
-      { requestId: 'selector-name', name }, identity))
-      .rejects.toThrow('Specify a valid requestId and terminal name');
-    expect(mocks.exec).not.toHaveBeenCalled();
-  });
+      await expect(createExternalTerminal(server,
+        { requestId: 'selector-name', name }, identity)).resolves.toMatchObject({ sessionId: '$4' });
+      expect(mocks.exec).toHaveBeenCalledWith(expect.anything(), [
+        'new-session', '-d', '-P', '-F', '#{session_id}\t#{session_created}\t#{window_id}',
+        '-s', name.trim(),
+        ';', 'set-option', '@purplemux_provenance',
+        encodePendingExternalTerminalMarker(server, identity),
+      ], expect.objectContaining({ timeout: 5000 }));
+    },
+  );
 
   it('creates a marked session and returns stable identities for creation history', async () => {
     mocks.exec.mockResolvedValueOnce({ stdout: inventoryLine(), stderr: '' })
@@ -65,7 +73,7 @@ describe('external tmux runtime decoding', () => {
     expect(mocks.exec).toHaveBeenCalledWith(expect.anything(), [
       'new-session', '-d', '-P', '-F', '#{session_id}\t#{session_created}\t#{window_id}',
       '-s', 'my terminal',
-      ';', 'set-option', '-t', 'my terminal', '@purplemux_provenance',
+      ';', 'set-option', '@purplemux_provenance',
       encodePendingExternalTerminalMarker(server, identity),
     ], expect.objectContaining({ timeout: 5000 }));
     expect(mocks.exec).toHaveBeenCalledWith(expect.anything(), [

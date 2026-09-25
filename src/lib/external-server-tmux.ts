@@ -146,8 +146,7 @@ const validateExternalTerminalInput = (input: ICreateExternalTerminal): string =
   if (!input || typeof input.requestId !== 'string'
     || !/^[-_A-Za-z0-9]{1,128}$/.test(input.requestId)
     || (input.name !== undefined && (typeof input.name !== 'string'
-    || !input.name.trim() || /[:.\n\r\0]/.test(input.name)
-    || /^(?:\$\d+|=)/.test(input.name.trim())))) {
+    || !input.name.trim() || /[:.\n\r\0]/.test(input.name)))) {
     throw new ExternalServerError('Specify a valid requestId and terminal name');
   }
   return input.name?.trim() ?? `purplemux-${nanoid(8)}`;
@@ -204,10 +203,12 @@ export const createExternalTerminal = async (
   }
   const pendingMarker = encodePendingExternalTerminalMarker(server, identity);
   try {
+    // Deliberately omit -t from set-option so it inherits new-session's exact
+    // command-queue target; a user-supplied name may itself be a tmux selector.
     const { stdout } = await execTmux(externalServerTmuxTarget(server), [
       'new-session', '-d', '-P', '-F',
       '#{session_id}\t#{session_created}\t#{window_id}', '-s', name,
-      ';', 'set-option', '-t', name, '@purplemux_provenance', pendingMarker,
+      ';', 'set-option', '@purplemux_provenance', pendingMarker,
     ], { timeout: 5000, signal });
     const fields = stdout.trimEnd().split('\t');
     if (fields.length !== 3 || !/^\$\d+$/.test(fields[0]) || !/^\d+$/.test(fields[1])
