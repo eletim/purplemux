@@ -53,9 +53,7 @@ export const execTmux = async (
   options: TmuxExecOptions = {},
 ): Promise<{ stdout: string; stderr: string }> => {
   await validateTmuxTarget(target, options.signal);
-  const result = await execFile('tmux', tmuxTargetArgs(target, args), { ...options, encoding: 'utf8' });
-  await validateTmuxTarget(target, options.signal);
-  return result;
+  return execFile('tmux', tmuxTargetArgs(target, args), { ...options, encoding: 'utf8' });
 };
 
 export const spawnTmux = async (

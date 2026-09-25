@@ -31,13 +31,13 @@ describe('tmux target operations', () => {
     ]);
   });
 
-  it('validates an external backend before and after each command', async () => {
+  it('validates an external backend before each command', async () => {
     const validate = vi.fn().mockResolvedValue(undefined);
     const target = externalTmuxTarget('/known/tmux.sock', validate);
 
     await expect(execTmux(target, ['display-message', '-p'])).resolves.toMatchObject({ stdout: 'ok' });
 
-    expect(validate).toHaveBeenCalledTimes(2);
+    expect(validate).toHaveBeenCalledOnce();
     expect(mocks.execFile).toHaveBeenCalledWith(
       'tmux',
       ['-N', '-S', '/known/tmux.sock', 'display-message', '-p'],

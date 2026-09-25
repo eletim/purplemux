@@ -2,7 +2,7 @@ import * as pty from 'node-pty';
 import { extReviewTmuxTarget, ExtReviewError, ExtReviewSnapshotRaceError, resolveExtReviewTargets } from '@/lib/ext-review-tmux';
 import { buildShellEnv } from '@/lib/shell-env';
 import { PRISTINE_ENV } from '@/lib/pristine-env';
-import { execTmux, tmuxAttachArgs } from '@/lib/tmux-target';
+import { execTmux, tmuxAttachArgs, validateTmuxTarget } from '@/lib/tmux-target';
 import type { IExtReview } from '@/types/ext-review';
 
 /** Return only history not already sent when the bounded tmux capture slides. */
@@ -58,12 +58,15 @@ export const sendExternalInput = async (review: IExtReview, target: string, data
     const bytes = data.subarray(offset, offset + 1024);
     await execTmux(backend, ['send-keys', '-H', '-t', target,
       ...Array.from(bytes, (byte) => byte.toString(16).padStart(2, '0'))], { timeout: 5000, signal });
+    await validateTmuxTarget(backend, signal);
   }
 };
 
 export const areExternalClientsOnWindow = async (review: IExtReview, pids: number[], windowId: string): Promise<boolean> => {
-  const { stdout } = await execTmux(extReviewTmuxTarget(review), ['list-clients', '-F',
+  const backend = extReviewTmuxTarget(review);
+  const { stdout } = await execTmux(backend, ['list-clients', '-F',
     '#{client_pid}\t#{window_id}'], { timeout: 5000 });
+  await validateTmuxTarget(backend);
   const clients = new Set(stdout.trim().split('\n'));
   return pids.every((pid) => clients.has(`${pid}\t${windowId}`));
 };
