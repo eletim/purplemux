@@ -2,8 +2,9 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mocks = vi.hoisted(() => {
   const execChild = { kill: vi.fn() };
-  const execFile = vi.fn((_file, _args, _options, callback) => {
-    callback(null, 'ok', '');
+  const execFile = vi.fn((_file, _args, options, callback) => {
+    callback(null, options.encoding === 'buffer' ? Buffer.from('ok') : 'ok',
+      options.encoding === 'buffer' ? Buffer.alloc(0) : '');
     return execChild;
   });
   return {
@@ -19,7 +20,8 @@ vi.mock('child_process', async (importOriginal) => ({
 }));
 vi.mock('node-pty', () => ({ spawn: mocks.ptySpawn }));
 
-import { attachTmuxPty, execTmux, externalTmuxTarget, managedTmuxTarget } from '@/lib/tmux-target';
+import { attachTmuxPty, execTmux, execTmuxBuffer,
+  externalTmuxTarget, managedTmuxTarget } from '@/lib/tmux-target';
 
 describe('tmux target operations', () => {
   beforeEach(() => vi.clearAllMocks());
@@ -43,6 +45,14 @@ describe('tmux target operations', () => {
       expect.objectContaining({ encoding: 'utf8' }),
       expect.any(Function),
     );
+  });
+
+  it('preserves raw tmux output bytes when requested', async () => {
+    const result = await execTmuxBuffer(managedTmuxTarget, ['display-message', '-p']);
+
+    expect(result.stdout).toEqual(Buffer.from('ok'));
+    expect(mocks.execFile).toHaveBeenCalledWith('tmux', ['-L', 'purple', 'display-message', '-p'],
+      expect.objectContaining({ encoding: 'buffer' }), expect.any(Function));
   });
 
   it('does not invoke tmux when external target validation fails', async () => {

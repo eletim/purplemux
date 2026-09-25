@@ -2,6 +2,7 @@ import {
   execFile as execFileCallback,
   spawn,
   type ChildProcess,
+  type ExecFileOptionsWithBufferEncoding,
   type ExecFileOptionsWithStringEncoding,
   type SpawnOptions,
 } from 'child_process';
@@ -43,6 +44,7 @@ export const validateTmuxTarget = async (target: TmuxTarget, signal?: AbortSigna
 };
 
 type TmuxExecOptions = Omit<ExecFileOptionsWithStringEncoding, 'encoding'>;
+type TmuxBufferExecOptions = Omit<ExecFileOptionsWithBufferEncoding, 'encoding'>;
 
 /** Execute against a managed or validated external target without exposing selector flags. */
 export const execTmux = async (
@@ -63,6 +65,32 @@ export const execTmux = async (
   void result.catch(() => {});
   try {
     // Detect a path replacement in the gap between validation and process creation.
+    await validateTmuxTarget(target, options.signal);
+  } catch (error) {
+    child.kill();
+    await result.catch(() => {});
+    throw error;
+  }
+  return result;
+};
+
+/** Execute against a target while preserving arbitrary bytes in tmux output. */
+export const execTmuxBuffer = async (
+  target: TmuxTarget,
+  args: string[],
+  options: TmuxBufferExecOptions = {},
+): Promise<{ stdout: Buffer; stderr: Buffer }> => {
+  await validateTmuxTarget(target, options.signal);
+  let child!: ChildProcess;
+  const result = new Promise<{ stdout: Buffer; stderr: Buffer }>((resolve, reject) => {
+    child = execFileCallback('tmux', tmuxTargetArgs(target, args),
+      { ...options, encoding: 'buffer' }, (error, stdout, stderr) => {
+        if (error) reject(error);
+        else resolve({ stdout, stderr });
+      });
+  });
+  void result.catch(() => {});
+  try {
     await validateTmuxTarget(target, options.signal);
   } catch (error) {
     child.kill();
