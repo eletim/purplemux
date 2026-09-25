@@ -95,6 +95,11 @@ DELETE /api/cli/external-servers/<serverId>
 
 The stable id identifies the registration. Every tmux operation rechecks the frozen
 socket identity and fails closed if the path is missing or has been replaced.
+Open /external-server in an authenticated browser to browse this same fresh inventory
+and attach the normal interactive terminal to one exact discovered session/window.
+Input, paste, resize, reconnect, and Terminal Copy are supported. Kill is rejected;
+target drift closes the connection rather than following another window. There is no
+interactive /external-target/<id> URL or ext-review-based interactive registration.
 
 ## External review (PurpleMux 0.5.0)
 
