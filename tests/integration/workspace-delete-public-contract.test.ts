@@ -121,26 +121,29 @@ exec ${quote(realTmux)} "$@"
     const cli = async (...args: string[]) => JSON.parse((await execFileAsync(process.execPath,
       [cliPath, ...args], { env: cliEnv })).stdout);
     const create = () => cli('ext-review', 'create', '--socket', socket, '--session', 'external', '--window', '@0');
+    // Retain coverage for the legacy transport while its public fixed-window
+    // registration contract is migrated to external server sources.
+    const createLegacyInteractive = async () => {
+      const definition = await create();
+      const definitionsFile = path.join(base, 'ext-reviews.json');
+      const definitions = JSON.parse(await fs.readFile(definitionsFile, 'utf8'));
+      const stored = definitions.find((entry: { id: string }) => entry.id === definition.id);
+      stored.interactive = true;
+      await fs.writeFile(definitionsFile, JSON.stringify(definitions, null, 2));
+      return definition;
+    };
     const review = await create();
     expect(review).toMatchObject({ socketPath: socket, sessionId: '$0', windowIds: ['@0'], url: `http://localhost:${port}/ext-review/${review.id}` });
-    const registration = await cli('external-target', 'register', '--socket', socket,
-      '--session', 'external', '--window', '@0');
-    expect(registration).toMatchObject({ socketPath: socket, sessionId: '$0', windowIds: ['@0'],
-      url: `http://localhost:${port}/external-target/${registration.id}` });
-    expect((await cli('external-target', 'list')).targets).toEqual(expect.arrayContaining([
-      expect.objectContaining({ id: registration.id, url: registration.url }),
-    ]));
-    expect(await cli('external-target', 'open', registration.id)).toMatchObject({
-      id: registration.id, url: registration.url,
-    });
+    const registration = await cli('external-server', 'register', '--socket', socket, '--name', 'dev server');
+    expect(registration).toMatchObject({ name: 'dev server', socketPath: socket,
+      socketIdentity: expect.stringMatching(/^\d+:\d+:\d+$/) });
+    expect((await cli('external-server', 'list')).servers).toEqual([registration]);
     tmux('new-window', '-d', '-t', 'external', '-n', 'added', 'echo ADDED_SECRET; exec sleep 300');
     initial = state();
     pids.push(Number(tmux('display-message', '-p', '-t', '$0:@2', '#{pane_pid}')));
     expect(await cli('ext-review', 'get', review.id)).toMatchObject({ id: review.id, windowIds: ['@0'] });
-    expect(await cli('external-target', 'unregister', registration.id)).toEqual({ deleted: true });
-    expect((await cli('external-target', 'list')).targets).not.toEqual(expect.arrayContaining([
-      expect.objectContaining({ id: registration.id }),
-    ]));
+    expect(await cli('external-server', 'unregister', registration.id)).toEqual({ deleted: true });
+    expect((await cli('external-server', 'list')).servers).toEqual([]);
     expect(tmux('display-message', '-p', '-t', '$0:@0', '#{window_id}')).toBe('@0');
     const login = await fetch(`${origin}/api/auth/login`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ password: 'review-test-password' }),
@@ -248,8 +251,7 @@ exec ${quote(realTmux)} "$@"
     expect((await request(`/api/cli/ext-reviews/${review.id}`)).status).toBe(404);
     intact();
 
-    const interactive = await cli('external-target', 'register', '--socket', socket,
-      '--session', 'external', '--window', '@0');
+    const interactive = await createLegacyInteractive();
     const readOnly = await create();
     const readOnlyDenied = await connect(`externalTargetId=${readOnly.id}&windowId=%400`, true);
     await waitFor(() => expect(readOnlyDenied.code()).toBe(1008));
@@ -317,7 +319,7 @@ exec ${quote(realTmux)} "$@"
     expect(rapid.output()).not.toContain('HIDDEN_SECRET');
     const revocable = await connect(`externalTargetId=${interactive.id}&windowId=%400`, true);
     await waitFor(() => expect(revocable.output()).toContain('EXTERNAL_APPROVED'));
-    expect(await cli('external-target', 'unregister', interactive.id)).toEqual({ deleted: true });
+    expect(await cli('ext-review', 'delete', interactive.id)).toEqual({ deleted: true });
     await waitFor(() => expect([revocable.code(), revocable.reason()]).toEqual([1000, 'External target unregistered']));
     const unregistered = await connect(`externalTargetId=${interactive.id}&windowId=%400`, true);
     await waitFor(() => expect(unregistered.code()).toBe(1008));

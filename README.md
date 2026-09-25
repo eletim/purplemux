@@ -131,18 +131,17 @@ purplemux tab create -w WS -t agent-sessions
 purplemux workspace delete -w WS --if-empty
 ```
 
-### External targets (PurpleMux 0.5.2)
+### External tmux servers
 
-Register known tmux windows for an interactive browser terminal:
+Register a known tmux server once, independently of its current sessions and windows:
 
 ```bash
-purplemux external-target register --socket /absolute/known/tmux/socket --session '$2' --window @1 --window @3
-purplemux external-target list
-purplemux external-target open TARGET_ID
-purplemux external-target unregister TARGET_ID
+purplemux external-server register --socket /absolute/known/tmux/socket --name dev-server
+purplemux external-server list
+purplemux external-server unregister SERVER_ID
 ```
 
-Registration returns an ID and an absolute URL at `/external-target/<id>`. Open that URL for terminal input, scrollback, and resize in the registered windows. `open` rechecks the target before printing its URL; `unregister` removes only the registration. The tmux resources remain yours.
+Registration stores a stable ID, display name, absolute socket path, and frozen socket identity. The PurpleMux-owned `purple` socket is rejected, and later operations fail closed if the socket path is replaced. Unregister removes only PurpleMux's registration; it never kills the external server or any session, window, or pane.
 
 ### External review (PurpleMux 0.5.0)
 
@@ -160,7 +159,7 @@ Observation is fixed and read-only: live current-screen snapshots, with no input
 
 Reviews are excluded from Workspace ownership, discovery, and cleanup. They do not discover targets, adopt external sessions, or start a tmux server. Delete removes only the definition, even if unavailable, and sends no tmux commands; external sessions, windows, and panes remain running. Socket symlinks and the PurpleMux-owned `purple` socket are rejected.
 
-See the [CLI reference](landing-src/docs/cli-reference.md), `purplemux api-guide`, and [external review technical notes](docs/ext-review-definitions.md) for the lifecycle API and observation details.
+See the [CLI reference](landing-src/docs/cli-reference.md) and `purplemux api-guide` for lifecycle APIs and observation details.
 
 ### Run from source
 

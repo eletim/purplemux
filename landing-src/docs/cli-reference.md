@@ -51,10 +51,9 @@ All subcommands require a running server. They read the port from `~/.purplemux/
 | `purplemux workspaces` | List workspaces |
 | `purplemux workspace create --cwd PATH [--name NAME]` | Create a workspace |
 | `purplemux workspace delete -w WS --if-empty` | Conditionally delete an empty workspace |
-| `purplemux external-target register --socket PATH --session SESSION --window @ID [--window @ID ...]` | Register explicit external tmux targets |
-| `purplemux external-target list` | List registrations, including unavailable targets |
-| `purplemux external-target open ID` | Recheck target identity and print its browser URL |
-| `purplemux external-target unregister ID` | Remove a registration without changing tmux resources |
+| `purplemux external-server register --socket PATH --name NAME` | Register an external tmux server |
+| `purplemux external-server list` | List external server registrations |
+| `purplemux external-server unregister ID` | Remove a registration without changing tmux resources |
 | `purplemux tab list [-w WS]` | List tabs (optionally scoped to a workspace) |
 | `purplemux tab create -w WS [-n NAME] [-t TYPE]` | Create a new tab |
 | `purplemux tab send -w WS TAB_ID CONTENT...` | Send input to a tab |
@@ -76,9 +75,9 @@ Output is JSON unless noted. `--workspace` and `-w` are interchangeable.
 
 If a transport failure or server error makes the mutation outcome uncertain, reconcile with `purplemux workspaces`. Direct HTTP clients can use `GET /api/cli/workspaces/<workspaceId>` for an exact `present` or `absent` result. Do not inspect `~/.purplemux` files or tmux state as an external lifecycle contract.
 
-### External target registration
+### External tmux server registration
 
-Use `external-target register` with a known absolute socket path, exact session name or `$sessionId`, and one or more `@windowId` values. It returns a stable registration ID and an absolute browser URL for an interactive terminal with input, scrollback, and resize. `external-target list` includes registrations whose tmux resources are unavailable. `external-target open ID` checks the frozen identities before returning the browser URL; a changed or missing target fails the check. `external-target unregister ID` deletes only the registration, even if the tmux server is gone. These commands use the external Review definitions; registration never grants PurpleMux ownership of the tmux resources. The separate external Review browser view remains read-only.
+Use `external-server register` with a display name and known absolute tmux socket path. It returns a stable registration ID with the name, path, and frozen Unix socket identity. Registration rejects the PurpleMux-owned `purple` socket. Operations against a registered server recheck that identity and fail closed if the socket disappears or the path is replaced. `external-server unregister ID` deletes only the registration, even if the server is unavailable; it never sends tmux commands or kills sessions, windows, or panes. External Reviews remain a separate fixed-window, read-only feature.
 
 ### External review (0.5.0)
 
@@ -102,10 +101,18 @@ The lifecycle API accepts a CLI token or authenticated browser session cookie:
 
 | Endpoint | Request / response |
 |---|---|
-| `POST /api/cli/ext-reviews` | Body for an interactive target: `{"socketPath":"/absolute/known/tmux/socket","session":"$2","windowTargets":["@1","@3"],"interactive":true}`. Omit `interactive` for a read-only Review. HTTP 201 always returns the definition with `id` and relative `url: "/ext-review/<id>"`; for interactive targets, use `/external-target/<id>` instead. `external-target register` prints that interactive URL as an absolute URL. Invalid targets return 400. |
+| `POST /api/cli/ext-reviews` | Body: `{"socketPath":"/absolute/known/tmux/socket","session":"$2","windowTargets":["@1","@3"]}`. HTTP 201 returns the read-only definition with `id` and relative `url: "/ext-review/<id>"`. Invalid targets return 400. |
 | `GET /api/cli/ext-reviews` | `{"reviews":[...]}` lists persisted definitions, including unavailable ones. |
 | `GET /api/cli/ext-reviews/<reviewId>` | Returns the validated definition without `url`; missing definitions return 404, unavailable or changed targets return 409. |
 | `DELETE /api/cli/ext-reviews/<reviewId>` | `{"deleted":true}` on success; missing definitions return 404. Definition-only deletion. |
+
+The external server lifecycle API accepts the same CLI token or authenticated browser session cookie:
+
+| Endpoint | Request / response |
+|---|---|
+| `POST /api/cli/external-servers` | Body: `{"socketPath":"/absolute/known/tmux/socket","name":"dev-server"}`. Returns the stored `id`, `name`, `socketPath`, and `socketIdentity`; invalid or unavailable sockets return 400. |
+| `GET /api/cli/external-servers` | `{"servers":[...]}` lists persisted registrations without freezing sessions or windows. |
+| `DELETE /api/cli/external-servers/<serverId>` | `{"deleted":true}` on success; missing registrations return 404. Registration-only deletion. |
 
 ### `tab create` panel types
 
