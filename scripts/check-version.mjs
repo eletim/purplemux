@@ -26,7 +26,7 @@ if (cliVersion !== packageVersion) {
 
 const developmentMatch = targetRef.match(/^(?:refs\/heads\/)?dev\/v(.+)$/);
 const releaseMatch = targetRef.match(/^(?:refs\/tags\/)?v(.+)$/);
-const expectedVersion = developmentMatch?.[1] ?? releaseMatch?.[1];
+const expectedVersion = developmentMatch?.[1].replace(/-recovery\d*$/, '') ?? releaseMatch?.[1];
 
 if (expectedVersion && expectedVersion !== packageVersion) {
   throw new Error(`${targetRef} requires package.json version ${expectedVersion}; found ${packageVersion}`);
