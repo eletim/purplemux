@@ -1,10 +1,8 @@
-import { execFile as execFileCallback } from 'child_process';
 import fs from 'fs/promises';
 import path from 'path';
-import { promisify } from 'util';
 import type { ICreateExtReview, IExtReview } from '@/types/ext-review';
+import { execTmux, externalTmuxTarget, type TmuxTarget } from '@/lib/tmux-target';
 
-const execFile = promisify(execFileCallback);
 export class ExtReviewError extends Error {}
 /** A valid frozen target changed its visible layout while the snapshot was read. */
 export class ExtReviewSnapshotRaceError extends Error {}
@@ -42,20 +40,30 @@ const socketIdentity = async (socketPath: string, signal?: AbortSignal): Promise
 const sameSocket = (stored: string, current: string): boolean =>
   stored === current || stored.startsWith(`${current}:`); // Definitions saved before ctime was dropped.
 
+const targetForSocketIdentity = (socketPath: string, identity: string): TmuxTarget =>
+  externalTmuxTarget(socketPath, async (signal) => {
+    if (!sameSocket(identity, await socketIdentity(socketPath, signal))) {
+      throw new ExtReviewError('External review socket identity changed');
+    }
+  });
+
+export const extReviewTmuxTarget = (review: IExtReview): TmuxTarget =>
+  targetForSocketIdentity(review.socketPath, review.socketIdentity);
+
 export const assertExtReviewSocketIdentity = async (review: IExtReview, signal?: AbortSignal): Promise<void> => {
   if (!sameSocket(review.socketIdentity, await socketIdentity(review.socketPath, signal))) {
     throw new ExtReviewError('External review socket identity changed');
   }
 };
 
-const inspectTarget = async (socketPath: string, target: string, signal?: AbortSignal): Promise<string[]> => {
+const inspectTarget = async (backend: TmuxTarget, target: string, signal?: AbortSignal): Promise<string[]> => {
   signal?.throwIfAborted();
   // Check the explicit session first: older tmux servers can crash when
   // display-message targets a deleted session ID. This does not enumerate.
-  await execFile('tmux', ['-N', '-S', socketPath, 'has-session', '-t', target.split(':')[0]], { timeout: 5000, signal });
+  await execTmux(backend, ['has-session', '-t', target.split(':')[0]], { timeout: 5000, signal });
   signal?.throwIfAborted();
-  const { stdout } = await execFile('tmux', [
-    '-N', '-S', socketPath, 'display-message', '-p', '-t', target,
+  const { stdout } = await execTmux(backend, [
+    'display-message', '-p', '-t', target,
     '#{pid}\t#{session_id}\t#{session_created}\t#{window_id}',
   ], { timeout: 5000, signal });
   const fields = stdout.trim().split('\t');
@@ -71,10 +79,11 @@ export const freezeExtReviewTargets = async (input: ICreateExtReview, signal?: A
   validateExtReviewInput(input);
   try {
     const identity = await socketIdentity(input.socketPath, signal);
-    const [serverPid, sessionId, sessionCreated] = await inspectTarget(input.socketPath,
+    const backend = targetForSocketIdentity(input.socketPath, identity);
+    const [serverPid, sessionId, sessionCreated] = await inspectTarget(backend,
       /^\$\d+$/.test(input.session) ? `${input.session}:` : `=${input.session}:`, signal);
     for (const windowId of input.windowTargets) {
-      const fields = await inspectTarget(input.socketPath, `${sessionId}:${windowId}`, signal);
+      const fields = await inspectTarget(backend, `${sessionId}:${windowId}`, signal);
       if (fields.join('\t') !== [serverPid, sessionId, sessionCreated, windowId].join('\t')) {
         throw new ExtReviewError('Window is not in the specified session');
       }
@@ -94,7 +103,7 @@ export const resolveExtReviewTargets = async (review: IExtReview, signal?: Abort
   signal?.throwIfAborted();
   try {
     await assertExtReviewSocketIdentity(review, signal);
-    const [pid, sessionId, created] = await inspectTarget(review.socketPath, `${review.sessionId}:`, signal);
+    const [pid, sessionId, created] = await inspectTarget(extReviewTmuxTarget(review), `${review.sessionId}:`, signal);
     if (pid !== review.serverPid || sessionId !== review.sessionId || created !== review.sessionCreated) {
       throw new ExtReviewError('External review resource identity changed');
     }
@@ -118,9 +127,10 @@ export const captureExtReviewWindow = async (review: IExtReview, windowId: strin
   if (!review.windowIds.includes(windowId)) throw new ExtReviewError('Window is not approved');
   await resolveExtReviewTargets(review, signal);
   const target = `${review.sessionId}:${windowId}`;
+  const backend = extReviewTmuxTarget(review);
   const run = async (args: string[]) => {
     signal?.throwIfAborted();
-    return (await execFile('tmux', ['-N', '-S', review.socketPath, ...args],
+    return (await execTmux(backend, args,
       { timeout: 5000, maxBuffer: 4 * 1024 * 1024, signal })).stdout;
   };
   const list = () => run(['list-panes', '-t', target, '-F',

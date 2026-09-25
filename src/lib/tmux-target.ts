@@ -1,0 +1,96 @@
+import {
+  execFile as execFileCallback,
+  spawn,
+  type ChildProcess,
+  type ExecFileOptionsWithStringEncoding,
+  type SpawnOptions,
+} from 'child_process';
+import { promisify } from 'util';
+import * as pty from 'node-pty';
+
+const execFile = promisify(execFileCallback);
+
+const MANAGED_SOCKET = 'purple';
+
+export interface IManagedTmuxTarget {
+  kind: 'managed';
+}
+
+export interface IExternalTmuxTarget {
+  kind: 'external';
+  socketPath: string;
+  validate: (signal?: AbortSignal) => Promise<void>;
+}
+
+export type TmuxTarget = IManagedTmuxTarget | IExternalTmuxTarget;
+
+export const managedTmuxTarget: IManagedTmuxTarget = Object.freeze({ kind: 'managed' });
+
+export const externalTmuxTarget = (
+  socketPath: string,
+  validate: (signal?: AbortSignal) => Promise<void>,
+): IExternalTmuxTarget => ({ kind: 'external', socketPath, validate });
+
+/** Keep backend selection here so terminal callers operate on a target, not a socket flag. */
+const tmuxTargetArgs = (target: TmuxTarget, args: string[]): string[] => [
+  ...(target.kind === 'managed'
+    ? ['-L', MANAGED_SOCKET]
+    : ['-N', '-S', target.socketPath]),
+  ...args,
+];
+
+export const validateTmuxTarget = async (target: TmuxTarget, signal?: AbortSignal): Promise<void> => {
+  signal?.throwIfAborted();
+  if (target.kind === 'external') await target.validate(signal);
+  signal?.throwIfAborted();
+};
+
+type TmuxExecOptions = Omit<ExecFileOptionsWithStringEncoding, 'encoding'>;
+
+/** Execute against a managed or validated external target without exposing selector flags. */
+export const execTmux = async (
+  target: TmuxTarget,
+  args: string[],
+  options: TmuxExecOptions = {},
+): Promise<{ stdout: string; stderr: string }> => {
+  await validateTmuxTarget(target, options.signal);
+  return execFile('tmux', tmuxTargetArgs(target, args), { ...options, encoding: 'utf8' });
+};
+
+export const spawnTmux = async (
+  target: TmuxTarget,
+  args: string[],
+  options: SpawnOptions = {},
+): Promise<ChildProcess> => {
+  await validateTmuxTarget(target, options.signal);
+  const child = spawn('tmux', tmuxTargetArgs(target, args), options);
+  try {
+    await validateTmuxTarget(target, options.signal);
+    return child;
+  } catch (error) {
+    child.kill();
+    throw error;
+  }
+};
+
+export const attachTmuxPty = async (
+  target: TmuxTarget,
+  sessionName: string,
+  options: pty.IPtyForkOptions,
+  settings: { noOutput?: boolean; signal?: AbortSignal; onSpawn?: (client: pty.IPty) => void } = {},
+): Promise<pty.IPty> => {
+  await validateTmuxTarget(target, settings.signal);
+  const externalFlags = settings.noOutput ? 'read-only,ignore-size,no-output' : 'read-only,ignore-size';
+  const client = pty.spawn('tmux', tmuxTargetArgs(target, target.kind === 'external'
+    ? ['-u', '-C', 'attach-session', '-f', externalFlags, '-t', sessionName]
+    : ['-u', 'attach-session', '-t', sessionName]), options);
+  // Control clients must subscribe before node-pty can emit initial protocol events.
+  settings.onSpawn?.(client);
+  try {
+    await validateTmuxTarget(target, settings.signal);
+    return client;
+  } catch (error) {
+    client.kill();
+    throw error;
+  }
+};
