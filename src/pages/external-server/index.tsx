@@ -72,7 +72,7 @@ export default function ExternalServersPage() {
       });
       body = await response.json();
       if (!response.ok) {
-        if (response.status < 500) {
+        if (response.status < 500 && !body.outcomeUnknown) {
           requestIds.current.delete(serverId);
           try { sessionStorage.removeItem(requestStorageKey(serverId)); } catch {}
         }

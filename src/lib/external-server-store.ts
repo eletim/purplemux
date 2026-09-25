@@ -68,21 +68,13 @@ export const createExternalTerminal = (
   const index = servers.findIndex((server) => server.id === serverId);
   if (index < 0) return undefined;
   const prior = servers[index].terminalCreations?.find((entry) => entry.requestId === input.requestId);
-  const identity = prior ?? {
-    id: nanoid(), requestId: input.requestId,
-    createdAt: new Date().toISOString(),
-  };
+  const identity = prior
+    ? { ...prior, requestId: input.requestId }
+    : { id: nanoid(), requestId: input.requestId, createdAt: new Date().toISOString() };
   const created = await createTmuxExternalTerminal(servers[index], input, identity);
-  if (prior) return { ...created, provenance: prior };
-  const provenance = {
-    id: identity.id,
-    requestId: input.requestId,
-    owner: 'purplemux' as const,
-    resourceType: 'session' as const,
-    sessionId: created.sessionId,
-    sessionCreated: created.sessionCreated,
-    createdAt: identity.createdAt,
-  };
+  const { createdNow, ...terminal } = created;
+  if (prior) return terminal;
+  const provenance = created.provenance;
   servers[index] = {
     ...servers[index],
     terminalCreations: [...(servers[index].terminalCreations ?? []), provenance],
@@ -90,6 +82,7 @@ export const createExternalTerminal = (
   try {
     await write(servers);
   } catch (writeError) {
+    if (!createdNow) throw writeError;
     try {
       await rollbackExternalTerminalCreation(servers[index], created);
     } catch (rollbackError) {
@@ -98,7 +91,7 @@ export const createExternalTerminal = (
     }
     throw writeError;
   }
-  return { ...created, provenance };
+  return terminal;
 });
 
 /** Registration-only deletion: this function never invokes tmux. */

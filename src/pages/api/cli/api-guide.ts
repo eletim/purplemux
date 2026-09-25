@@ -61,9 +61,9 @@ GET /api/cli/external-servers
           "currentCommand", "currentPath", "dead" }] }] }] }
   An unavailable or replaced registered server has exists:false, sessions:[], and
   unavailableReason. Sessions include owned:false for pre-existing resources.
-  Only a valid resource-bound tmux provenance marker confers owned:true. Persisted
-  terminal creation records are idempotency/audit data and never independently
-  authorize lifecycle actions.
+  Only an authenticated tmux provenance marker bound to the server, session ID, and
+  session creation identity confers owned:true. Persisted terminal creation records
+  are idempotency/audit data and never independently authorize lifecycle actions.
   CLI equivalent: purplemux external-server list
 
 POST /api/cli/external-servers/<serverId>/terminals
@@ -75,6 +75,8 @@ POST /api/cli/external-servers/<serverId>/terminals
             "provenance": { "id", "requestId", "owner":"purplemux", "resourceType":"session",
               "sessionId", "sessionCreated", "createdAt" } }.
   Repeating the same requestId returns the original session instead of creating another.
+  HTTP 503 with { "outcomeUnknown":true, "requestId" } means the request may have
+  committed; retry with that same requestId to reconcile it safely.
   CLI equivalent: purplemux external-server create-terminal SERVER_ID [--name NAME]
                   [--request-id ID]
   Registration alone never owns pre-existing sessions. Default lifecycle actions may

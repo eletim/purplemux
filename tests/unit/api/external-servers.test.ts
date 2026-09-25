@@ -3,7 +3,7 @@ import type { NextApiRequest, NextApiResponse } from 'next';
 import collection from '@/pages/api/cli/external-servers';
 import registration from '@/pages/api/cli/external-servers/[serverId]';
 import terminals from '@/pages/api/cli/external-servers/[serverId]/terminals';
-import { ExternalServerError } from '@/lib/external-server-tmux';
+import { ExternalServerError, ExternalTerminalOutcomeUnknownError } from '@/lib/external-server-tmux';
 
 const mocks = vi.hoisted(() => ({
   auth: vi.fn(), session: vi.fn(), register: vi.fn(), list: vi.fn(), discover: vi.fn(), unregister: vi.fn(),
@@ -98,6 +98,20 @@ describe('external server API', () => {
       { requestId: 'request-1', name: 'work' });
     expect(res.status).toHaveBeenCalledWith(201);
     expect(res.json).toHaveBeenCalledWith(created);
+  });
+
+  it('reports post-dispatch failures as a retryable unknown outcome', async () => {
+    mocks.createTerminal.mockRejectedValue(new ExternalTerminalOutcomeUnknownError('request-1'));
+    const res = response();
+
+    await terminals(request('POST', { requestId: 'request-1' }), res as unknown as NextApiResponse);
+
+    expect(res.status).toHaveBeenCalledWith(503);
+    expect(res.json).toHaveBeenCalledWith({
+      error: 'External terminal creation outcome is unknown; retry with the same requestId',
+      outcomeUnknown: true,
+      requestId: 'request-1',
+    });
   });
 
   it('maps validation, missing registration, and storage failures', async () => {

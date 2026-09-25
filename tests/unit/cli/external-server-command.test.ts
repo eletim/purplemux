@@ -71,12 +71,13 @@ describe('purplemux external-server commands', () => {
   });
 
   it('reports the reusable request ID when creation has an unknown server outcome', async () => {
-    const fixture = await startServer(500, { error: 'storage timeout' });
+    const fixture = await startServer(503, { error: 'creation outcome is unknown',
+      outcomeUnknown: true, requestId: 'retry-1' });
     await expect(run(['external-server', 'create-terminal', 'server-1',
       '--request-id', 'retry-1'], fixture.port)).rejects.toMatchObject({
       code: 1,
       stderr: 'error: external terminal creation outcome unknown; retry with --request-id retry-1 '
-        + '(server error: storage timeout)\n',
+        + '(server error: creation outcome is unknown)\n',
     });
   });
 

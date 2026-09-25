@@ -1,6 +1,8 @@
 import path from 'path';
 import { nanoid } from 'nanoid';
 import { ExternalTmuxSocketError, frozenExternalTmuxSocketIdentity } from '@/lib/external-tmux-socket';
+import { decodeOwnedExternalTerminalMarker, decodePendingExternalTerminalMarker,
+  encodeOwnedExternalTerminalMarker, encodePendingExternalTerminalMarker } from '@/lib/external-terminal-marker';
 import { execTmux, execTmuxBuffer, externalTmuxTarget, type TmuxTarget } from '@/lib/tmux-target';
 import type {
   IExternalServer,
@@ -15,6 +17,11 @@ import type {
 } from '@/types/external-server';
 
 export class ExternalServerError extends Error {}
+export class ExternalTerminalOutcomeUnknownError extends ExternalServerError {
+  constructor(public readonly requestId: string) {
+    super('External terminal creation outcome is unknown; retry with the same requestId');
+  }
+}
 
 export const validateExternalServerInput = (input: IRegisterExternalServer): void => {
   if (!input || typeof input.name !== 'string' || !input.name.trim()
@@ -73,11 +80,15 @@ export const freezeExternalServer = async (
 // Keep the enumerated fields ASCII-only so this works on tmux 2.9 and cannot be
 // confused by delimiters in names or paths. Free-form fields are fetched below.
 const INVENTORY_FORMAT = [
-  '#{session_id}', '#{session_created}', '#{@purplemux_provenance}', '#{session_attached}',
-  '#{window_id}', '#{window_index}',
+  '#{session_id}', '#{session_created}', '#{session_attached}', '#{window_id}', '#{window_index}',
   '#{window_active}', '#{pane_id}', '#{pane_index}', '#{pane_active}',
   '#{pane_pid}', '#{pane_dead}',
 ].join('\t');
+
+const pendingCreationMarker = Symbol('pendingExternalTerminalCreation');
+type RuntimeSession = IExternalTmuxSession & {
+  [pendingCreationMarker]?: Pick<IExternalTerminalProvenance, 'id' | 'requestId' | 'createdAt'>;
+};
 
 const flag = (value: string): boolean => {
   if (value === '0') return false;
@@ -93,11 +104,11 @@ const integer = (value: string): number => {
 const attached = (value: string): boolean => integer(value) > 0;
 
 const parseExternalServerInventory = (server: IExternalServer, stdout: string): IExternalServerInventory => {
-  const sessions = new Map<string, IExternalTmuxSession>();
+  const sessions = new Map<string, RuntimeSession>();
   for (const line of stdout.trim() ? stdout.trimEnd().split('\n') : []) {
     const fields = line.split('\t');
-    if (fields.length !== 12) throw new ExternalServerError('Invalid external tmux runtime inventory');
-    const [sessionId, sessionCreated, marker, sessionAttached, windowId, windowIndex, windowActive,
+    if (fields.length !== 11) throw new ExternalServerError('Invalid external tmux runtime inventory');
+    const [sessionId, sessionCreated, sessionAttached, windowId, windowIndex, windowActive,
       paneId, paneIndex, paneActive, panePid, paneDead] = fields;
     if (!/^\$\d+$/.test(sessionId) || !/^\d+$/.test(sessionCreated)
       || !/^@\d+$/.test(windowId) || !/^%\d+$/.test(paneId)) {
@@ -106,16 +117,8 @@ const parseExternalServerInventory = (server: IExternalServer, stdout: string): 
 
     let session = sessions.get(sessionId);
     if (!session) {
-      const markerMatch = /^v1:([-_A-Za-z0-9]{21}):([-_A-Za-z0-9]{1,128}):(\d{13})$/.exec(marker);
-      const markerCreatedAt = markerMatch ? new Date(Number(markerMatch[3])) : undefined;
-      const provenance = markerMatch && !Number.isNaN(markerCreatedAt?.getTime()) ? {
-        id: markerMatch[1], requestId: markerMatch[2], owner: 'purplemux' as const,
-        resourceType: 'session' as const, sessionId, sessionCreated,
-        createdAt: markerCreatedAt!.toISOString(),
-      } : undefined;
       session = { id: sessionId, name: '', sessionCreated, exists: true,
-        attached: attached(sessionAttached), owned: Boolean(provenance),
-        ...(provenance ? { provenance } : {}), windows: [] };
+        attached: attached(sessionAttached), owned: false, windows: [] };
       sessions.set(sessionId, session);
     } else if (session.sessionCreated !== sessionCreated || session.attached !== attached(sessionAttached)) {
       throw new ExternalServerError('External tmux runtime changed during discovery');
@@ -153,10 +156,10 @@ const validateExternalTerminalInput = (input: ICreateExternalTerminal): string =
 export const createExternalTerminal = async (
   server: IExternalServer,
   input: ICreateExternalTerminal,
-  identity: Pick<IExternalTerminalProvenance, 'id' | 'requestId' | 'createdAt'>
+  identity: Pick<IExternalTerminalProvenance, 'id' | 'createdAt'> & { requestId: string }
     & Partial<Pick<IExternalTerminalProvenance, 'sessionId' | 'sessionCreated'>>,
   signal?: AbortSignal,
-): Promise<Omit<ICreatedExternalTerminal, 'provenance'>> => {
+): Promise<ICreatedExternalTerminal & { createdNow: boolean }> => {
   const name = validateExternalTerminalInput(input);
   const recovered = await discoverExternalServer(server, signal);
   if (!recovered.exists) {
@@ -164,39 +167,92 @@ export const createExternalTerminal = async (
   }
   const existing = recovered.sessions.find((session) => session.provenance?.requestId === input.requestId);
   if (existing) {
+    if (identity.sessionId && (existing.provenance?.id !== identity.id
+      || existing.id !== identity.sessionId || existing.sessionCreated !== identity.sessionCreated)) {
+      throw new ExternalServerError('Previously created external tmux terminal is unavailable');
+    }
     const window = existing.windows[0];
     if (!window) throw new ExternalServerError('Created external tmux terminal has no window');
     return { serverId: server.id, sessionId: existing.id, sessionCreated: existing.sessionCreated,
-      windowId: window.id, name: existing.name };
+      windowId: window.id, name: existing.name, provenance: existing.provenance!, createdNow: false };
+  }
+  const pendingExisting = recovered.sessions.find((session) => {
+    const pending = (session as RuntimeSession)[pendingCreationMarker];
+    return pending?.requestId === input.requestId && (!identity.sessionId || pending.id === identity.id);
+  });
+  if (pendingExisting?.windows[0]) {
+    const pending = (pendingExisting as RuntimeSession)[pendingCreationMarker]!;
+    const provenance = { ...pending, owner: 'purplemux' as const, resourceType: 'session' as const,
+      sessionId: pendingExisting.id, sessionCreated: pendingExisting.sessionCreated };
+    try {
+      await execTmux(externalServerTmuxTarget(server), [
+        'set-option', '-t', pendingExisting.id, '@purplemux_provenance',
+        encodeOwnedExternalTerminalMarker(server, provenance),
+      ], { timeout: 5000, signal });
+      await assertExternalServerSocketIdentity(server, signal);
+      return { serverId: server.id, sessionId: pendingExisting.id,
+        sessionCreated: pendingExisting.sessionCreated, windowId: pendingExisting.windows[0].id,
+        name: pendingExisting.name, provenance, createdNow: false };
+    } catch {
+      signal?.throwIfAborted();
+      throw new ExternalTerminalOutcomeUnknownError(input.requestId);
+    }
   }
   if (identity.sessionId) {
     throw new ExternalServerError('Previously created external tmux terminal is unavailable');
   }
-  const marker = `v1:${identity.id}:${input.requestId}:${new Date(identity.createdAt).getTime()}`;
+  const pendingMarker = encodePendingExternalTerminalMarker(server, identity);
   try {
     const { stdout } = await execTmux(externalServerTmuxTarget(server), [
       'new-session', '-d', '-P', '-F',
       '#{session_id}\t#{session_created}\t#{window_id}', '-s', name,
-      ';', 'set-option', '-t', name, '@purplemux_provenance', marker,
+      ';', 'set-option', '-t', name, '@purplemux_provenance', pendingMarker,
     ], { timeout: 5000, signal });
     const fields = stdout.trimEnd().split('\t');
     if (fields.length !== 3 || !/^\$\d+$/.test(fields[0]) || !/^\d+$/.test(fields[1])
       || !/^@\d+$/.test(fields[2])) {
       throw new ExternalServerError('Invalid external tmux terminal creation result');
     }
+    const provenance = { id: identity.id, requestId: input.requestId, owner: 'purplemux' as const,
+      resourceType: 'session' as const, sessionId: fields[0], sessionCreated: fields[1],
+      createdAt: identity.createdAt };
+    await execTmux(externalServerTmuxTarget(server), [
+      'set-option', '-t', fields[0], '@purplemux_provenance',
+      encodeOwnedExternalTerminalMarker(server, provenance),
+    ], { timeout: 5000, signal });
     await assertExternalServerSocketIdentity(server, signal);
     return { serverId: server.id, sessionId: fields[0], sessionCreated: fields[1],
-      windowId: fields[2], name };
-  } catch (error) {
+      windowId: fields[2], name, provenance, createdNow: true };
+  } catch {
     signal?.throwIfAborted();
     const afterFailure = await discoverExternalServer(server, signal);
     const created = afterFailure.sessions.find((session) => session.provenance?.requestId === input.requestId);
     if (created?.windows[0]) {
       return { serverId: server.id, sessionId: created.id, sessionCreated: created.sessionCreated,
-        windowId: created.windows[0].id, name: created.name };
+        windowId: created.windows[0].id, name: created.name, provenance: created.provenance!,
+        createdNow: created.provenance?.id === identity.id };
     }
-    if (error instanceof ExternalServerError) throw error;
-    throw new ExternalServerError('Unable to create external tmux terminal');
+    const pending = afterFailure.sessions.find((session) => {
+      const candidate = (session as RuntimeSession)[pendingCreationMarker];
+      return candidate?.id === identity.id && candidate.requestId === input.requestId;
+    });
+    if (pending?.windows[0]) {
+      const provenance = { id: identity.id, requestId: input.requestId, owner: 'purplemux' as const,
+        resourceType: 'session' as const, sessionId: pending.id, sessionCreated: pending.sessionCreated,
+        createdAt: identity.createdAt };
+      try {
+        await execTmux(externalServerTmuxTarget(server), [
+          'set-option', '-t', pending.id, '@purplemux_provenance',
+          encodeOwnedExternalTerminalMarker(server, provenance),
+        ], { timeout: 5000, signal });
+        await assertExternalServerSocketIdentity(server, signal);
+        return { serverId: server.id, sessionId: pending.id, sessionCreated: pending.sessionCreated,
+          windowId: pending.windows[0].id, name: pending.name, provenance, createdNow: true };
+      } catch {
+        signal?.throwIfAborted();
+      }
+    }
+    throw new ExternalTerminalOutcomeUnknownError(input.requestId);
   }
 };
 
@@ -264,8 +320,21 @@ const populateExternalServerMetadata = async (inventory: IExternalServerInventor
   const windows = new Map<string, IExternalTmuxWindow[]>();
   const panes = new Map<string, IExternalTmuxPane[]>();
   for (const session of inventory.sessions) {
-    tasks.push(async () => { session.name = await readExternalTmuxField(backend,
-      session.id, 'session_name', signal); });
+    tasks.push(async () => {
+      session.name = await readExternalTmuxField(backend, session.id, 'session_name', signal);
+    });
+    tasks.push(async () => {
+      const marker = await readExternalTmuxField(backend, session.id, '@purplemux_provenance', signal);
+      const provenance = decodeOwnedExternalTerminalMarker(inventory,
+        session.id, session.sessionCreated, marker);
+      if (provenance) {
+        session.owned = true;
+        session.provenance = provenance;
+        return;
+      }
+      const pending = decodePendingExternalTerminalMarker(inventory, marker);
+      if (pending) Object.defineProperty(session, pendingCreationMarker, { value: pending });
+    });
     for (const window of session.windows) {
       const links = windows.get(window.id) ?? [];
       links.push(window);

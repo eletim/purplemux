@@ -81,6 +81,14 @@ describe('external tmux server registrations', () => {
     expect(inventory.sessions.find(({ id }) => id === created?.sessionId)).toMatchObject({
       name: created?.name, owned: true, provenance: created?.provenance,
     });
+    const marker = tmux('show-options', '-v', '-t', created!.sessionId, '@purplemux_provenance');
+    tmux('set-option', '-t', '$0', '@purplemux_provenance', marker);
+    const copied = await discoverExternalServer(registrations[0]);
+    expect(copied.sessions.find(({ id }) => id === '$0')).toMatchObject({ owned: false });
+    tmux('set-option', '-t', '$0', '@purplemux_provenance', 'invalid\tmarker\nsecond-record');
+    const malformed = await discoverExternalServer(registrations[0]);
+    expect(malformed).toMatchObject({ exists: true });
+    expect(malformed.sessions.find(({ id }) => id === '$0')).toMatchObject({ owned: false });
     await expect(store.createExternalTerminal(server.id, { requestId: 'create-default' }))
       .resolves.toEqual(created);
     expect(tmux('list-sessions', '-F', '#{session_id}').split('\n')).toEqual(['$0', '$1']);
@@ -94,8 +102,9 @@ describe('external tmux server registrations', () => {
       owned: true,
       provenance: { id: created?.provenance.id, requestId: 'create-default' },
     });
-    await expect(store.createExternalTerminal(reregistered.id, { requestId: 'create-default' }))
-      .resolves.toMatchObject({ sessionId: created?.sessionId });
+    const recovered = await store.createExternalTerminal(reregistered.id, { requestId: 'create-default' });
+    expect(recovered).toMatchObject({ sessionId: created?.sessionId, provenance: created?.provenance });
+    expect((await store.listExternalServers())[0].terminalCreations).toEqual([created?.provenance]);
     tmux('kill-session', '-t', created!.sessionId);
     await expect(store.createExternalTerminal(reregistered.id, { requestId: 'create-default' }))
       .rejects.toThrow('Previously created external tmux terminal is unavailable');

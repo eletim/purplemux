@@ -180,7 +180,8 @@ describe('external server browser page', () => {
         const request = JSON.parse(String(init.body));
         requestBodies.push(request);
         postCount += 1;
-        if (postCount === 1) throw new Error('response lost');
+        if (postCount === 1) return response({ error: 'creation outcome is unknown',
+          outcomeUnknown: true, requestId: request.requestId }, 503);
         return response({ serverId: 'server-1', sessionId: '$2', windowId: '@3',
           provenance: { requestId: request.requestId } }, 201);
       }
@@ -191,13 +192,13 @@ describe('external server browser page', () => {
     mount(createElement(ExternalServersPage));
 
     fireEvent.click(await screen.findByRole('button', { name: 'New Terminal on dev' }));
-    await screen.findByText('response lost');
+    await screen.findByText('creation outcome is unknown');
     cleanup();
     mount(createElement(ExternalServersPage));
     fireEvent.click(await screen.findByRole('button', { name: 'New Terminal on dev' }));
     await waitFor(() => expect(requestBodies).toHaveLength(2));
     expect(requestBodies[1]).toEqual(requestBodies[0]);
-    await waitFor(() => expect(screen.queryByText('response lost')).toBeNull());
+    await waitFor(() => expect(screen.queryByText('creation outcome is unknown')).toBeNull());
     expect(screen.queryByText('Unable to create external terminal.')).toBeNull();
   });
 });

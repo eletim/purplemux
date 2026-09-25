@@ -2,7 +2,7 @@ import type { NextApiRequest, NextApiResponse } from 'next';
 import { verifyRequestSession } from '@/lib/auth';
 import { verifyCliToken } from '@/lib/cli-token';
 import { createExternalTerminal } from '@/lib/external-server-store';
-import { ExternalServerError } from '@/lib/external-server-tmux';
+import { ExternalServerError, ExternalTerminalOutcomeUnknownError } from '@/lib/external-server-tmux';
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   if (req.method !== 'POST') {
@@ -22,9 +22,16 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       ? res.status(201).json(terminal)
       : res.status(404).json({ error: 'External server not found' });
   } catch (error) {
+    if (error instanceof ExternalTerminalOutcomeUnknownError) {
+      return res.status(503).json({
+        error: error.message,
+        outcomeUnknown: true,
+        requestId: error.requestId,
+      });
+    }
     return res.status(error instanceof ExternalServerError ? 400 : 500).json({
       error: error instanceof ExternalServerError
-        ? error.message : 'Failed to persist external terminal ownership',
+        ? error.message : 'Failed to persist external terminal creation history',
     });
   }
 }
