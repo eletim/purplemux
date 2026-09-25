@@ -39,20 +39,42 @@ DELETE /api/cli/workspaces/<workspaceId>?ifEmpty=true
   If a response is lost or a 5xx result leaves the mutation outcome uncertain, use the GET
   endpoint above (or GET /api/cli/workspaces) to reconcile from authoritative server state.
 
+## External tmux servers
+
+These endpoints accept x-pmux-token or an authenticated browser session cookie.
+Registration records a server/socket source, not a fixed session or window allowlist.
+
+POST /api/cli/external-servers
+  Body: { "socketPath": "/absolute/known/tmux/socket", "name": "dev-server" }
+  Freezes the Unix socket identity and returns:
+  { "id": "...", "name": "dev-server", "socketPath": "...", "socketIdentity": "opaque-frozen-identity" }
+  The path must be absolute, must name a live tmux socket, and must not be the
+  PurpleMux-owned purple socket. HTTP 400 reports invalid or unavailable sockets.
+  CLI equivalent: purplemux external-server register --socket /absolute/path --name dev-server
+
+GET /api/cli/external-servers
+  Response: { "servers": [{ "id", "name", "socketPath", "socketIdentity" }] }
+  Lists registrations without discovering or freezing sessions and windows.
+  CLI equivalent: purplemux external-server list
+
+DELETE /api/cli/external-servers/<serverId>
+  Removes only the registration, including when the server is unavailable.
+  HTTP 200: { "deleted": true }; HTTP 404: { "error": "External server not found" }.
+  CLI equivalent: purplemux external-server unregister SERVER_ID
+  Never sends tmux commands or kills external sessions, windows, or panes.
+
+The stable id identifies the registration. Every tmux operation rechecks the frozen
+socket identity and fails closed if the path is missing or has been replaced.
+
 ## External review (PurpleMux 0.5.0)
 
 These endpoints accept x-pmux-token or an authenticated browser session cookie.
 Definitions observe external tmux resources without adopting them into Workspaces or tabs.
-The external-target CLI register/list/open/unregister commands use these same definitions.
-Register accepts the explicit socket, session, and window selectors below. List includes
-unavailable registrations; open rechecks frozen identity before printing the absolute
-browser URL. Unregister removes only the definition. Registered targets use the
-interactive /external-target/<id> terminal; Review URLs remain read-only.
+Reviews remain a separate, read-only fixed-window observation feature.
 
 POST /api/cli/ext-reviews
   Body: { "socketPath": "/absolute/known/tmux/socket", "session": "exact-session-name",
           "windowTargets": ["@1", "@3"] }
-  external-target register sends "interactive": true; ordinary Review definitions omit it.
   Requires a known absolute socket path (no symlink or PurpleMux-owned purple socket),
   exact session name or $sessionId, and a nonempty list of unique @windowIds.
   No socket, session, or window discovery; validation never starts a tmux server.
@@ -82,9 +104,7 @@ DELETE /api/cli/ext-reviews/<reviewId>
   CLI equivalent: purplemux ext-review delete REVIEW_ID (prints JSON).
   Never sends tmux commands or kills external sessions/windows/panes.
 
-For a read-only Review, open the returned /ext-review/<id> url in an authenticated browser.
-For an interactive registration ("interactive": true), use the response id to open
-/external-target/<id> instead; the returned url still points to the read-only Review.
+Open the returned /ext-review/<id> url in an authenticated browser.
 /ext-review lists definitions and supports manual explicit-target creation, Open, and definition-only Delete.
 /ext-review/<id> shows only approved windows as live current-screen snapshots, not output history.
 Observation is fixed and read-only: no input, paste, send-keys, kill, rename, or tmux resize.

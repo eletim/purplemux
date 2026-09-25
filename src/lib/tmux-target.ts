@@ -5,10 +5,7 @@ import {
   type ExecFileOptionsWithStringEncoding,
   type SpawnOptions,
 } from 'child_process';
-import { promisify } from 'util';
 import * as pty from 'node-pty';
-
-const execFile = promisify(execFileCallback);
 
 const MANAGED_SOCKET = 'purple';
 
@@ -54,7 +51,25 @@ export const execTmux = async (
   options: TmuxExecOptions = {},
 ): Promise<{ stdout: string; stderr: string }> => {
   await validateTmuxTarget(target, options.signal);
-  return execFile('tmux', tmuxTargetArgs(target, args), { ...options, encoding: 'utf8' });
+  let child!: ChildProcess;
+  const result = new Promise<{ stdout: string; stderr: string }>((resolve, reject) => {
+    child = execFileCallback('tmux', tmuxTargetArgs(target, args),
+      { ...options, encoding: 'utf8' }, (error, stdout, stderr) => {
+        if (error) reject(error);
+        else resolve({ stdout, stderr });
+      });
+  });
+  // The child can fail while an asynchronous identity check is still pending.
+  void result.catch(() => {});
+  try {
+    // Detect a path replacement in the gap between validation and process creation.
+    await validateTmuxTarget(target, options.signal);
+  } catch (error) {
+    child.kill();
+    await result.catch(() => {});
+    throw error;
+  }
+  return result;
 };
 
 export const spawnTmux = async (

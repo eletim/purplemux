@@ -86,11 +86,11 @@ describe('external review API', () => {
     expect(mocks.remove).not.toHaveBeenCalled();
   });
   it('creates explicit definitions and reports invalid input', async () => {
-    const input = { socketPath: '/known/socket', session: 'external', windowTargets: ['@1'] };
+    const input = { socketPath: '/known/socket', session: 'external', windowTargets: ['@1'], interactive: true };
     mocks.create.mockResolvedValue({ id: 'review' });
     const res = response();
     await collection(request('POST', input), res as unknown as NextApiResponse);
-    expect(mocks.create).toHaveBeenCalledWith(input);
+    expect(mocks.create).toHaveBeenCalledWith({ socketPath: '/known/socket', session: 'external', windowTargets: ['@1'] });
     expect(res.status).toHaveBeenCalledWith(201);
     expect(res.json).toHaveBeenCalledWith({ id: 'review', url: '/ext-review/review' });
     expect(mocks.session).not.toHaveBeenCalled();

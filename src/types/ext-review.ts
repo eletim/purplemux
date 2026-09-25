@@ -4,7 +4,6 @@ export interface ICreateExtReview {
   socketPath: string;
   session: string;
   windowTargets: string[];
-  interactive?: boolean;
 }
 
 export interface IExtReview {
@@ -16,5 +15,6 @@ export interface IExtReview {
   sessionId: string;
   sessionCreated: string;
   windowIds: string[];
+  /** Legacy fixed-window registrations remain readable during the server-source migration. */
   interactive?: boolean;
 }

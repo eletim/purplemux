@@ -1,17 +1,14 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mocks = vi.hoisted(() => {
-  const execFile = vi.fn((_file, _args, _options, callback) => callback(null, 'ok', ''));
-  Object.defineProperty(execFile, Symbol.for('nodejs.util.promisify.custom'), {
-    value: (file: string, args: string[], options: unknown) => new Promise((resolve, reject) => {
-      execFile(file, args, options, (error: Error | null, stdout: string, stderr: string) => {
-        if (error) reject(error);
-        else resolve({ stdout, stderr });
-      });
-    }),
+  const execChild = { kill: vi.fn() };
+  const execFile = vi.fn((_file, _args, _options, callback) => {
+    callback(null, 'ok', '');
+    return execChild;
   });
   return {
     execFile,
+    execChild,
     ptySpawn: vi.fn(() => ({ kill: vi.fn() })),
   };
 });
@@ -39,7 +36,7 @@ describe('tmux target operations', () => {
 
     await expect(execTmux(target, ['display-message', '-p'])).resolves.toMatchObject({ stdout: 'ok' });
 
-    expect(validate).toHaveBeenCalledOnce();
+    expect(validate).toHaveBeenCalledTimes(2);
     expect(mocks.execFile).toHaveBeenCalledWith(
       'tmux',
       ['-N', '-S', '/known/tmux.sock', 'display-message', '-p'],
@@ -54,6 +51,16 @@ describe('tmux target operations', () => {
 
     await expect(execTmux(target, ['list-panes'])).rejects.toBe(changed);
     expect(mocks.execFile).not.toHaveBeenCalled();
+  });
+
+  it('kills and rejects a command when identity changes across process creation', async () => {
+    const changed = new Error('socket changed');
+    const validate = vi.fn().mockResolvedValueOnce(undefined).mockRejectedValueOnce(changed);
+    const target = externalTmuxTarget('/known/tmux.sock', validate);
+
+    await expect(execTmux(target, ['list-panes'])).rejects.toBe(changed);
+    expect(mocks.execFile).toHaveBeenCalledOnce();
+    expect(mocks.execChild.kill).toHaveBeenCalledOnce();
   });
 
   it('validates external PTY attachment before spawning and subscribes synchronously', async () => {

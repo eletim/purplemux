@@ -40,8 +40,7 @@ export const listExtReviews = (): Promise<IExtReview[]> => withLock(read);
 export const createExtReview = (input: ICreateExtReview): Promise<IExtReview> => withLock(async () => {
   const targets = await freezeExtReviewTargets(input);
   const reviews = await read();
-  const review = { ...targets, id: nanoid(), createdAt: new Date().toISOString(),
-    ...(input.interactive === true ? { interactive: true } : {}) };
+  const review = { ...targets, id: nanoid(), createdAt: new Date().toISOString() };
   await write([...reviews, review]);
   return review;
 });
