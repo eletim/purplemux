@@ -21,12 +21,14 @@ class TestSocket {
 afterEach(() => {
   cleanup();
   vi.useRealTimers();
+  vi.restoreAllMocks();
   vi.unstubAllGlobals();
   TestSocket.instances = [];
 });
 
-it('shows an external policy rejection and does not reconnect', () => {
+it('shows an external policy rejection without automatic retries and permits manual reconnect', () => {
   vi.useFakeTimers();
+  vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('visible');
   vi.stubGlobal('WebSocket', TestSocket);
   const { result } = renderHook(() => useTerminalWebSocket({ externalTarget: { id: 'target', windowId: '@0' } }));
   act(() => result.current.connect('target:@0'));
@@ -38,6 +40,13 @@ it('shows an external policy rejection and does not reconnect', () => {
   act(() => vi.advanceTimersByTime(60_000));
   act(() => document.dispatchEvent(new Event('visibilitychange')));
   expect(TestSocket.instances).toHaveLength(1);
+
+  act(() => result.current.reconnect());
+  expect(TestSocket.instances).toHaveLength(2);
+  expect(new URL(TestSocket.instances[1].url).searchParams.get('externalTargetId')).toBe('target');
+  expect(new URL(TestSocket.instances[1].url).searchParams.get('windowId')).toBe('@0');
+  expect(result.current.status).toBe('connecting');
+  expect(result.current.externalTargetFailure).toBeNull();
 });
 
 it('retains an exact discovered external window target across reconnects', () => {

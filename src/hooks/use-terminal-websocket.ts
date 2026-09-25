@@ -63,6 +63,7 @@ const useTerminalWebSocket = ({
   const sessionNameRef = useRef('');
   const connectIdRef = useRef(0);
   const initialSizeRef = useRef<{ cols: number; rows: number } | null>(null);
+  const policyRejectedRef = useRef(false);
   const callbacksRef = useRef({ onData, onConnected, onSessionEnded });
   const doConnectRef = useRef<(sessionName: string, connectId: number) => void>(() => {});
 
@@ -84,6 +85,7 @@ const useTerminalWebSocket = ({
   const doConnect = useCallback(
     (sessionName: string, connectId: number) => {
       clearTimers();
+      policyRejectedRef.current = false;
       if (wsRef.current) {
         wsRef.current.close();
         wsRef.current = null;
@@ -152,8 +154,8 @@ const useTerminalWebSocket = ({
         }
 
         if ((externalTargetId || externalServerId) && event.code === 1008) {
+          policyRejectedRef.current = true;
           setExternalTargetFailure(event.reason || 'External target rejected');
-          sessionNameRef.current = '';
           setStatus('disconnected');
           return;
         }
@@ -265,6 +267,7 @@ const useTerminalWebSocket = ({
     const handleVisibilityChange = () => {
       if (document.visibilityState !== 'visible') return;
       if (!sessionNameRef.current) return;
+      if (policyRejectedRef.current) return;
       const ws = wsRef.current;
       if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) return;
       retryCountRef.current = 0;
