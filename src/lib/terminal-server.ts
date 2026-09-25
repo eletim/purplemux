@@ -1,6 +1,6 @@
 import { IncomingMessage } from 'http';
 import { WebSocket } from 'ws';
-import * as pty from 'node-pty';
+import type * as pty from 'node-pty';
 import {
   hasSession,
   createSession,
@@ -19,7 +19,7 @@ import { externalTerminals } from '@/lib/external-terminal-resources';
 import { sendExternalInput, areExternalClientsOnWindow, captureExternalHistory, appendedExternalHistory, ExternalWindowGuard } from '@/lib/external-target-terminal';
 import { createExternalCaptureScheduler } from '@/lib/external-capture-scheduler';
 import type { IExtReview } from '@/types/ext-review';
-import { managedTmuxTarget, tmuxAttachArgs, type TmuxTarget } from '@/lib/tmux-target';
+import { attachTmuxPty, managedTmuxTarget, type TmuxTarget } from '@/lib/tmux-target';
 
 const log = createLogger('terminal');
 
@@ -71,14 +71,15 @@ export const getLastTerminalOutput = (sessionName: string): number | undefined =
   terminalOutputTimestamps.get(sessionName);
 
 const attachToSession = (target: TmuxTarget, sessionName: string, cols: number, rows: number,
-): pty.IPty =>
-  pty.spawn('tmux', tmuxAttachArgs(target, sessionName), {
+  signal?: AbortSignal,
+): Promise<pty.IPty> =>
+  attachTmuxPty(target, sessionName, {
     name: 'xterm-256color',
     cols,
     rows,
     cwd: PRISTINE_ENV.HOME || '/',
     env: buildShellEnv(),
-  });
+  }, { signal });
 
 const cleanup = (conn: IActiveConnection, sessionExited = false) => {
   if (conn.cleaned) return;
@@ -427,12 +428,12 @@ export const handleConnection = async (ws: WebSocket, request: IncomingMessage, 
     currentRows = urlRows > 0 ? urlRows : (pending.resize?.rows || 24);
     try {
       await assertExtReviewSocketIdentity(definition, externalAbort.signal);
-      externalWindowGuard = new ExternalWindowGuard(definition, externalWindowId);
+      externalWindowGuard = await ExternalWindowGuard.create(definition, externalWindowId, externalAbort.signal);
       if (!await externalWindowGuard.check()
         || !await areExternalClientsOnWindow(definition, [externalWindowGuard.pid], externalWindowId)) {
         throw new Error('External window guard unavailable');
       }
-      ptyProcess = attachToSession(tmuxTarget, sessionName, currentCols, currentRows);
+      ptyProcess = await attachToSession(tmuxTarget, sessionName, currentCols, currentRows, externalAbort.signal);
       ptyProcess.write(`refresh-client -C ${currentCols},${currentRows}\n`);
       await assertExtReviewSocketIdentity(definition, externalAbort.signal);
     } catch (err) {
@@ -457,7 +458,7 @@ export const handleConnection = async (ws: WebSocket, request: IncomingMessage, 
     currentCols = urlCols > 0 ? urlCols : (pending.resize?.cols || 80);
     currentRows = urlRows > 0 ? urlRows : (pending.resize?.rows || 24);
     try {
-      ptyProcess = attachToSession(managedTmuxTarget, sessionName, currentCols, currentRows);
+      ptyProcess = await attachToSession(managedTmuxTarget, sessionName, currentCols, currentRows);
     } catch (err) {
       log.error(`tmux attach failed: ${err instanceof Error ? err.message : err}`);
       ws.close(1011, 'Session attach failed');
@@ -470,7 +471,7 @@ export const handleConnection = async (ws: WebSocket, request: IncomingMessage, 
     try {
       await createSession(sessionName, currentCols, currentRows);
       if (ws.readyState !== WebSocket.OPEN) return;
-      ptyProcess = attachToSession(managedTmuxTarget, sessionName, currentCols, currentRows);
+      ptyProcess = await attachToSession(managedTmuxTarget, sessionName, currentCols, currentRows);
     } catch (err) {
       log.error(`tmux session creation failed: ${err instanceof Error ? err.message : err}`);
       ws.close(1011, 'Session create failed');

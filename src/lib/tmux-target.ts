@@ -6,6 +6,7 @@ import {
   type SpawnOptions,
 } from 'child_process';
 import { promisify } from 'util';
+import * as pty from 'node-pty';
 
 const execFile = promisify(execFileCallback);
 
@@ -31,7 +32,7 @@ export const externalTmuxTarget = (
 ): IExternalTmuxTarget => ({ kind: 'external', socketPath, validate });
 
 /** Keep backend selection here so terminal callers operate on a target, not a socket flag. */
-export const tmuxTargetArgs = (target: TmuxTarget, args: string[]): string[] => [
+const tmuxTargetArgs = (target: TmuxTarget, args: string[]): string[] => [
   ...(target.kind === 'managed'
     ? ['-L', MANAGED_SOCKET]
     : ['-N', '-S', target.socketPath]),
@@ -72,13 +73,24 @@ export const spawnTmux = async (
   }
 };
 
-export const tmuxAttachArgs = (
+export const attachTmuxPty = async (
   target: TmuxTarget,
   sessionName: string,
-  settings: { noOutput?: boolean } = {},
-): string[] => {
+  options: pty.IPtyForkOptions,
+  settings: { noOutput?: boolean; signal?: AbortSignal; onSpawn?: (client: pty.IPty) => void } = {},
+): Promise<pty.IPty> => {
+  await validateTmuxTarget(target, settings.signal);
   const externalFlags = settings.noOutput ? 'read-only,ignore-size,no-output' : 'read-only,ignore-size';
-  return tmuxTargetArgs(target, target.kind === 'external'
+  const client = pty.spawn('tmux', tmuxTargetArgs(target, target.kind === 'external'
     ? ['-u', '-C', 'attach-session', '-f', externalFlags, '-t', sessionName]
-    : ['-u', 'attach-session', '-t', sessionName]);
+    : ['-u', 'attach-session', '-t', sessionName]), options);
+  // Control clients must subscribe before node-pty can emit initial protocol events.
+  settings.onSpawn?.(client);
+  try {
+    await validateTmuxTarget(target, settings.signal);
+    return client;
+  } catch (error) {
+    client.kill();
+    throw error;
+  }
 };

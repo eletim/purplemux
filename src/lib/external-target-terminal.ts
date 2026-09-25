@@ -1,8 +1,8 @@
-import * as pty from 'node-pty';
+import type * as pty from 'node-pty';
 import { extReviewTmuxTarget, ExtReviewError, ExtReviewSnapshotRaceError, resolveExtReviewTargets } from '@/lib/ext-review-tmux';
 import { buildShellEnv } from '@/lib/shell-env';
 import { PRISTINE_ENV } from '@/lib/pristine-env';
-import { execTmux, tmuxAttachArgs, validateTmuxTarget } from '@/lib/tmux-target';
+import { attachTmuxPty, execTmux, validateTmuxTarget } from '@/lib/tmux-target';
 import type { IExtReview } from '@/types/ext-review';
 
 /** Return only history not already sent when the bounded tmux capture slides. */
@@ -82,18 +82,27 @@ export class ExternalWindowGuard {
   private readonly exited: Promise<void>;
   private pending: { marker: string; resolve: (safe: boolean) => void; timer: ReturnType<typeof setTimeout> } | null = null;
 
-  constructor(review: IExtReview, private readonly windowId: string) {
-    this.client = pty.spawn('tmux', tmuxAttachArgs(extReviewTmuxTarget(review),
-      `${review.sessionId}:${windowId}`, { noOutput: true }), {
-      name: 'xterm-256color', cols: 80, rows: 24,
-      cwd: PRISTINE_ENV.HOME || '/', env: buildShellEnv(),
-    });
-    this.client.onData((data) => this.receive(data, review.sessionId));
+  private constructor(client: pty.IPty, private readonly windowId: string, sessionId: string) {
+    this.client = client;
+    this.client.onData((data) => this.receive(data, sessionId));
     this.exited = new Promise((resolve) => this.client.onExit(() => {
       this.hasExited = true;
       this.fail();
       resolve();
     }));
+  }
+
+  static async create(review: IExtReview, windowId: string, signal?: AbortSignal): Promise<ExternalWindowGuard> {
+    let guard: ExternalWindowGuard | undefined;
+    await attachTmuxPty(extReviewTmuxTarget(review), `${review.sessionId}:${windowId}`, {
+      name: 'xterm-256color', cols: 80, rows: 24,
+      cwd: PRISTINE_ENV.HOME || '/', env: buildShellEnv(),
+    }, {
+      noOutput: true,
+      signal,
+      onSpawn: (client) => { guard = new ExternalWindowGuard(client, windowId, review.sessionId); },
+    });
+    return guard!;
   }
 
   get pid(): number { return this.client.pid; }
