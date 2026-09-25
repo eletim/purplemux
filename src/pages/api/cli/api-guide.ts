@@ -65,17 +65,21 @@ GET /api/cli/external-servers
   CLI equivalent: purplemux external-server list
 
 POST /api/cli/external-servers/<serverId>/terminals
-  Body: { "name"?: "terminal-name" }
+  Body: { "requestId": "client-stable-id", "name"?: "terminal-name" }
   Creates a new tmux session (never an implicit window in an existing session) and
   persists PurpleMux ownership bound to its exact session ID and creation identity.
   Returns { "serverId", "sessionId", "sessionCreated", "windowId", "name",
-            "provenance": { "id", "owner":"purplemux", "resourceType":"session",
+            "provenance": { "id", "requestId", "owner":"purplemux", "resourceType":"session",
               "sessionId", "sessionCreated", "createdAt" } }.
+  Repeating the same requestId returns the original session instead of creating another.
   CLI equivalent: purplemux external-server create-terminal SERVER_ID [--name NAME]
+                  [--request-id ID]
   Registration alone never owns pre-existing sessions. Default lifecycle actions may
   manage only matching owned records; unowned destruction requires explicit policy.
   If ownership persistence fails, the exact newly created session is rolled back so a
   retry cannot accumulate a live unowned terminal.
+  Ownership is also marked on the tmux session, so creation can be reconciled after a
+  lost/invalid response and remains identifiable across unregister/re-register.
 
 DELETE /api/cli/external-servers/<serverId>
   Removes only the registration, including when the server is unavailable.

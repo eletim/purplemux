@@ -18,7 +18,7 @@ describe('external tmux runtime decoding', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.identity.mockResolvedValue('1:2:3');
-    mocks.exec.mockResolvedValue({ stdout: '$0\t1750000000\t0\t@0\t0\t1\t%0\t0\t1\t123\t0\n', stderr: '' });
+    mocks.exec.mockResolvedValue({ stdout: '$0\t1750000000\t\t0\t@0\t0\t1\t%0\t0\t1\t123\t0\n', stderr: '' });
     mocks.execBuffer.mockImplementation(async (_target, args: string[]) => {
       const field = args.at(-1) ?? '';
       if (field === '#{pane_current_path}') {
@@ -32,17 +32,74 @@ describe('external tmux runtime decoding', () => {
   });
 
   it('creates a new session and returns stable identities for ownership persistence', async () => {
-    mocks.exec.mockResolvedValue({ stdout: '$4\t1750000001\t@7\n', stderr: '' });
+    mocks.exec.mockResolvedValueOnce({ stdout: '$0\t1750000000\t\t0\t@0\t0\t1\t%0\t0\t1\t123\t0\n', stderr: '' })
+      .mockResolvedValueOnce({ stdout: '$4\t1750000001\t@7\n', stderr: '' });
+    const identity = { id: '123456789012345678901', requestId: 'request-1',
+      createdAt: '2026-09-26T00:00:00.000Z' };
     const created = await createExternalTerminal({
       id: 'server', name: 'dev', socketPath: '/known/socket', socketIdentity: '1:2:3',
-    }, { name: 'my terminal' });
+    }, { requestId: 'request-1', name: 'my terminal' }, identity);
 
     expect(created).toEqual({ serverId: 'server', sessionId: '$4', sessionCreated: '1750000001',
       windowId: '@7', name: 'my terminal' });
     expect(mocks.exec).toHaveBeenCalledWith(expect.anything(), [
       'new-session', '-d', '-P', '-F', '#{session_id}\t#{session_created}\t#{window_id}',
       '-s', 'my terminal',
+      ';', 'set-option', '-t', 'my terminal', '@purplemux_provenance',
+      'v1:123456789012345678901:request-1:1790380800000',
     ], expect.objectContaining({ timeout: 5000 }));
+  });
+
+  it.each([
+    { label: 'unparseable output', failure: { stdout: 'unexpected\n', stderr: '' } },
+    { label: 'process error', failure: new Error('connection lost') },
+  ])('recovers a marked session after $label instead of creating another', async ({ failure }) => {
+    const identity = { id: '123456789012345678901', requestId: 'recover-1',
+      createdAt: '2026-09-26T00:00:00.000Z' };
+    const before = '$0\t1750000000\t\t0\t@0\t0\t1\t%0\t0\t1\t123\t0\n';
+    const after = '$4\t1750000001\tv1:123456789012345678901:recover-1:1790380800000'
+      + '\t0\t@7\t0\t1\t%8\t0\t1\t456\t0\n';
+    mocks.exec.mockReset().mockResolvedValueOnce({ stdout: before, stderr: '' });
+    if (failure instanceof Error) mocks.exec.mockRejectedValueOnce(failure);
+    else mocks.exec.mockResolvedValueOnce(failure);
+    mocks.exec.mockResolvedValueOnce({ stdout: after, stderr: '' });
+
+    await expect(createExternalTerminal({
+      id: 'server', name: 'dev', socketPath: '/known/socket', socketIdentity: '1:2:3',
+    }, { requestId: 'recover-1', name: 'my terminal' }, identity)).resolves.toMatchObject({
+      sessionId: '$4', sessionCreated: '1750000001', windowId: '@7',
+    });
+    expect(mocks.exec.mock.calls.filter(([, args]) => args[0] === 'new-session')).toHaveLength(1);
+  });
+
+  it('recovers the marked session on retry after post-creation identity validation fails', async () => {
+    const identity = { id: '123456789012345678901', requestId: 'post-check',
+      createdAt: '2026-09-26T00:00:00.000Z' };
+    const before = '$0\t1750000000\t\t0\t@0\t0\t1\t%0\t0\t1\t123\t0\n';
+    const after = '$4\t1750000001\tv1:123456789012345678901:post-check:1790380800000'
+      + '\t0\t@7\t0\t1\t%8\t0\t1\t456\t0\n';
+    let created = false;
+    mocks.exec.mockImplementation(async (_target, args: string[]) => {
+      if (args[0] === 'new-session') {
+        created = true;
+        return { stdout: '$4\t1750000001\t@7\n', stderr: '' };
+      }
+      if (args[0] === 'display-message') return { stdout: '123\n', stderr: '' };
+      return { stdout: created ? after : before, stderr: '' };
+    });
+    mocks.identity.mockImplementation(async () => {
+      if (created) throw new Error('identity changed');
+      return '1:2:3';
+    });
+    const server = { id: 'server', name: 'dev', socketPath: '/known/socket', socketIdentity: '1:2:3' };
+    const input = { requestId: 'post-check', name: 'my terminal' };
+
+    await expect(createExternalTerminal(server, input, identity)).rejects.toThrow('unavailable');
+    mocks.identity.mockResolvedValue('1:2:3');
+    await expect(createExternalTerminal(server, input, identity)).resolves.toMatchObject({
+      sessionId: '$4', windowId: '@7',
+    });
+    expect(mocks.exec.mock.calls.filter(([, args]) => args[0] === 'new-session')).toHaveLength(1);
   });
 
   it('rolls back only the exact session identity created by the failed operation', async () => {
@@ -74,7 +131,7 @@ describe('external tmux runtime decoding', () => {
     });
     expect(inventory.sessions[0]).toMatchObject({ owned: true, provenance });
 
-    mocks.exec.mockResolvedValue({ stdout: '$0\t1750000002\t0\t@0\t0\t1\t%0\t0\t1\t123\t0\n', stderr: '' });
+    mocks.exec.mockResolvedValue({ stdout: '$0\t1750000002\t\t0\t@0\t0\t1\t%0\t0\t1\t123\t0\n', stderr: '' });
     const replacement = await discoverExternalServer({
       id: 'server', name: 'dev', socketPath: '/known/socket', socketIdentity: '1:2:3',
       ownedTerminals: [provenance],
@@ -95,9 +152,9 @@ describe('external tmux runtime decoding', () => {
   });
 
   it('retries a live snapshot when a resource disappears during metadata lookup', async () => {
-    const stale = '$0\t1750000000\t0\t@0\t0\t1\t%0\t0\t0\t123\t0\n'
-      + '$0\t1750000000\t0\t@0\t0\t1\t%1\t1\t1\t124\t0\n';
-    const survivor = '$0\t1750000000\t0\t@0\t0\t1\t%1\t0\t1\t124\t0\n';
+    const stale = '$0\t1750000000\t\t0\t@0\t0\t1\t%0\t0\t0\t123\t0\n'
+      + '$0\t1750000000\t\t0\t@0\t0\t1\t%1\t1\t1\t124\t0\n';
+    const survivor = '$0\t1750000000\t\t0\t@0\t0\t1\t%1\t0\t1\t124\t0\n';
     mocks.exec.mockReset()
       .mockResolvedValueOnce({ stdout: stale, stderr: '' })
       .mockResolvedValueOnce({ stdout: '456\n', stderr: '' })
@@ -121,7 +178,7 @@ describe('external tmux runtime decoding', () => {
 
   it('bounds concurrent metadata commands for large inventories', async () => {
     mocks.exec.mockResolvedValue({ stdout: Array.from({ length: 20 }, (_, pane) =>
-      `$0\t1750000000\t0\t@0\t0\t1\t%${pane}\t${pane}\t${pane === 0 ? 1 : 0}\t${100 + pane}\t0`).join('\n') + '\n', stderr: '' });
+      `$0\t1750000000\t\t0\t@0\t0\t1\t%${pane}\t${pane}\t${pane === 0 ? 1 : 0}\t${100 + pane}\t0`).join('\n') + '\n', stderr: '' });
     let active = 0;
     let maximum = 0;
     mocks.execBuffer.mockImplementation(async (_target, args: string[]) => {

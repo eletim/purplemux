@@ -1,4 +1,5 @@
-import { useMemo, useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
+import { nanoid } from 'nanoid';
 import Head from 'next/head';
 import dynamic from 'next/dynamic';
 import type { GetServerSideProps } from 'next';
@@ -18,12 +19,14 @@ const fetchServers = async (): Promise<{ servers: IExternalServerInventory[] }> 
   if (!response.ok) throw new Error('Unable to load external tmux servers.');
   return response.json();
 };
+const requestStorageKey = (serverId: string) => `purplemux-external-terminal-request:${serverId}`;
 
 export default function ExternalServersPage() {
   const { data, error, mutate } = useSWR(endpoint, fetchServers);
   const [selected, setSelected] = useState<IExternalTerminalTarget | null>(null);
   const [creatingServerId, setCreatingServerId] = useState<string | null>(null);
   const [creationError, setCreationError] = useState<string | null>(null);
+  const requestIds = useRef(new Map<string, string>());
   const availableTargets = useMemo(() => {
     const targets: Array<{
       target: IExternalTerminalTarget;
@@ -56,19 +59,39 @@ export default function ExternalServersPage() {
   const createTerminal = async (serverId: string) => {
     setCreatingServerId(serverId);
     setCreationError(null);
+    let storedRequestId: string | null = null;
+    try { storedRequestId = sessionStorage.getItem(requestStorageKey(serverId)); } catch {}
+    const requestId = requestIds.current.get(serverId) ?? storedRequestId ?? nanoid();
+    requestIds.current.set(serverId, requestId);
+    try { sessionStorage.setItem(requestStorageKey(serverId), requestId); } catch {}
+    let body;
     try {
       const response = await fetch(`${endpoint}/${encodeURIComponent(serverId)}/terminals`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}',
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ requestId }),
       });
-      const body = await response.json();
-      if (!response.ok) throw new Error(body.error || 'Unable to create external terminal.');
-      setSelected({ serverId, sessionId: body.sessionId, windowId: body.windowId });
-      await mutate();
+      body = await response.json();
+      if (!response.ok) {
+        if (response.status < 500) {
+          requestIds.current.delete(serverId);
+          try { sessionStorage.removeItem(requestStorageKey(serverId)); } catch {}
+        }
+        throw new Error(body.error || 'Unable to create external terminal.');
+      }
+      if (body.provenance?.requestId !== requestId) {
+        throw new Error('External terminal creation outcome is unknown; retry to reconcile it.');
+      }
+      requestIds.current.delete(serverId);
+      try { sessionStorage.removeItem(requestStorageKey(serverId)); } catch {}
     } catch (createError) {
       setCreationError(createError instanceof Error ? createError.message : 'Unable to create external terminal.');
-    } finally {
       setCreatingServerId(null);
+      return;
     }
+    setSelected({ serverId, sessionId: body.sessionId, windowId: body.windowId });
+    setCreatingServerId(null);
+    // Creation already committed. A refresh failure must not be presented as a failed mutation.
+    void mutate().catch(() => {});
   };
 
   return (

@@ -142,7 +142,7 @@ purplemux external-server create-terminal SERVER_ID  # creates a new owned tmux 
 purplemux external-server unregister SERVER_ID
 ```
 
-Registration stores a stable ID, display name, absolute socket path, and frozen socket identity. Listing discovers current sessions, windows, and pane foreground metadata using stable tmux IDs; newly created resources appear immediately, while deleted resources disappear and unavailable servers are reported without being restarted. New terminals always start as new sessions, with exact PurpleMux ownership provenance persisted separately from pre-existing unowned sessions. The PurpleMux-owned `purple` socket is rejected, and later operations fail closed if the socket path is replaced. Unregister removes only PurpleMux's registration; it never kills the external server or any session, window, or pane.
+Registration stores a stable ID, display name, absolute socket path, and frozen socket identity. Listing discovers current sessions, windows, and pane foreground metadata using stable tmux IDs; newly created resources appear immediately, while deleted resources disappear and unavailable servers are reported without being restarted. New terminals always start as new sessions, carry exact PurpleMux ownership provenance across unregister/re-register, and use idempotent request IDs for safe reconciliation. The PurpleMux-owned `purple` socket is rejected, and later operations fail closed if the socket path is replaced. Unregister removes only PurpleMux's registration; it never kills the external server or any session, window, or pane.
 
 ### External review (PurpleMux 0.5.0)
 

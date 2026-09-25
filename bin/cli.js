@@ -5,6 +5,7 @@
 'use strict';
 
 const fs = require('fs');
+const crypto = require('crypto');
 const os = require('os');
 const path = require('path');
 
@@ -271,17 +272,40 @@ const cmdExternalServerCreateTerminal = async (args) => {
   const serverId = args[0];
   if (!isReviewId(serverId)) die('an external server ID is required');
   let name;
-  if (args.length > 1) {
-    if (args.length !== 3 || args[1] !== '--name' || !args[2] || args[2].startsWith('--')) {
-      die('usage: external-server create-terminal ID [--name NAME]');
+  let requestId;
+  for (let i = 1; i < args.length; i += 2) {
+    const flag = args[i];
+    if (!['--name', '--request-id'].includes(flag) || !args[i + 1] || args[i + 1].startsWith('--')) {
+      die('usage: external-server create-terminal ID [--name NAME] [--request-id ID]');
     }
-    name = args[2];
+    if (flag === '--name') name = args[i + 1];
+    else requestId = args[i + 1];
   }
+  requestId ??= crypto.randomUUID();
   requireEnv();
-  const { body } = await api('POST',
-    `/api/cli/external-servers/${encodeURIComponent(serverId)}/terminals`, name ? { name } : {});
-  if (!body || typeof body.sessionId !== 'string' || typeof body.windowId !== 'string') {
-    die('invalid external terminal creation response: expected sessionId and windowId');
+  let resp;
+  try {
+    resp = await fetch(`${BASE}/api/cli/external-servers/${encodeURIComponent(serverId)}/terminals`, {
+      method: 'POST', headers: { 'X-Pmux-Token': TOKEN, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ requestId, ...(name ? { name } : {}) }),
+    });
+  } catch {
+    die(`external terminal creation outcome unknown; retry with --request-id ${requestId} (transport failure)`);
+  }
+  let body;
+  try { body = await resp.json(); } catch {
+    die(`external terminal creation outcome unknown; retry with --request-id ${requestId} (invalid JSON response)`);
+  }
+  if (!resp.ok) {
+    const message = body?.error || `HTTP ${resp.status}`;
+    if (resp.status >= 500) {
+      die(`external terminal creation outcome unknown; retry with --request-id ${requestId} (server error: ${message})`);
+    }
+    die(message);
+  }
+  if (!body || typeof body.sessionId !== 'string' || typeof body.windowId !== 'string'
+    || body.provenance?.requestId !== requestId) {
+    die(`external terminal creation outcome unknown; retry with --request-id ${requestId} (invalid response)`);
   }
   out(body);
 };
@@ -520,7 +544,7 @@ Commands:
   external-server register --socket PATH --name NAME
                                            Register an external tmux server; print its stable ID
   external-server list                     List registrations with fresh tmux runtime inventory
-  external-server create-terminal ID [--name NAME]
+  external-server create-terminal ID [--name NAME] [--request-id ID]
                                            Create an owned tmux session on a registered server
   external-server unregister ID            Remove registration without changing tmux resources
   tab list [-w WS]                         List tabs (optionally scoped to workspace)

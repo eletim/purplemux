@@ -60,13 +60,24 @@ describe('purplemux external-server commands', () => {
   });
 
   it('creates a named terminal session on an encoded registration', async () => {
-    const body = { serverId: '-tbquP-K1QhHnU_ZqnRF1', sessionId: '$2', windowId: '@3' };
+    const body = { serverId: '-tbquP-K1QhHnU_ZqnRF1', sessionId: '$2', windowId: '@3',
+      provenance: { requestId: 'request-1' } };
     const { port, requests } = await startServer(201, body);
     expect(JSON.parse((await run(['external-server', 'create-terminal', body.serverId,
-      '--name', 'work'], port)).stdout)).toEqual(body);
+      '--name', 'work', '--request-id', 'request-1'], port)).stdout)).toEqual(body);
     expect(requests).toEqual([{ method: 'POST',
       url: `/api/cli/external-servers/${body.serverId}/terminals`, token: 'test-token',
-      body: { name: 'work' } }]);
+      body: { requestId: 'request-1', name: 'work' } }]);
+  });
+
+  it('reports the reusable request ID when creation has an unknown server outcome', async () => {
+    const fixture = await startServer(500, { error: 'storage timeout' });
+    await expect(run(['external-server', 'create-terminal', 'server-1',
+      '--request-id', 'retry-1'], fixture.port)).rejects.toMatchObject({
+      code: 1,
+      stderr: 'error: external terminal creation outcome unknown; retry with --request-id retry-1 '
+        + '(server error: storage timeout)\n',
+    });
   });
 
   it.each([
@@ -86,7 +97,7 @@ describe('purplemux external-server commands', () => {
     const { stdout } = await run(['help']);
     expect(stdout).toContain('external-server register --socket PATH --name NAME');
     expect(stdout).toContain('external-server list');
-    expect(stdout).toContain('external-server create-terminal ID [--name NAME]');
+    expect(stdout).toContain('external-server create-terminal ID [--name NAME] [--request-id ID]');
     expect(stdout).toContain('external-server unregister ID');
     expect(stdout).not.toContain('external-target register');
   });

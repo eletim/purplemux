@@ -14,7 +14,10 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   const { serverId } = req.query;
   if (typeof serverId !== 'string') return res.status(400).json({ error: 'serverId is required' });
   try {
-    const terminal = await createExternalTerminal(serverId, { name: req.body?.name });
+    const terminal = await createExternalTerminal(serverId, {
+      requestId: req.body?.requestId,
+      name: req.body?.name,
+    });
     return terminal
       ? res.status(201).json(terminal)
       : res.status(404).json({ error: 'External server not found' });

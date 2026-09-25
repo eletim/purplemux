@@ -14,6 +14,7 @@ export interface IExternalServer {
 
 export interface IExternalTerminalProvenance {
   id: string;
+  requestId?: string;
   owner: 'purplemux';
   resourceType: 'session';
   sessionId: string;
@@ -22,6 +23,7 @@ export interface IExternalTerminalProvenance {
 }
 
 export interface ICreateExternalTerminal {
+  requestId: string;
   name?: string;
 }
 

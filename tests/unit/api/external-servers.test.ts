@@ -88,11 +88,14 @@ describe('external server API', () => {
   it('creates an owned terminal on the exact registration', async () => {
     const created = { serverId: 'server-1', sessionId: '$2', sessionCreated: '1750000000',
       windowId: '@3', name: 'work', provenance: { id: 'terminal-1', owner: 'purplemux',
-        resourceType: 'session', sessionId: '$2', sessionCreated: '1750000000', createdAt: 'now' } };
+        requestId: 'request-1', resourceType: 'session', sessionId: '$2',
+        sessionCreated: '1750000000', createdAt: 'now' } };
     mocks.createTerminal.mockResolvedValue(created);
     const res = response();
-    await terminals(request('POST', { name: 'work', ignored: true }), res as unknown as NextApiResponse);
-    expect(mocks.createTerminal).toHaveBeenCalledWith('server-1', { name: 'work' });
+    await terminals(request('POST', { requestId: 'request-1', name: 'work', ignored: true }),
+      res as unknown as NextApiResponse);
+    expect(mocks.createTerminal).toHaveBeenCalledWith('server-1',
+      { requestId: 'request-1', name: 'work' });
     expect(res.status).toHaveBeenCalledWith(201);
     expect(res.json).toHaveBeenCalledWith(created);
   });

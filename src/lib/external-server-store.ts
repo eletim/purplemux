@@ -55,19 +55,26 @@ export const registerExternalServer = (input: IRegisterExternalServer): Promise<
 
 export const createExternalTerminal = (
   serverId: string,
-  input: ICreateExternalTerminal = {},
+  input: ICreateExternalTerminal,
 ): Promise<ICreatedExternalTerminal | undefined> => withLock(async () => {
   const servers = await read();
   const index = servers.findIndex((server) => server.id === serverId);
   if (index < 0) return undefined;
-  const created = await createTmuxExternalTerminal(servers[index], input);
+  const prior = servers[index].ownedTerminals?.find((entry) => entry.requestId === input.requestId);
+  const identity = prior ?? {
+    id: nanoid(), requestId: input.requestId,
+    createdAt: new Date().toISOString(),
+  };
+  const created = await createTmuxExternalTerminal(servers[index], input, identity);
+  if (prior) return { ...created, provenance: prior };
   const provenance = {
-    id: nanoid(),
+    id: identity.id,
+    requestId: input.requestId,
     owner: 'purplemux' as const,
     resourceType: 'session' as const,
     sessionId: created.sessionId,
     sessionCreated: created.sessionCreated,
-    createdAt: new Date().toISOString(),
+    createdAt: identity.createdAt,
   };
   servers[index] = {
     ...servers[index],

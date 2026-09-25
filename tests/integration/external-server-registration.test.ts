@@ -47,7 +47,7 @@ describe('external tmux server registrations', () => {
     vi.resetModules();
     const store = await import('@/lib/external-server-store');
     const server = await store.registerExternalServer({ name: 'external', socketPath: socket });
-    const created = await store.createExternalTerminal(server.id);
+    const created = await store.createExternalTerminal(server.id, { requestId: 'create-default' });
 
     expect(created).toMatchObject({ serverId: server.id, sessionId: '$1', windowId: '@1',
       name: expect.stringMatching(/^purplemux-[A-Za-z0-9_-]{8}$/),
@@ -62,10 +62,25 @@ describe('external tmux server registrations', () => {
     expect(inventory.sessions.find(({ id }) => id === created?.sessionId)).toMatchObject({
       name: created?.name, owned: true, provenance: created?.provenance,
     });
+    await expect(store.createExternalTerminal(server.id, { requestId: 'create-default' }))
+      .resolves.toEqual(created);
+    expect(tmux('list-sessions', '-F', '#{session_id}').split('\n')).toEqual(['$0', '$1']);
 
     await expect(store.unregisterExternalServer(server.id)).resolves.toBe(true);
     expect(tmux('list-sessions', '-F', '#{session_id}:#{session_name}').split('\n'))
       .toEqual(['$0:external', `$1:${created?.name}`]);
+    const reregistered = await store.registerExternalServer({ name: 'again', socketPath: socket });
+    const rediscovered = await discoverExternalServer(reregistered);
+    expect(rediscovered.sessions.find(({ id }) => id === created?.sessionId)).toMatchObject({
+      owned: true,
+      provenance: { id: created?.provenance.id, requestId: 'create-default' },
+    });
+    await expect(store.createExternalTerminal(reregistered.id, { requestId: 'create-default' }))
+      .resolves.toMatchObject({ sessionId: created?.sessionId });
+    tmux('kill-session', '-t', created!.sessionId);
+    await expect(store.createExternalTerminal(reregistered.id, { requestId: 'create-default' }))
+      .rejects.toThrow('Previously created external tmux terminal is unavailable');
+    expect(tmux('list-sessions', '-F', '#{session_name}')).toBe('external');
   });
 
   it('rolls back an exact created session when ownership persistence fails, then retries cleanly', async () => {
@@ -75,13 +90,14 @@ describe('external tmux server registrations', () => {
     const server = await store.registerExternalServer({ name: 'external', socketPath: socket });
     const rename = vi.spyOn(fs, 'rename').mockRejectedValueOnce(new Error('storage unavailable'));
 
-    await expect(store.createExternalTerminal(server.id, { name: 'recoverable' }))
+    await expect(store.createExternalTerminal(server.id, { requestId: 'retry-operation', name: 'recoverable' }))
       .rejects.toThrow('storage unavailable');
     expect(tmux('list-sessions', '-F', '#{session_name}')).toBe('external');
     expect((await store.listExternalServers())[0].ownedTerminals).toEqual([]);
 
     rename.mockRestore();
-    const retried = await store.createExternalTerminal(server.id, { name: 'recoverable' });
+    const retried = await store.createExternalTerminal(server.id,
+      { requestId: 'retry-operation', name: 'recoverable' });
     expect(tmux('list-sessions', '-F', '#{session_name}').split('\n'))
       .toEqual(['external', 'recoverable']);
     expect((await store.listExternalServers())[0].ownedTerminals).toEqual([retried?.provenance]);
@@ -105,7 +121,8 @@ describe('external tmux server registrations', () => {
     await expect(assertExternalServerSocketIdentity(server)).rejects.toThrow('identity changed');
     await expect(execTmux(externalServerTmuxTarget(server), ['list-sessions']))
       .rejects.toThrow('identity changed');
-    await expect(store.createExternalTerminal(server.id)).rejects.toThrow('identity changed');
+    await expect(store.createExternalTerminal(server.id, { requestId: 'replaced-socket' }))
+      .rejects.toThrow('identity changed');
   });
 
   it('discovers fresh sessions, windows, and pane foreground metadata without recreating deletions', async () => {
