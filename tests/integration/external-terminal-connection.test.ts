@@ -26,29 +26,6 @@ afterEach(() => {
   TestSocket.instances = [];
 });
 
-it('shows an external policy rejection without automatic retries and permits manual reconnect', () => {
-  vi.useFakeTimers();
-  vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('visible');
-  vi.stubGlobal('WebSocket', TestSocket);
-  const { result } = renderHook(() => useTerminalWebSocket({ externalTarget: { id: 'target', windowId: '@0' } }));
-  act(() => result.current.connect('target:@0'));
-  expect(TestSocket.instances).toHaveLength(1);
-  act(() => TestSocket.instances[0].onclose?.({ code: 1008, reason: 'External target is not registered' }));
-  expect(result.current.status).toBe('disconnected');
-  expect(result.current.externalTargetFailure).toBe('External target is not registered');
-  expect(result.current.retryCount).toBe(0);
-  act(() => vi.advanceTimersByTime(60_000));
-  act(() => document.dispatchEvent(new Event('visibilitychange')));
-  expect(TestSocket.instances).toHaveLength(1);
-
-  act(() => result.current.reconnect());
-  expect(TestSocket.instances).toHaveLength(2);
-  expect(new URL(TestSocket.instances[1].url).searchParams.get('externalTargetId')).toBe('target');
-  expect(new URL(TestSocket.instances[1].url).searchParams.get('windowId')).toBe('@0');
-  expect(result.current.status).toBe('connecting');
-  expect(result.current.externalTargetFailure).toBeNull();
-});
-
 it('retains an exact discovered external window target across reconnects', () => {
   vi.useFakeTimers();
   vi.stubGlobal('WebSocket', TestSocket);

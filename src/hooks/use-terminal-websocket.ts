@@ -31,7 +31,6 @@ const getOrCreateClientId = (sessionName: string): string => {
 };
 
 interface IUseTerminalWebSocketOptions {
-  externalTarget?: { id: string; windowId: string };
   externalTerminalTarget?: IExternalTerminalTarget;
   onData?: (data: Uint8Array) => void;
   onConnected?: () => void;
@@ -39,14 +38,11 @@ interface IUseTerminalWebSocketOptions {
 }
 
 const useTerminalWebSocket = ({
-  externalTarget,
   externalTerminalTarget,
   onData,
   onConnected,
   onSessionEnded,
 }: IUseTerminalWebSocketOptions = {}) => {
-  const externalTargetId = externalTarget?.id;
-  const externalWindowId = externalTarget?.windowId;
   const externalServerId = externalTerminalTarget?.serverId;
   const externalSessionId = externalTerminalTarget?.sessionId;
   const externalServerWindowId = externalTerminalTarget?.windowId;
@@ -98,17 +94,13 @@ const useTerminalWebSocket = ({
       const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
       const connectionKey = externalServerId && externalSessionId && externalServerWindowId
         ? `external-server:${externalServerId}:${externalSessionId}:${externalServerWindowId}`
-        : externalTargetId && externalWindowId
-          ? `external-target:${externalTargetId}:${externalWindowId}`
-          : sessionName;
+        : sessionName;
       const clientId = getOrCreateClientId(connectionKey);
       const size = initialSizeRef.current;
       const sizeParams = size ? `&cols=${size.cols}&rows=${size.rows}` : '';
       const targetParams = externalServerId && externalSessionId && externalServerWindowId
         ? `externalServerId=${encodeURIComponent(externalServerId)}&sessionId=${encodeURIComponent(externalSessionId)}&windowId=${encodeURIComponent(externalServerWindowId)}`
-        : externalTargetId && externalWindowId
-          ? `externalTargetId=${encodeURIComponent(externalTargetId)}&windowId=${encodeURIComponent(externalWindowId)}`
-          : `session=${encodeURIComponent(sessionName)}`;
+        : `session=${encodeURIComponent(sessionName)}`;
       const ws = new WebSocket(
         `${protocol}//${location.host}/api/terminal?clientId=${clientId}&${targetParams}${sizeParams}`,
       );
@@ -153,7 +145,7 @@ const useTerminalWebSocket = ({
           return;
         }
 
-        if ((externalTargetId || externalServerId) && event.code === 1008) {
+        if (externalServerId && event.code === 1008) {
           policyRejectedRef.current = true;
           setExternalTargetFailure(event.reason || 'External target rejected');
           setStatus('disconnected');
@@ -192,8 +184,7 @@ const useTerminalWebSocket = ({
         console.log('[terminal-ws] connection error');
       };
     },
-    [clearTimers, externalServerId, externalSessionId, externalServerWindowId,
-      externalTargetId, externalWindowId],
+    [clearTimers, externalServerId, externalSessionId, externalServerWindowId],
   );
 
   useEffect(() => {

@@ -78,7 +78,9 @@ If a transport failure or server error makes the mutation outcome uncertain, rec
 
 ### External tmux server registration
 
-Use `external-server register` with a display name and known absolute tmux socket path. It returns a stable registration ID with the name, path, and frozen Unix socket identity. `external-server create-terminal ID` predictably creates a new session and persists provenance bound to its exact tmux identity; pre-existing sessions remain unowned. Creation request IDs are idempotent, and the CLI reports the ID to reuse when an outcome is unknown. Session provenance remains on tmux across unregister/re-register. Registration rejects the PurpleMux-owned `purple` socket. Operations against a registered server recheck that identity and fail closed if the socket disappears or the path is replaced. `external-server unregister ID` deletes only the registration, even if the server is unavailable; it never sends tmux commands or kills sessions, windows, or panes. External Reviews remain a separate fixed-window, read-only feature.
+Use `external-server register` with a display name and known absolute tmux socket path. It returns a stable registration ID with the name, path, and frozen Unix socket identity. `external-server list` discovers the current sessions, windows, and panes on every call; additions appear and deletions disappear without changing the registration. `external-server create-terminal ID` predictably creates a new session and persists provenance bound to its exact tmux identity; pre-existing sessions remain unowned. Creation request IDs are idempotent, and the CLI reports the ID to reuse when an outcome is unknown. Session provenance remains on tmux across unregister/re-register. Registration rejects the PurpleMux-owned `purple` socket. Operations against a registered server recheck that identity and fail closed if the socket disappears or the path is replaced. `external-server unregister ID` deletes only the registration, even if the server is unavailable; it never sends tmux commands or kills sessions, windows, or panes.
+
+The authenticated browser URL is `/external-server`. It shows the same dynamic inventory and opens an exact selected session/window through the normal interactive terminal surface, including input, paste, resize, reconnect, and Terminal Copy. External terminal kill requests are rejected, and target drift closes the connection instead of following another window. There is no interactive `/external-target/<id>` URL. External Reviews remain the separate fixed-window, read-only feature at `/ext-review` and `/ext-review/<id>`.
 
 ### External review (0.5.0)
 
@@ -112,7 +114,7 @@ The external server lifecycle API accepts the same CLI token or authenticated br
 | Endpoint | Request / response |
 |---|---|
 | `POST /api/cli/external-servers` | Body: `{"socketPath":"/absolute/known/tmux/socket","name":"dev-server"}`. Returns the stored `id`, `name`, `socketPath`, and `socketIdentity`; invalid or unavailable sockets return 400. |
-| `GET /api/cli/external-servers` | `{"servers":[...]}` lists persisted registrations without freezing sessions or windows. |
+| `GET /api/cli/external-servers` | `{"servers":[...]}` returns persisted registrations with fresh sessions, windows, panes, availability, and ownership metadata. |
 | `POST /api/cli/external-servers/<serverId>/terminals` | Body `{"requestId":"client-stable-id","name"?:"terminal-name"}`. Creates or reconciles one owned tmux session and returns its exact identities and provenance. |
 | `DELETE /api/cli/external-servers/<serverId>` | `{"deleted":true}` on success; missing registrations return 404. Registration-only deletion. |
 

@@ -1,49 +1,7 @@
 import type * as pty from 'node-pty';
-import { extReviewTmuxTarget, ExtReviewSnapshotRaceError, resolveExtReviewTargets } from '@/lib/ext-review-tmux';
 import { buildShellEnv } from '@/lib/shell-env';
 import { PRISTINE_ENV } from '@/lib/pristine-env';
 import { attachTmuxPty, execTmux, validateTmuxTarget, type TmuxTarget } from '@/lib/tmux-target';
-import type { IExtReview } from '@/types/ext-review';
-
-/** Return only history not already sent when the bounded tmux capture slides. */
-export const appendedExternalHistory = (previous: string, current: string): string => {
-  if (!previous || !current) return current;
-
-  // KMP prefix lengths find the longest suffix of previous matching the
-  // prefix of current without repeatedly scanning a potentially large capture.
-  const prefix = new Uint32Array(current.length);
-  for (let i = 1, matched = 0; i < current.length; i++) {
-    while (matched > 0 && current[i] !== current[matched]) matched = prefix[matched - 1];
-    if (current[i] === current[matched]) matched++;
-    prefix[i] = matched;
-  }
-
-  let matched = 0;
-  for (let i = Math.max(0, previous.length - current.length); i < previous.length; i++) {
-    while (matched > 0 && previous[i] !== current[matched]) matched = prefix[matched - 1];
-    if (previous[i] === current[matched]) matched++;
-  }
-  return current.slice(matched);
-};
-
-/** Read bounded tmux history only when the registered window has one pane. */
-export const captureExternalHistory = async (review: IExtReview, windowId: string,
-  signal: AbortSignal): Promise<string | null> => {
-  await resolveExtReviewTargets(review, signal);
-  const target = `${review.sessionId}:${windowId}`;
-  const backend = extReviewTmuxTarget(review);
-  const list = async () => (await execTmux(backend, ['list-panes',
-    '-t', target, '-F', '#{pane_id}\t#{window_id}'], { timeout: 5000, signal })).stdout.trim();
-  const before = await list();
-  const match = /^(%\d+)\t(@\d+)$/.exec(before);
-  if (!match || match[2] !== windowId) return null;
-  const { stdout } = await execTmux(backend, ['capture-pane',
-    '-p', '-e', '-S', '-2000', '-E', '-1', '-t', `${target}.${match[1]}`],
-  { timeout: 5000, maxBuffer: 4 * 1024 * 1024, signal });
-  await resolveExtReviewTargets(review, signal);
-  if (await list() !== before) throw new ExtReviewSnapshotRaceError('External pane changed during history capture');
-  return stdout;
-};
 
 export const sendExternalInput = async (backend: TmuxTarget, target: string, data: Uint8Array,
   signal: AbortSignal, webInput = false): Promise<void> => {

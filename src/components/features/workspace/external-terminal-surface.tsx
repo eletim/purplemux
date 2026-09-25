@@ -9,16 +9,10 @@ import ConnectionStatus from '@/components/features/workspace/connection-status'
 import TerminalContainer from '@/components/features/workspace/terminal-container';
 import TerminalKeyBar from '@/components/features/workspace/terminal-key-bar';
 
-type TExternalTerminalSurfaceProps =
-  | { targetId: string; windowId: string; externalTerminalTarget?: never }
-  | { targetId?: never; windowId?: never; externalTerminalTarget: IExternalTerminalTarget };
-
-export default function ExternalTerminalSurface(props: TExternalTerminalSurfaceProps) {
-  const externalTerminalTarget = props.externalTerminalTarget;
-  const targetId = props.targetId;
-  const externalServerId = externalTerminalTarget?.serverId;
-  const externalSessionId = externalTerminalTarget?.sessionId;
-  const windowId = externalTerminalTarget?.windowId ?? props.windowId!;
+export default function ExternalTerminalSurface({
+  externalTerminalTarget,
+}: { externalTerminalTarget: IExternalTerminalTarget }) {
+  const { serverId: externalServerId, sessionId: externalSessionId, windowId } = externalTerminalTarget;
   const keyBarMode = useConfigStore((state) => state.terminalKeyBar);
   const isMobileDevice = useIsMobileDevice();
   const [ctrlArmed, setCtrlArmed] = useState(false);
@@ -58,7 +52,6 @@ export default function ExternalTerminalSurface(props: TExternalTerminalSurfaceP
     isReady,
     theme,
   } = useTerminalSurface({
-    externalTarget: targetId ? { id: targetId, windowId } : undefined,
     externalTerminalTarget,
     onInput: (data, send) => send(applyArmedModifier(data)),
   });
@@ -66,15 +59,12 @@ export default function ExternalTerminalSurface(props: TExternalTerminalSurfaceP
   useEffect(() => {
     if (!isReady) return;
     const { cols, rows } = fit();
-    const connectionKey = externalServerId && externalSessionId
-      ? `${externalServerId}:${externalSessionId}:${windowId}`
-      : `${targetId}:${windowId}`;
+    const connectionKey = `${externalServerId}:${externalSessionId}:${windowId}`;
     connect(connectionKey, cols, rows);
     focus();
     return disconnect;
   }, [
     isReady,
-    targetId,
     windowId,
     externalServerId,
     externalSessionId,
