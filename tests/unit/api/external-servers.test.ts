@@ -5,7 +5,7 @@ import registration from '@/pages/api/cli/external-servers/[serverId]';
 import { ExternalServerError } from '@/lib/external-server-tmux';
 
 const mocks = vi.hoisted(() => ({
-  auth: vi.fn(), session: vi.fn(), register: vi.fn(), list: vi.fn(), unregister: vi.fn(),
+  auth: vi.fn(), session: vi.fn(), register: vi.fn(), list: vi.fn(), discover: vi.fn(), unregister: vi.fn(),
 }));
 vi.mock('@/lib/cli-token', () => ({ verifyCliToken: mocks.auth }));
 vi.mock('@/lib/auth', () => ({ verifyRequestSession: mocks.session }));
@@ -13,6 +13,10 @@ vi.mock('@/lib/external-server-store', () => ({
   registerExternalServer: mocks.register,
   listExternalServers: mocks.list,
   unregisterExternalServer: mocks.unregister,
+}));
+vi.mock('@/lib/external-server-tmux', async (importOriginal) => ({
+  ...await importOriginal<typeof import('@/lib/external-server-tmux')>(),
+  discoverExternalServer: mocks.discover,
 }));
 
 const request = (method: string, body?: unknown) => ({
@@ -38,11 +42,13 @@ describe('external server API', () => {
     const server = { id: 'server-1', name: 'dev', socketPath: '/known/socket', socketIdentity: '1:2' };
     mocks.register.mockResolvedValue(server);
     mocks.list.mockResolvedValue([server]);
+    const inventory = { ...server, exists: true, sessions: [] };
+    mocks.discover.mockResolvedValue(inventory);
     mocks.unregister.mockResolvedValue(true);
 
     for (const [handler, method, status, body] of [
       [collection, 'POST', 201, server],
-      [collection, 'GET', 200, { servers: [server] }],
+      [collection, 'GET', 200, { servers: [inventory] }],
       [registration, 'DELETE', 200, { deleted: true }],
     ] as const) {
       const req = request(method, input);
@@ -54,6 +60,7 @@ describe('external server API', () => {
     }
     expect(mocks.register).toHaveBeenCalledWith({ name: 'dev', socketPath: '/known/socket' });
     expect(mocks.list).toHaveBeenCalledOnce();
+    expect(mocks.discover).toHaveBeenCalledWith(server);
     expect(mocks.unregister).toHaveBeenCalledWith('server-1');
   });
 
