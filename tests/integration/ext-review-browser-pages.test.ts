@@ -133,19 +133,55 @@ describe('external Review browser pages', () => {
 });
 
 describe('external server browser page', () => {
-  it('opens discovered windows through the shared production terminal renderer', async () => {
+  it('groups servers, sessions, and windows while showing availability and ownership', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => response({ servers: [{
       id: 'server-1', name: 'dev', socketPath: '/known/socket', socketIdentity: '1:2:3', exists: true,
-      sessions: [{ id: '$1', name: 'shells', exists: true, attached: false, windows: [
+      sessions: [{ id: '$1', name: 'shells', exists: true, attached: false, owned: false, windows: [
         { id: '@2', name: 'first', index: 0, exists: true, active: true, panes: [] },
         { id: '@4', name: 'second', index: 1, exists: true, active: false, panes: [] },
       ] }],
+    }, {
+      id: 'server-2', name: 'offline', socketPath: '/missing/socket', socketIdentity: '4:5:6', exists: false,
+      sessions: [], unavailableReason: 'Socket disappeared',
     }] })));
     mount(createElement(ExternalServersPage));
 
     expect((await screen.findByTestId('external-terminal')).textContent).toBe('server-1:$1:@2');
+    expect(screen.getByRole('region', { name: 'dev server' })).toBeTruthy();
+    expect(screen.getByRole('region', { name: 'dev / shells session' }).textContent)
+      .toContain('Not owned by PurpleMux');
+    expect(screen.getByRole('navigation', { name: 'dev / shells windows' }).textContent).toBe('firstsecond');
+    expect(screen.getByRole('region', { name: 'offline server' }).textContent)
+      .toContain('Unavailable: Socket disappeared');
+    expect((screen.getByRole('button', { name: 'New Terminal on offline' }) as HTMLButtonElement).disabled).toBe(true);
     fireEvent.click(screen.getByRole('button', { name: 'dev / shells / second' }));
     expect(screen.getByTestId('external-terminal').textContent).toBe('server-1:$1:@4');
+  });
+
+  it('refreshes live additions and deletions and validates selection against the latest inventory', async () => {
+    vi.useFakeTimers();
+    const first = { id: 'server-1', name: 'dev', socketPath: '/known/socket', socketIdentity: '1:2:3',
+      exists: true, sessions: [{ id: '$1', name: 'shells', exists: true, attached: false, owned: false,
+        windows: [{ id: '@2', name: 'first', index: 0, exists: true, active: true, panes: [] }] }] };
+    const added = { ...first, sessions: [{ ...first.sessions[0], windows: [
+      ...first.sessions[0].windows,
+      { id: '@4', name: 'second', index: 1, exists: true, active: false, panes: [] },
+    ] }] };
+    let inventory = first;
+    vi.stubGlobal('fetch', vi.fn(async () => response({ servers: [inventory] })));
+    mount(createElement(ExternalServersPage));
+
+    await act(async () => { await Promise.resolve(); });
+    expect(screen.getByTestId('external-terminal').textContent).toBe('server-1:$1:@2');
+    inventory = added;
+    await act(async () => { await vi.advanceTimersByTimeAsync(5000); });
+    fireEvent.click(screen.getByRole('button', { name: 'dev / shells / second' }));
+    expect(screen.getByTestId('external-terminal').textContent).toBe('server-1:$1:@4');
+
+    inventory = first;
+    await act(async () => { await vi.advanceTimersByTimeAsync(5000); });
+    expect(screen.queryByRole('button', { name: 'dev / shells / second' })).toBeNull();
+    expect(screen.getByTestId('external-terminal').textContent).toBe('server-1:$1:@2');
   });
 
   it('creates a new owned session and opens its returned terminal target', async () => {
@@ -165,6 +201,8 @@ describe('external server browser page', () => {
 
     fireEvent.click(await screen.findByRole('button', { name: 'New Terminal on dev' }));
     await waitFor(() => expect(screen.getByTestId('external-terminal').textContent).toBe('server-1:$2:@3'));
+    expect(screen.getByRole('region', { name: 'dev / purplemux-new session' }).textContent)
+      .toContain('Owned by PurpleMux');
     const creation = fetchMock.mock.calls.find(([, init]) => init?.method === 'POST')!;
     expect(creation[0]).toBe('/api/cli/external-servers/server-1/terminals');
     expect(JSON.parse(String(creation[1]?.body))).toEqual({ requestId: expect.any(String) });

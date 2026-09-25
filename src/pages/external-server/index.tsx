@@ -14,6 +14,7 @@ const ExternalTerminalSurface = dynamic(
   { ssr: false },
 );
 const endpoint = '/api/cli/external-servers';
+const inventoryRefreshInterval = 5000;
 const fetchServers = async (): Promise<{ servers: IExternalServerInventory[] }> => {
   const response = await fetch(endpoint);
   if (!response.ok) throw new Error('Unable to load external tmux servers.');
@@ -22,7 +23,9 @@ const fetchServers = async (): Promise<{ servers: IExternalServerInventory[] }> 
 const requestStorageKey = (serverId: string) => `purplemux-external-terminal-request:${serverId}`;
 
 export default function ExternalServersPage() {
-  const { data, error, mutate } = useSWR(endpoint, fetchServers);
+  const { data, error, mutate } = useSWR(endpoint, fetchServers, {
+    refreshInterval: inventoryRefreshInterval,
+  });
   const [selected, setSelected] = useState<IExternalTerminalTarget | null>(null);
   const [creatingServerId, setCreatingServerId] = useState<string | null>(null);
   const [creationError, setCreationError] = useState<string | null>(null);
@@ -104,29 +107,52 @@ export default function ExternalServersPage() {
         </div>
         <button className="border rounded px-3 py-2" onClick={() => void mutate()}>Refresh</button>
       </div>
-      {data && <div aria-label="External tmux servers" className="flex flex-wrap gap-2">
-        {data.servers.map((server) => <button key={server.id} className="border rounded px-3 py-2"
-          disabled={!server.exists || creatingServerId !== null}
-          onClick={() => void createTerminal(server.id)}>
-          {creatingServerId === server.id ? 'Creating…' : `New Terminal on ${server.name}`}
-        </button>)}
-      </div>}
       {creationError && <p role="alert">{creationError}</p>}
       {error ? <p role="alert">{error.message}</p> : !data ? <p role="status">Loading external servers…</p>
-        : availableTargets.length === 0 ? <p role="status">No external windows are available.</p>
-          : <>
-            <nav aria-label="External tmux windows" className="flex flex-wrap gap-2">
-              {availableTargets.map(({ target, serverName, sessionName, windowName }) => {
-                const key = `${target.serverId}:${target.sessionId}:${target.windowId}`;
-                const isActive = active?.serverId === target.serverId
-                  && active.sessionId === target.sessionId && active.windowId === target.windowId;
-                return <button key={key} aria-pressed={isActive} className="border rounded px-3 py-2"
-                  onClick={() => setSelected(target)}>{serverName} / {sessionName} / {windowName}</button>;
-              })}
-            </nav>
-            {active && <ExternalTerminalSurface key={`${active.serverId}:${active.sessionId}:${active.windowId}`}
+        : <>
+          {data.servers.length === 0 ? <p role="status">No external servers are registered.</p>
+            : <div aria-label="External tmux servers" className="space-y-4">
+              {data.servers.map((server) => <section key={server.id} aria-label={`${server.name} server`}
+                className="border rounded p-4 space-y-3">
+                <div className="flex items-center justify-between gap-4">
+                  <div>
+                    <h2 className="text-lg font-semibold">{server.name}</h2>
+                    <p className="text-sm break-all">{server.socketPath}</p>
+                  </div>
+                  <button className="border rounded px-3 py-2"
+                    disabled={!server.exists || creatingServerId !== null}
+                    onClick={() => void createTerminal(server.id)}>
+                    {creatingServerId === server.id ? 'Creating…' : `New Terminal on ${server.name}`}
+                  </button>
+                </div>
+                {!server.exists
+                  ? <p role="status">Unavailable: {server.unavailableReason ?? 'External tmux server is unavailable'}</p>
+                  : server.sessions.length === 0 ? <p role="status">No sessions are running.</p>
+                    : <div className="space-y-3">{server.sessions.map((session) => (
+                      <section key={session.id} aria-label={`${server.name} / ${session.name} session`}
+                        className="border rounded p-3 space-y-2">
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                          <h3 className="font-medium">{session.name}</h3>
+                          <span className="text-sm">{session.owned ? 'Owned by PurpleMux' : 'Not owned by PurpleMux'}</span>
+                        </div>
+                        <nav aria-label={`${server.name} / ${session.name} windows`} className="flex flex-wrap gap-2">
+                          {session.windows.map((window) => {
+                            const target = { serverId: server.id, sessionId: session.id, windowId: window.id };
+                            const isActive = active?.serverId === target.serverId
+                              && active.sessionId === target.sessionId && active.windowId === target.windowId;
+                            return <button key={window.id} aria-label={`${server.name} / ${session.name} / ${window.name}`}
+                              aria-pressed={isActive} className="border rounded px-3 py-2"
+                              onClick={() => setSelected(target)}>{window.name}</button>;
+                          })}
+                        </nav>
+                      </section>
+                    ))}</div>}
+              </section>)}
+            </div>}
+          {availableTargets.length === 0 ? <p role="status">No external windows are available.</p>
+            : active && <ExternalTerminalSurface key={`${active.serverId}:${active.sessionId}:${active.windowId}`}
               externalTerminalTarget={active} />}
-          </>}
+        </>}
     </main>
   );
 }
