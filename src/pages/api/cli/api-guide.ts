@@ -74,6 +74,8 @@ POST /api/cli/external-servers/<serverId>/terminals
   CLI equivalent: purplemux external-server create-terminal SERVER_ID [--name NAME]
   Registration alone never owns pre-existing sessions. Default lifecycle actions may
   manage only matching owned records; unowned destruction requires explicit policy.
+  If ownership persistence fails, the exact newly created session is rolled back so a
+  retry cannot accumulate a live unowned terminal.
 
 DELETE /api/cli/external-servers/<serverId>
   Removes only the registration, including when the server is unavailable.

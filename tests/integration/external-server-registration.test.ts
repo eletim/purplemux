@@ -68,6 +68,25 @@ describe('external tmux server registrations', () => {
       .toEqual(['$0:external', `$1:${created?.name}`]);
   });
 
+  it('rolls back an exact created session when ownership persistence fails, then retries cleanly', async () => {
+    vi.spyOn(os, 'homedir').mockReturnValue(directory);
+    vi.resetModules();
+    const store = await import('@/lib/external-server-store');
+    const server = await store.registerExternalServer({ name: 'external', socketPath: socket });
+    const rename = vi.spyOn(fs, 'rename').mockRejectedValueOnce(new Error('storage unavailable'));
+
+    await expect(store.createExternalTerminal(server.id, { name: 'recoverable' }))
+      .rejects.toThrow('storage unavailable');
+    expect(tmux('list-sessions', '-F', '#{session_name}')).toBe('external');
+    expect((await store.listExternalServers())[0].ownedTerminals).toEqual([]);
+
+    rename.mockRestore();
+    const retried = await store.createExternalTerminal(server.id, { name: 'recoverable' });
+    expect(tmux('list-sessions', '-F', '#{session_name}').split('\n'))
+      .toEqual(['external', 'recoverable']);
+    expect((await store.listExternalServers())[0].ownedTerminals).toEqual([retried?.provenance]);
+  });
+
   it('rejects the managed socket and fails closed after socket replacement', async () => {
     vi.stubEnv('TMUX_TMPDIR', directory);
     const managedDirectory = path.join(directory, `tmux-${process.getuid?.()}`);

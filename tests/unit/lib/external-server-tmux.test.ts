@@ -11,7 +11,8 @@ vi.mock('@/lib/external-tmux-socket', async (importOriginal) => ({
   frozenExternalTmuxSocketIdentity: mocks.identity,
 }));
 
-import { createExternalTerminal, discoverExternalServer } from '@/lib/external-server-tmux';
+import { createExternalTerminal, discoverExternalServer,
+  rollbackExternalTerminalCreation } from '@/lib/external-server-tmux';
 
 describe('external tmux runtime decoding', () => {
   beforeEach(() => {
@@ -42,6 +43,26 @@ describe('external tmux runtime decoding', () => {
       'new-session', '-d', '-P', '-F', '#{session_id}\t#{session_created}\t#{window_id}',
       '-s', 'my terminal',
     ], expect.objectContaining({ timeout: 5000 }));
+  });
+
+  it('rolls back only the exact session identity created by the failed operation', async () => {
+    mocks.exec.mockResolvedValue({ stdout: '', stderr: '' });
+    await rollbackExternalTerminalCreation({
+      id: 'server', name: 'dev', socketPath: '/known/socket', socketIdentity: '1:2:3',
+    }, { sessionId: '$4', sessionCreated: '1750000001' });
+
+    expect(mocks.exec).toHaveBeenCalledWith(expect.anything(), [
+      'if-shell', '-F', '-t', '$4',
+      '#{&&:#{==:#{session_id},$4},#{==:#{session_created},1750000001}}',
+      'kill-session -t $4',
+      'display-message -p purplemux-terminal-identity-mismatch',
+    ], expect.objectContaining({ timeout: 5000 }));
+
+    mocks.exec.mockResolvedValue({ stdout: 'purplemux-terminal-identity-mismatch\n', stderr: '' });
+    await expect(rollbackExternalTerminalCreation({
+      id: 'server', name: 'dev', socketPath: '/known/socket', socketIdentity: '1:2:3',
+    }, { sessionId: '$4', sessionCreated: '1750000001' }))
+      .rejects.toThrow('changed before ownership rollback');
   });
 
   it('marks only an exact persisted session identity as owned', async () => {

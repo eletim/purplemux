@@ -168,6 +168,28 @@ export const createExternalTerminal = async (
   }
 };
 
+/** Compensate a failed ownership commit without ever targeting a replacement session. */
+export const rollbackExternalTerminalCreation = async (
+  server: IExternalServer,
+  terminal: Pick<ICreatedExternalTerminal, 'sessionId' | 'sessionCreated'>,
+  signal?: AbortSignal,
+): Promise<void> => {
+  if (!/^\$\d+$/.test(terminal.sessionId) || !/^\d+$/.test(terminal.sessionCreated)) {
+    throw new ExternalServerError('Invalid external tmux terminal rollback identity');
+  }
+  const mismatch = 'purplemux-terminal-identity-mismatch';
+  const identityMatches = `#{&&:#{==:#{session_id},${terminal.sessionId}},`
+    + `#{==:#{session_created},${terminal.sessionCreated}}}`;
+  const { stdout } = await execTmux(externalServerTmuxTarget(server), [
+    'if-shell', '-F', '-t', terminal.sessionId, identityMatches,
+    `kill-session -t ${terminal.sessionId}`,
+    `display-message -p ${mismatch}`,
+  ], { timeout: 5000, signal });
+  if (stdout.trim() === mismatch) {
+    throw new ExternalServerError('External tmux terminal changed before ownership rollback');
+  }
+};
+
 const readExternalTmuxField = async (backend: TmuxTarget, target: string, field: string,
   signal?: AbortSignal): Promise<string> => {
   const { stdout } = await execTmuxBuffer(backend,

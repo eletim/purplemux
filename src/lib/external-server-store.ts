@@ -3,7 +3,7 @@ import os from 'os';
 import path from 'path';
 import { nanoid } from 'nanoid';
 import { createExternalTerminal as createTmuxExternalTerminal,
-  freezeExternalServer } from '@/lib/external-server-tmux';
+  freezeExternalServer, rollbackExternalTerminalCreation } from '@/lib/external-server-tmux';
 import { stopExternalTerminals } from '@/lib/external-terminal-resources';
 import type { ICreatedExternalTerminal, ICreateExternalTerminal,
   IExternalServer, IRegisterExternalServer } from '@/types/external-server';
@@ -73,7 +73,17 @@ export const createExternalTerminal = (
     ...servers[index],
     ownedTerminals: [...(servers[index].ownedTerminals ?? []), provenance],
   };
-  await write(servers);
+  try {
+    await write(servers);
+  } catch (writeError) {
+    try {
+      await rollbackExternalTerminalCreation(servers[index], created);
+    } catch (rollbackError) {
+      throw new AggregateError([writeError, rollbackError],
+        'Failed to persist ownership and roll back the created external terminal');
+    }
+    throw writeError;
+  }
   return { ...created, provenance };
 });
 
