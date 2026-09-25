@@ -1,13 +1,9 @@
-import { execFile as execFileCallback } from 'child_process';
-import { promisify } from 'util';
 import * as pty from 'node-pty';
-import { assertExtReviewSocketIdentity, ExtReviewSnapshotRaceError, resolveExtReviewTargets } from '@/lib/ext-review-tmux';
-import { exitCopyMode } from '@/lib/tmux';
+import { extReviewTmuxTarget, ExtReviewError, ExtReviewSnapshotRaceError, resolveExtReviewTargets } from '@/lib/ext-review-tmux';
 import { buildShellEnv } from '@/lib/shell-env';
 import { PRISTINE_ENV } from '@/lib/pristine-env';
+import { execTmux, tmuxAttachArgs } from '@/lib/tmux-target';
 import type { IExtReview } from '@/types/ext-review';
-
-const execFile = promisify(execFileCallback);
 
 /** Return only history not already sent when the bounded tmux capture slides. */
 export const appendedExternalHistory = (previous: string, current: string): string => {
@@ -35,12 +31,13 @@ export const captureExternalHistory = async (review: IExtReview, windowId: strin
   signal: AbortSignal): Promise<string | null> => {
   await resolveExtReviewTargets(review, signal);
   const target = `${review.sessionId}:${windowId}`;
-  const list = async () => (await execFile('tmux', ['-N', '-S', review.socketPath, 'list-panes',
+  const backend = extReviewTmuxTarget(review);
+  const list = async () => (await execTmux(backend, ['list-panes',
     '-t', target, '-F', '#{pane_id}\t#{window_id}'], { timeout: 5000, signal })).stdout.trim();
   const before = await list();
   const match = /^(%\d+)\t(@\d+)$/.exec(before);
   if (!match || match[2] !== windowId) return null;
-  const { stdout } = await execFile('tmux', ['-N', '-S', review.socketPath, 'capture-pane',
+  const { stdout } = await execTmux(backend, ['capture-pane',
     '-p', '-e', '-S', '-2000', '-E', '-1', '-t', `${target}.${match[1]}`],
   { timeout: 5000, maxBuffer: 4 * 1024 * 1024, signal });
   await resolveExtReviewTargets(review, signal);
@@ -50,25 +47,23 @@ export const captureExternalHistory = async (review: IExtReview, windowId: strin
 
 export const sendExternalInput = async (review: IExtReview, target: string, data: Uint8Array,
   signal: AbortSignal, webInput = false): Promise<void> => {
+  const backend = extReviewTmuxTarget(review);
   if (webInput) {
-    await assertExtReviewSocketIdentity(review, signal);
-    await exitCopyMode(target, review.socketPath);
+    await execTmux(backend, ['copy-mode', '-q', '-t', target], { timeout: 5000, signal }).catch((error) => {
+      if (error instanceof ExtReviewError) throw error;
+    });
   }
   // -H sends bytes to the exact target pane, without feeding tmux client keys.
   for (let offset = 0; offset < data.length; offset += 1024) {
-    await assertExtReviewSocketIdentity(review, signal);
     const bytes = data.subarray(offset, offset + 1024);
-    await execFile('tmux', ['-N', '-S', review.socketPath, 'send-keys', '-H', '-t', target,
+    await execTmux(backend, ['send-keys', '-H', '-t', target,
       ...Array.from(bytes, (byte) => byte.toString(16).padStart(2, '0'))], { timeout: 5000, signal });
-    await assertExtReviewSocketIdentity(review, signal);
   }
 };
 
 export const areExternalClientsOnWindow = async (review: IExtReview, pids: number[], windowId: string): Promise<boolean> => {
-  await assertExtReviewSocketIdentity(review);
-  const { stdout } = await execFile('tmux', ['-N', '-S', review.socketPath, 'list-clients', '-F',
+  const { stdout } = await execTmux(extReviewTmuxTarget(review), ['list-clients', '-F',
     '#{client_pid}\t#{window_id}'], { timeout: 5000 });
-  await assertExtReviewSocketIdentity(review);
   const clients = new Set(stdout.trim().split('\n'));
   return pids.every((pid) => clients.has(`${pid}\t${windowId}`));
 };
@@ -85,8 +80,8 @@ export class ExternalWindowGuard {
   private pending: { marker: string; resolve: (safe: boolean) => void; timer: ReturnType<typeof setTimeout> } | null = null;
 
   constructor(review: IExtReview, private readonly windowId: string) {
-    this.client = pty.spawn('tmux', ['-u', '-C', '-N', '-S', review.socketPath, 'attach-session',
-      '-f', 'read-only,ignore-size,no-output', '-t', `${review.sessionId}:${windowId}`], {
+    this.client = pty.spawn('tmux', tmuxAttachArgs(extReviewTmuxTarget(review),
+      `${review.sessionId}:${windowId}`, { noOutput: true }), {
       name: 'xterm-256color', cols: 80, rows: 24,
       cwd: PRISTINE_ENV.HOME || '/', env: buildShellEnv(),
     });

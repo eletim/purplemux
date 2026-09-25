@@ -1,4 +1,4 @@
-import { execFile as execFileCb, spawn } from 'child_process';
+import { execFile as execFileCb } from 'child_process';
 import fs from 'fs/promises';
 import { promisify } from 'util';
 import path from 'path';
@@ -8,20 +8,20 @@ import { buildShellLaunchCommand } from '@/lib/shell-env';
 import { createLogger } from '@/lib/logger';
 import { isLinux } from '@/lib/platform';
 import { getProcessArgs } from '@/lib/process-utils';
+import { execTmux, managedTmuxTarget, spawnTmux } from '@/lib/tmux-target';
 
 const log = createLogger('terminal');
 
 const execFile = promisify(execFileCb);
 
-const TMUX_SOCKET = 'purple';
 const TMUX_CONFIG_PATH = path.join(process.env.__PMUX_APP_DIR_UNPACKED || process.env.__PMUX_APP_DIR || process.cwd(), 'src', 'config', 'tmux.conf');
 const CMD_TIMEOUT = 5000;
 
 export const listSessions = async (): Promise<string[]> => {
   try {
-    const { stdout } = await execFile(
-      'tmux',
-      ['-L', TMUX_SOCKET, 'ls', '-F', '#{session_name}'],
+    const { stdout } = await execTmux(
+      managedTmuxTarget,
+      ['ls', '-F', '#{session_name}'],
       { timeout: CMD_TIMEOUT },
     );
     return stdout
@@ -36,9 +36,9 @@ export const listSessions = async (): Promise<string[]> => {
 
 export const listSessionsForSafetyCheck = async (): Promise<string[]> => {
   try {
-    const { stdout } = await execFile(
-      'tmux',
-      ['-L', TMUX_SOCKET, 'ls', '-F', '#{session_name}'],
+    const { stdout } = await execTmux(
+      managedTmuxTarget,
+      ['ls', '-F', '#{session_name}'],
       { timeout: CMD_TIMEOUT },
     );
     return stdout
@@ -65,11 +65,10 @@ export const createSession = async (
   // tmux 서버 global env cache를 우회하기 위해 `env -i $SHELL -l`을 명령으로 직접 넘긴다.
   // execFile의 env 옵션은 tmux 서버가 이미 떠있는 경우 무시되므로 의존하지 않는다.
   const shellCmd = buildShellLaunchCommand();
-  await execFile(
-    'tmux',
+  await execTmux(
+    managedTmuxTarget,
     [
       '-u',
-      '-L', TMUX_SOCKET,
       '-f', TMUX_CONFIG_PATH,
       'new-session', '-d',
       '-s', name,
@@ -99,9 +98,9 @@ const isMissingTmuxTargetError = (error: unknown): boolean =>
 
 const hasSessionStrict = async (name: string): Promise<boolean> => {
   try {
-    await execFile(
-      'tmux',
-      ['-L', TMUX_SOCKET, 'has-session', '-t', name],
+    await execTmux(
+      managedTmuxTarget,
+      ['has-session', '-t', name],
       { timeout: CMD_TIMEOUT },
     );
     return true;
@@ -113,9 +112,9 @@ const hasSessionStrict = async (name: string): Promise<boolean> => {
 
 const getSessionPanePidStrict = async (sessionName: string): Promise<number | null> => {
   try {
-    const { stdout } = await execFile(
-      'tmux',
-      ['-L', TMUX_SOCKET, 'display-message', '-p', '-t', sessionName, '#{pane_pid}'],
+    const { stdout } = await execTmux(
+      managedTmuxTarget,
+      ['display-message', '-p', '-t', sessionName, '#{pane_pid}'],
       { timeout: CMD_TIMEOUT },
     );
     const pid = parseInt(stdout.trim(), 10);
@@ -151,9 +150,9 @@ export const killSession = async (name: string): Promise<void> => {
   }
 
   try {
-    await execFile(
-      'tmux',
-      ['-L', TMUX_SOCKET, 'kill-session', '-t', name],
+    await execTmux(
+      managedTmuxTarget,
+      ['kill-session', '-t', name],
       { timeout: CMD_TIMEOUT },
     );
   } catch {
@@ -179,9 +178,9 @@ export const killSession = async (name: string): Promise<void> => {
     }
   }
   try {
-    await execFile(
-      'tmux',
-      ['-L', TMUX_SOCKET, 'kill-session', '-t', name],
+    await execTmux(
+      managedTmuxTarget,
+      ['kill-session', '-t', name],
       { timeout: CMD_TIMEOUT },
     );
   } catch {
@@ -261,9 +260,9 @@ export const getSessionCwd = async (sessionName: string): Promise<string | null>
     if (cwd) return cwd;
   }
   try {
-    const { stdout } = await execFile(
-      'tmux',
-      ['-L', TMUX_SOCKET, 'display-message', '-p', '-t', sessionName, '#{pane_current_path}'],
+    const { stdout } = await execTmux(
+      managedTmuxTarget,
+      ['display-message', '-p', '-t', sessionName, '#{pane_current_path}'],
       { timeout: CMD_TIMEOUT },
     );
     return stdout.trim() || null;
@@ -274,9 +273,9 @@ export const getSessionCwd = async (sessionName: string): Promise<string | null>
 
 export const getSessionPanePid = async (sessionName: string): Promise<number | null> => {
   try {
-    const { stdout } = await execFile(
-      'tmux',
-      ['-L', TMUX_SOCKET, 'display-message', '-p', '-t', sessionName, '#{pane_pid}'],
+    const { stdout } = await execTmux(
+      managedTmuxTarget,
+      ['display-message', '-p', '-t', sessionName, '#{pane_pid}'],
       { timeout: CMD_TIMEOUT },
     );
     const pid = parseInt(stdout.trim(), 10);
@@ -288,9 +287,9 @@ export const getSessionPanePid = async (sessionName: string): Promise<number | n
 
 export const applyConfig = async (): Promise<void> => {
   try {
-    await execFile(
-      'tmux',
-      ['-L', TMUX_SOCKET, 'source-file', TMUX_CONFIG_PATH],
+    await execTmux(
+      managedTmuxTarget,
+      ['source-file', TMUX_CONFIG_PATH],
       { timeout: CMD_TIMEOUT },
     );
   } catch {
@@ -308,9 +307,9 @@ export const getPaneCurrentCommand = async (
   sessionName: string,
 ): Promise<string | null> => {
   try {
-    const { stdout } = await execFile(
-      'tmux',
-      ['-L', TMUX_SOCKET, 'list-panes', '-t', sessionName, '-F', '#{pane_current_command}'],
+    const { stdout } = await execTmux(
+      managedTmuxTarget,
+      ['list-panes', '-t', sessionName, '-F', '#{pane_current_command}'],
       { timeout: CMD_TIMEOUT },
     );
     return stdout.trim() || null;
@@ -328,9 +327,9 @@ export interface IPaneInfo {
 
 export const getAllPanesInfo = async (): Promise<Map<string, IPaneInfo>> => {
   try {
-    const { stdout } = await execFile(
-      'tmux',
-      ['-L', TMUX_SOCKET, 'list-panes', '-a', '-F', '#{session_name}\t#{pane_current_command}\t#{pane_current_path}\t#{pane_pid}\t#{window_activity}'],
+    const { stdout } = await execTmux(
+      managedTmuxTarget,
+      ['list-panes', '-a', '-F', '#{session_name}\t#{pane_current_command}\t#{pane_current_path}\t#{pane_pid}\t#{window_activity}'],
       { timeout: CMD_TIMEOUT },
     );
     const result = new Map<string, IPaneInfo>();
@@ -371,9 +370,9 @@ export const checkTerminalProcess = async (
 
 export const getPaneTitle = async (sessionName: string): Promise<string | null> => {
   try {
-    const { stdout } = await execFile(
-      'tmux',
-      ['-L', TMUX_SOCKET, 'display-message', '-p', '-t', sessionName, '#{pane_title}'],
+    const { stdout } = await execTmux(
+      managedTmuxTarget,
+      ['display-message', '-p', '-t', sessionName, '#{pane_title}'],
       { timeout: CMD_TIMEOUT },
     );
     return stdout.trim() || null;
@@ -382,10 +381,10 @@ export const getPaneTitle = async (sessionName: string): Promise<string | null> 
   }
 };
 
-export const exitCopyMode = async (sessionName: string, socketPath?: string): Promise<void> => {
-  await execFile(
-    'tmux',
-    [...(socketPath ? ['-N', '-S', socketPath] : ['-L', TMUX_SOCKET]), 'copy-mode', '-q', '-t', sessionName],
+export const exitCopyMode = async (sessionName: string): Promise<void> => {
+  await execTmux(
+    managedTmuxTarget,
+    ['copy-mode', '-q', '-t', sessionName],
     { timeout: CMD_TIMEOUT },
   ).catch(() => {});
 };
@@ -395,9 +394,9 @@ export const sendKeys = async (
   command: string,
 ): Promise<void> => {
   await exitCopyMode(sessionName);
-  await execFile(
-    'tmux',
-    ['-L', TMUX_SOCKET, 'send-keys', '-t', sessionName, command, 'Enter'],
+  await execTmux(
+    managedTmuxTarget,
+    ['send-keys', '-t', sessionName, command, 'Enter'],
     { timeout: CMD_TIMEOUT },
   );
 };
@@ -411,15 +410,15 @@ export const sendKeysSeparated = async (
   text: string,
 ): Promise<void> => {
   await exitCopyMode(sessionName);
-  await execFile(
-    'tmux',
-    ['-L', TMUX_SOCKET, 'send-keys', '-t', sessionName, text],
+  await execTmux(
+    managedTmuxTarget,
+    ['send-keys', '-t', sessionName, text],
     { timeout: CMD_TIMEOUT },
   );
   await sleep(50);
-  await execFile(
-    'tmux',
-    ['-L', TMUX_SOCKET, 'send-keys', '-t', sessionName, 'Enter'],
+  await execTmux(
+    managedTmuxTarget,
+    ['send-keys', '-t', sessionName, 'Enter'],
     { timeout: CMD_TIMEOUT },
   );
 };
@@ -429,9 +428,9 @@ export const sendRawKeys = async (
   keys: string,
 ): Promise<void> => {
   await exitCopyMode(sessionName);
-  await execFile(
-    'tmux',
-    ['-L', TMUX_SOCKET, 'send-keys', '-t', sessionName, keys],
+  await execTmux(
+    managedTmuxTarget,
+    ['send-keys', '-t', sessionName, keys],
     { timeout: CMD_TIMEOUT },
   );
 };
@@ -443,14 +442,14 @@ export const sendLiteralText = async (
 ): Promise<void> => {
   await exitCopyMode(sessionName);
   const bufferName = `pmux-input-${nanoid()}`;
+  const child = await spawnTmux(
+    managedTmuxTarget,
+    ['load-buffer', '-b', bufferName, '-'],
+    { stdio: ['pipe', 'ignore', 'pipe'], timeout: CMD_TIMEOUT },
+  );
   await new Promise<void>((resolve, reject) => {
-    const child = spawn(
-      'tmux',
-      ['-L', TMUX_SOCKET, 'load-buffer', '-b', bufferName, '-'],
-      { stdio: ['pipe', 'ignore', 'pipe'], timeout: CMD_TIMEOUT },
-    );
     let stderr = '';
-    child.stderr.on('data', (chunk) => {
+    child.stderr?.on('data', (chunk) => {
       stderr += String(chunk);
     });
     child.once('error', reject);
@@ -458,18 +457,18 @@ export const sendLiteralText = async (
       if (code === 0) resolve();
       else reject(new Error(stderr.trim() || `tmux load-buffer exited with code ${code}`));
     });
-    child.stdin.end(text);
+    child.stdin?.end(text);
   });
   try {
-    await execFile(
-      'tmux',
-      ['-L', TMUX_SOCKET, 'paste-buffer', '-d', '-r', '-b', bufferName, '-t', sessionName],
+    await execTmux(
+      managedTmuxTarget,
+      ['paste-buffer', '-d', '-r', '-b', bufferName, '-t', sessionName],
       { timeout: CMD_TIMEOUT },
     );
   } catch (error) {
-    await execFile(
-      'tmux',
-      ['-L', TMUX_SOCKET, 'delete-buffer', '-b', bufferName],
+    await execTmux(
+      managedTmuxTarget,
+      ['delete-buffer', '-b', bufferName],
       { timeout: CMD_TIMEOUT },
     ).catch(() => {});
     throw error;
@@ -482,9 +481,9 @@ export const sendKeySequence = async (
   keys: string[],
 ): Promise<void> => {
   await exitCopyMode(sessionName);
-  await execFile(
-    'tmux',
-    ['-L', TMUX_SOCKET, 'send-keys', '-t', sessionName, ...keys],
+  await execTmux(
+    managedTmuxTarget,
+    ['send-keys', '-t', sessionName, ...keys],
     { timeout: CMD_TIMEOUT },
   );
 };
@@ -495,20 +494,20 @@ export const sendBracketedPaste = async (
   content: string,
 ): Promise<void> => {
   await exitCopyMode(sessionName);
-  await execFile(
-    'tmux',
-    ['-L', TMUX_SOCKET, 'send-keys', '-t', sessionName, '-l', `\x1b[200~${content}\x1b[201~`],
+  await execTmux(
+    managedTmuxTarget,
+    ['send-keys', '-t', sessionName, '-l', `\x1b[200~${content}\x1b[201~`],
     { timeout: CMD_TIMEOUT },
   );
-  await execFile(
-    'tmux',
-    ['-L', TMUX_SOCKET, 'send-keys', '-t', sessionName, 'Enter'],
+  await execTmux(
+    managedTmuxTarget,
+    ['send-keys', '-t', sessionName, 'Enter'],
     { timeout: CMD_TIMEOUT },
   );
   await new Promise((resolve) => setTimeout(resolve, 600));
-  await execFile(
-    'tmux',
-    ['-L', TMUX_SOCKET, 'send-keys', '-t', sessionName, 'Enter'],
+  await execTmux(
+    managedTmuxTarget,
+    ['send-keys', '-t', sessionName, 'Enter'],
     { timeout: CMD_TIMEOUT },
   );
 };
@@ -527,10 +526,9 @@ export const getPaneDetailInfo = async (
   sessionName: string,
 ): Promise<IPaneDetailInfo> => {
   try {
-    const { stdout } = await execFile(
-      'tmux',
+    const { stdout } = await execTmux(
+      managedTmuxTarget,
       [
-        '-L', TMUX_SOCKET,
         'display-message', '-p', '-t', sessionName,
         '#{pane_current_path}\t#{pane_current_command}\t#{pane_pid}\t#{pane_width}\t#{pane_height}\t#{session_created}',
       ],
@@ -568,9 +566,9 @@ const cleanCommandLine = (raw: string): string => {
 
 export const killServer = async (): Promise<void> => {
   try {
-    await execFile(
-      'tmux',
-      ['-L', TMUX_SOCKET, 'kill-server'],
+    await execTmux(
+      managedTmuxTarget,
+      ['kill-server'],
       { timeout: CMD_TIMEOUT },
     );
     log.debug('tmux server killed');
@@ -581,9 +579,9 @@ export const killServer = async (): Promise<void> => {
 
 export const capturePaneContent = async (sessionName: string): Promise<string | null> => {
   try {
-    const { stdout } = await execFile(
-      'tmux',
-      ['-L', TMUX_SOCKET, 'capture-pane', '-p', '-t', sessionName],
+    const { stdout } = await execTmux(
+      managedTmuxTarget,
+      ['capture-pane', '-p', '-t', sessionName],
       { timeout: CMD_TIMEOUT },
     );
     return stdout;
@@ -597,9 +595,9 @@ export const capturePaneContentWithHistory = async (
   historyLines: number,
 ): Promise<string | null> => {
   try {
-    const { stdout } = await execFile(
-      'tmux',
-      ['-L', TMUX_SOCKET, 'capture-pane', '-p', '-S', `-${historyLines}`, '-t', sessionName],
+    const { stdout } = await execTmux(
+      managedTmuxTarget,
+      ['capture-pane', '-p', '-S', `-${historyLines}`, '-t', sessionName],
       { timeout: CMD_TIMEOUT },
     );
     return stdout;
