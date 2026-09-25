@@ -165,6 +165,31 @@ describe('shared terminal path for discovered external windows', () => {
     expect(connected.output()).not.toContain('SECOND_WINDOW');
   });
 
+  it('rejects a client moved to another session linked to the authorized window', async () => {
+    const connected = await connect();
+    await vi.waitFor(() => expect(connected.output()).toContain('FIRST_WINDOW'));
+    const clientTty = tmux('list-clients', '-F', '#{client_flags}\t#{client_tty}')
+      .split('\n').find((line) => !line.includes('no-output'))?.split('\t')[1];
+    expect(clientTty).toBeTruthy();
+
+    tmux('new-session', '-d', '-s', 'linked', '-n', 'placeholder', 'sleep 300');
+    const linkedSessionId = tmux('display-message', '-p', '-t', 'linked:', '#{session_id}');
+    tmux('link-window', '-s', '$0:@0', '-t', `${linkedSessionId}:1`);
+    tmux('kill-window', '-t', `${linkedSessionId}:0`);
+    expect(tmux('display-message', '-p', '-t', `${linkedSessionId}:@0`,
+      '#{session_id}:#{window_id}')).toBe(`${linkedSessionId}:@0`);
+
+    tmux('switch-client', '-c', clientTty!, '-t', `${linkedSessionId}:@0`);
+    const approvedSize = tmux('display-message', '-p', '-t', '$0:@0', '#{pane_width}:#{pane_height}');
+    connected.ws.send(encodeStdin("printf 'CROSS_SESSION_INPUT\\n'\r"));
+    connected.ws.send(encodeResize(120, 50));
+
+    await vi.waitFor(() => expect(connected.closed()?.code).toBe(1008));
+    expect(tmux('capture-pane', '-p', '-t', '$0:@0')).not.toContain('CROSS_SESSION_INPUT');
+    expect(tmux('display-message', '-p', '-t', '$0:@0', '#{pane_width}:#{pane_height}'))
+      .toBe(approvedSize);
+  });
+
   it('does not follow an exact window after that window is deleted', async () => {
     const connected = await connect();
     await vi.waitFor(() => expect(connected.output()).toContain('FIRST_WINDOW'));

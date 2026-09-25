@@ -4,7 +4,7 @@ import os from 'os';
 import path from 'path';
 import { execFileSync } from 'child_process';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { sendExternalInput, areExternalClientsOnWindow, captureExternalHistory, appendedExternalHistory } from '@/lib/external-target-terminal';
+import { sendExternalInput, areExternalClientsOnTarget, captureExternalHistory, appendedExternalHistory } from '@/lib/external-target-terminal';
 import { extReviewTmuxTarget, freezeExtReviewTargets } from '@/lib/ext-review-tmux';
 import type { IExtReview } from '@/types/ext-review';
 
@@ -43,7 +43,7 @@ describe('external terminal socket identity', () => {
     const backend = extReviewTmuxTarget(review);
     await expect(sendExternalInput(backend, '$0:@0', new TextEncoder().encode('secret'),
       new AbortController().signal)).rejects.toThrow('External review socket identity changed');
-    await expect(areExternalClientsOnWindow(backend, [123], '@0'))
+    await expect(areExternalClientsOnTarget(backend, [123], '$0', '@0'))
       .rejects.toThrow('External review socket identity changed');
   });
 });

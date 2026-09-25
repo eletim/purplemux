@@ -62,17 +62,18 @@ export const sendExternalInput = async (backend: TmuxTarget, target: string, dat
   }
 };
 
-export const areExternalClientsOnWindow = async (
+export const areExternalClientsOnTarget = async (
   backend: TmuxTarget,
   pids: number[],
+  sessionId: string,
   windowId: string,
   signal?: AbortSignal,
 ): Promise<boolean> => {
   const { stdout } = await execTmux(backend, ['list-clients', '-F',
-    '#{client_pid}\t#{window_id}'], { timeout: 5000, signal });
+    '#{client_pid}\t#{session_id}\t#{window_id}'], { timeout: 5000, signal });
   await validateTmuxTarget(backend, signal);
   const clients = new Set(stdout.trim().split('\n'));
-  return pids.every((pid) => clients.has(`${pid}\t${windowId}`));
+  return pids.every((pid) => clients.has(`${pid}\t${sessionId}\t${windowId}`));
 };
 
 /** A control client records window changes in tmux's own event order. */

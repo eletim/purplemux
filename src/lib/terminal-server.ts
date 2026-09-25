@@ -16,7 +16,7 @@ import { createLogger } from '@/lib/logger';
 import { loadExtReviewDefinition } from '@/lib/ext-review-store';
 import { assertExtReviewSocketIdentity, captureExtReviewWindow, extReviewTmuxTarget, ExtReviewSnapshotRaceError, resolveExtReviewTargets } from '@/lib/ext-review-tmux';
 import { externalTerminals } from '@/lib/external-terminal-resources';
-import { sendExternalInput, areExternalClientsOnWindow, captureExternalHistory, appendedExternalHistory, ExternalWindowGuard } from '@/lib/external-target-terminal';
+import { sendExternalInput, areExternalClientsOnTarget, captureExternalHistory, appendedExternalHistory, ExternalWindowGuard } from '@/lib/external-target-terminal';
 import { createExternalCaptureScheduler } from '@/lib/external-capture-scheduler';
 import type { IExtReview } from '@/types/ext-review';
 import { attachTmuxPty, managedTmuxTarget, type TmuxTarget } from '@/lib/tmux-target';
@@ -298,6 +298,7 @@ export const handleConnection = async (ws: WebSocket, request: IncomingMessage, 
   let tmuxTarget: TmuxTarget = managedTmuxTarget;
   let connectionKind: 'managed' | 'legacy-external' | 'external-server' = 'managed';
   let externalDefinition: IExtReview | undefined;
+  let authorizedExternalSessionId = '';
   let externalWindowGuard: ExternalWindowGuard | undefined;
   let webStdinQueue = Promise.resolve();
   let externalInputQueue = Promise.resolve();
@@ -310,12 +311,14 @@ export const handleConnection = async (ws: WebSocket, request: IncomingMessage, 
 
   const externalWindowIsSafe = (): Promise<boolean> => {
     const validation = externalValidationQueue.then(async (wasSafe) => {
-      if (!wasSafe || connectionKind === 'managed' || !externalWindowGuard || !externalWindowId) return false;
+      if (!wasSafe || connectionKind === 'managed' || !externalWindowGuard
+        || !authorizedExternalSessionId || !externalWindowId) return false;
       const pids = [externalWindowGuard.pid];
       if (ptyProcess) pids.push(ptyProcess.pid);
-      return await areExternalClientsOnWindow(
+      return await areExternalClientsOnTarget(
         tmuxTarget,
         pids,
+        authorizedExternalSessionId,
         externalWindowId,
         externalAbort.signal,
       ) && await externalWindowGuard.check();
@@ -491,6 +494,7 @@ export const handleConnection = async (ws: WebSocket, request: IncomingMessage, 
     }
     if (ws.readyState !== WebSocket.OPEN) return;
     connectionKind = 'external-server';
+    authorizedExternalSessionId = externalSessionId;
     sessionName = `${externalSessionId}:${externalWindowId}`;
     currentCols = urlCols > 0 ? urlCols : (pending.resize?.cols || 80);
     currentRows = urlRows > 0 ? urlRows : (pending.resize?.rows || 24);
@@ -546,6 +550,7 @@ export const handleConnection = async (ws: WebSocket, request: IncomingMessage, 
     tmuxTarget = extReviewTmuxTarget(definition);
     connectionKind = 'legacy-external';
     externalDefinition = definition;
+    authorizedExternalSessionId = definition.sessionId;
     currentCols = urlCols > 0 ? urlCols : (pending.resize?.cols || 80);
     currentRows = urlRows > 0 ? urlRows : (pending.resize?.rows || 24);
     try {
@@ -557,9 +562,10 @@ export const handleConnection = async (ws: WebSocket, request: IncomingMessage, 
         externalAbort.signal,
       );
       if (!await externalWindowGuard.check()
-        || !await areExternalClientsOnWindow(
+        || !await areExternalClientsOnTarget(
           tmuxTarget,
           [externalWindowGuard.pid],
+          authorizedExternalSessionId,
           externalWindowId,
           externalAbort.signal,
         )) {
