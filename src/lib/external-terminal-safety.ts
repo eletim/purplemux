@@ -3,6 +3,19 @@ import { buildShellEnv } from '@/lib/shell-env';
 import { PRISTINE_ENV } from '@/lib/pristine-env';
 import { attachTmuxPty, execTmux, validateTmuxTarget, type TmuxTarget } from '@/lib/tmux-target';
 
+export const captureExternalHistory = async (
+  backend: TmuxTarget,
+  target: string,
+  historyLines: number,
+  signal?: AbortSignal,
+): Promise<string> => {
+  const { stdout } = await execTmux(backend, [
+    'capture-pane', '-p', '-e', '-S', `-${historyLines}`, '-E', '-1', '-t', target,
+  ], { timeout: 5000, signal });
+  await validateTmuxTarget(backend, signal);
+  return stdout.replaceAll('\n', '\r\n');
+};
+
 export const sendExternalInput = async (backend: TmuxTarget, target: string, data: Uint8Array,
   signal: AbortSignal, webInput = false): Promise<void> => {
   if (webInput) {

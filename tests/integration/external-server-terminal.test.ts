@@ -110,8 +110,16 @@ describe('shared terminal path for discovered external windows', () => {
   });
 
   it('shares display, input, web input, resize, scrollback, reconnect, and switching behavior', async () => {
+    tmux('send-keys', '-t', '$0:@0',
+      "for n in {1..45}; do printf 'PREEXISTING_%03d\\n' \"$n\"; done", 'Enter');
+    await vi.waitFor(() => expect(tmux('capture-pane', '-p', '-S', '-50', '-t', '$0:@0'))
+      .toContain('PREEXISTING_045'));
+    expect(tmux('capture-pane', '-p', '-t', '$0:@0')).not.toContain('PREEXISTING_001');
+
     const first = await connect();
     await vi.waitFor(() => expect(first.output()).toContain('FIRST_WINDOW'));
+    expect(first.output()).toContain('PREEXISTING_001');
+    expect(first.output()).toContain('PREEXISTING_045');
     expect(tmux('list-clients', '-F', '#{client_flags}').split('\n')
       .every((flags) => flags.includes('read-only'))).toBe(true);
 
@@ -134,15 +142,17 @@ describe('shared terminal path for discovered external windows', () => {
     ).toBe('100:39'));
 
     first.ws.send(encodeWebStdin(
-      "for n in {1..45}; do printf 'HISTORY_%03d\\n' \"$n\"; sleep 0.01; done\r",
+      "for n in {1..45}; do printf 'LIVE_HISTORY_%03d\\n' \"$n\"; sleep 0.01; done\r",
     ));
-    await vi.waitFor(() => expect(first.output()).toContain('HISTORY_045'));
-    expect(first.output()).toContain('HISTORY_001');
+    await vi.waitFor(() => expect(first.output()).toContain('LIVE_HISTORY_045'));
+    expect(first.output()).toContain('LIVE_HISTORY_001');
+    expect(tmux('capture-pane', '-p', '-t', '$0:@0')).not.toContain('LIVE_HISTORY_001');
     first.ws.close(1000);
     await vi.waitFor(() => expect(first.closed()?.code).toBe(1000));
 
     const resumed = await connect();
-    await vi.waitFor(() => expect(resumed.output()).toContain('HISTORY_045'));
+    await vi.waitFor(() => expect(resumed.output()).toContain('LIVE_HISTORY_045'));
+    expect(resumed.output()).toContain('LIVE_HISTORY_001');
     resumed.ws.close(1000);
     await vi.waitFor(() => expect(resumed.closed()?.code).toBe(1000));
 

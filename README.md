@@ -237,7 +237,7 @@ The default is HTTP. Always use HTTPS when exposing the app externally:
 | `workspaces.json` | Workspace layouts, tabs, directories |
 | `ext-reviews.json` | External review definitions; deleting it removes only the definitions, not external tmux resources |
 | `external-servers.json` | External server registrations and terminal creation history; deleting it unregisters the servers without stopping tmux resources |
-| `external-terminal-marker-key` | Secret used to authenticate owned external-terminal markers; deleting it makes existing marked sessions unowned |
+| `external-terminal-marker-key` | Secret used to authenticate owned external-terminal markers; deleting it takes effect after restart and then makes existing marked sessions unowned |
 | `vapid-keys.json` | Web Push VAPID keys (auto-generated) |
 | `push-subscriptions.json` | Push subscription data |
 | `hooks/` | User-defined hooks |
@@ -268,13 +268,12 @@ Back up `external-servers.json` and `external-terminal-marker-key` together to p
         ▼                ▼                     ▼
 ┌─────────────────────────────────────────────────────────────┐
 │  System                                                     │
-│  tmux (purple socket)         Agent CLIs                    │
-│  ┌────────┐ ┌────────┐       ┌────────────────────────────┐ │
-│  │Session1│ │Session2│  ...  │ Claude Code                │ │
-│  │ (shell)│ │ (shell)│       │   ~/.claude/projects/*.jsonl │ │
-│  └────────┘ └────────┘       │ Codex                      │ │
-│                              │   ~/.codex/sessions/*.jsonl │ │
-│                              └────────────────────────────┘ │
+│  tmux backends                 Agent CLIs                  │
+│  ┌────────────────────────┐   ┌────────────────────────────┐ │
+│  │ managed purple socket  │   │ Claude Code / Codex        │ │
+│  │ registered external    │   │ session JSONL files         │ │
+│  │ tmux sockets           │   │                            │ │
+│  └────────────────────────┘   └────────────────────────────┘ │
 └─────────────────────────────────────────────────────────────┘
 ```
 
@@ -284,7 +283,7 @@ Back up `external-servers.json` and `external-terminal-marker-key` together to p
 
 **Timeline** — Watches JSONL session logs under `~/.claude/projects/` and `~/.codex/sessions/`, parses new lines on change, and streams structured entries to the browser.
 
-**tmux isolation** — Uses a dedicated `purple` socket, completely separate from your existing tmux. No prefix key, no status bar.
+**tmux backends** — Managed workspaces use a dedicated `purple` socket with no prefix key or status bar. Explicitly registered external tmux sockets remain separate backends, but their discovered windows can be opened as guarded terminals.
 
 **Auto recovery** — On server start, restores previous Claude sessions via `claude --resume {sessionId}`. Codex sessions can be resumed from the session list or with `codex resume {sessionId}`.
 

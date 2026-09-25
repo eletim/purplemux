@@ -39,7 +39,7 @@ Every persistent piece of state purplemux keeps — settings, layouts, session h
 └── stats/                   # Claude usage statistics cache
 ```
 
-Files containing secrets (config, tokens, layouts, VAPID keys, lock) are written with mode `0600` via a `tmpFile → rename` pattern.
+Files containing secrets (config, tokens, layouts, VAPID keys, lock) are written with mode `0600`. Store-managed JSON writes generally use a `tmpFile → rename` pattern; `external-terminal-marker-key` is instead created directly and exclusively with `O_EXCL`, then cached until restart.
 
 ## Top-level files
 
@@ -49,7 +49,7 @@ Files containing secrets (config, tokens, layouts, VAPID keys, lock) are written
 | `workspaces.json` | Workspace index, sidebar width / collapsed state, active workspace ID | Yes — wipes all workspaces and tabs |
 | `ext-reviews.json` | Fixed external-review definitions | Yes — removes only the definitions; external tmux resources are untouched |
 | `external-servers.json` | External-server registrations and terminal-creation idempotency/audit history | Yes — unregisters every server; external tmux resources are untouched |
-| `external-terminal-marker-key` | Generated secret that authenticates ownership markers on created external sessions | Not without accepting that existing marked sessions will become unowned; a different key is generated when next needed |
+| `external-terminal-marker-key` | Generated secret that authenticates ownership markers on created external sessions; created directly with `O_EXCL` rather than `tmpFile → rename` / `withLock`, with a read-after-race fallback, and cached until restart | Not without accepting that existing marked sessions become unowned after restart; deleting it while PurpleMux runs does not replace the cached key, and a different key is generated when next needed after restart |
 | `hooks.json` | Claude Code `--settings` mapping (event → script) + `statusLine.command` | Yes — regenerated on next start |
 | `status-hook.sh`, `statusline.sh` | POST to `/api/status/hook` and `/api/status/statusline` with `x-pmux-token` | Yes — regenerated on next start |
 | `rate-limits.json` | Latest Claude statusline JSON: `ts`, `model`, `five_hour`, `seven_day`, `context`, `cost` | Yes — repopulates as Claude runs |

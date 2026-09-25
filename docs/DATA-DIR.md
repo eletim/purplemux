@@ -2,7 +2,7 @@
 
 All persistent state (settings, layouts, session history, caches) lives under `~/.purplemux/`. See [CLAUDE.md §15](../CLAUDE.md) — memory/variables and `localStorage` are not used.
 
-File permissions are `0600` for anything containing a secret (config, tokens, layouts, VAPID keys, lock file). Writes go through a `tmpFile → rename` pattern plus a `withLock` promise queue (in-process) to avoid interleaved writes.
+File permissions are `0600` for anything containing a secret (config, tokens, layouts, VAPID keys, lock file). Store-managed JSON writes generally use a `tmpFile → rename` pattern plus a `withLock` promise queue (in-process) to avoid interleaving. The external-terminal marker key is the exception described below.
 
 ---
 
@@ -91,7 +91,7 @@ Legacy migrations: `tabs.json` → `layout.json` → `workspaces/{wsId}/layout.j
 
 - `ext-reviews.json` stores fixed external-review definitions. Deleting it removes the definitions only; it never changes the external tmux server, sessions, windows, or panes.
 - `external-servers.json` stores external-server registrations and terminal-creation idempotency/audit history. Deleting it unregisters every server without stopping external tmux resources.
-- `external-terminal-marker-key` is the generated 32-byte secret that authenticates ownership markers on created external sessions. Deleting it regenerates a different key when next needed, so all previously marked sessions are treated as unowned.
+- `external-terminal-marker-key` is the generated 32-byte secret that authenticates ownership markers on created external sessions. It is created directly with exclusive `O_EXCL` semantics (`flag: 'wx'`) and a read-after-race fallback, not `tmpFile → rename` or `withLock`, then cached for the process lifetime. Deleting it while PurpleMux is running does not change the cached key; after restart, a different key is generated when next needed and previously marked sessions are treated as unowned.
 
 A full-directory backup includes all three files. Restore `external-servers.json` and `external-terminal-marker-key` together to preserve external-terminal ownership; restored external reviews and registrations remain usable only if their frozen socket and tmux identities still match.
 

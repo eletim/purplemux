@@ -14,7 +14,8 @@ import { encodeStdout } from '@/lib/terminal-protocol';
 import { reconcileTabCwd } from '@/lib/layout-store';
 import { createLogger } from '@/lib/logger';
 import { externalTerminals } from '@/lib/external-terminal-resources';
-import { sendExternalInput, areExternalClientsOnTarget, ExternalWindowGuard } from '@/lib/external-terminal-safety';
+import { captureExternalHistory, sendExternalInput,
+  areExternalClientsOnTarget, ExternalWindowGuard } from '@/lib/external-terminal-safety';
 import { attachTmuxPty, managedTmuxTarget, type TmuxTarget } from '@/lib/tmux-target';
 import { getExternalServer } from '@/lib/external-server-store';
 import { resolveExternalServerWindow } from '@/lib/external-server-tmux';
@@ -34,6 +35,7 @@ const BACKPRESSURE_HIGH = 1024 * 1024;
 const BACKPRESSURE_LOW = 256 * 1024;
 const THROTTLE_WINDOW_MS = 500;
 const THROTTLE_FLUSH_INTERVAL_MS = 250;
+const EXTERNAL_SCROLLBACK_LINES = 5000;
 
 const textDecoder = new TextDecoder();
 
@@ -298,6 +300,7 @@ export const handleConnection = async (ws: WebSocket, request: IncomingMessage, 
   let currentRows = 24;
   let externalValidationQueue = Promise.resolve(true);
   let initialExternalOutput = '';
+  let initialExternalHistory = '';
   let initialExternalOutputDisposable: pty.IDisposable | undefined;
 
   const externalWindowIsSafe = (): Promise<boolean> => {
@@ -512,6 +515,12 @@ export const handleConnection = async (ws: WebSocket, request: IncomingMessage, 
           },
         },
       );
+      initialExternalHistory = await captureExternalHistory(
+        tmuxTarget,
+        sessionName,
+        EXTERNAL_SCROLLBACK_LINES,
+        externalAbort.signal,
+      );
       if (!await externalWindowIsSafe()) throw new Error('External window guard unavailable');
     } catch (err) {
       externalWindowGuard?.stop();
@@ -697,6 +706,7 @@ export const handleConnection = async (ws: WebSocket, request: IncomingMessage, 
   );
 
   initialExternalOutputDisposable?.dispose();
+  if (initialExternalHistory) sendCheckedStdout(initialExternalHistory);
   if (initialExternalOutput) sendCheckedStdout(initialExternalOutput);
 
   conn.disposables.push(
