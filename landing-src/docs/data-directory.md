@@ -14,6 +14,9 @@ Every persistent piece of state purplemux keeps — settings, layouts, session h
 ~/.purplemux/
 ├── config.json              # app config (auth, theme, locale, …)
 ├── workspaces.json          # workspace list + sidebar state
+├── ext-reviews.json         # external review definitions
+├── external-servers.json    # external server registrations + creation history
+├── external-terminal-marker-key # external-terminal marker authentication secret
 ├── workspaces/
 │   └── {wsId}/
 │       ├── layout.json           # pane/tab tree
@@ -44,6 +47,9 @@ Files containing secrets (config, tokens, layouts, VAPID keys, lock) are written
 |---|---|---|
 | `config.json` | scrypt-hashed login password, HMAC session secret, theme, locale, font size, notification toggle, editor URL, network access, custom CSS | Yes — re-runs onboarding |
 | `workspaces.json` | Workspace index, sidebar width / collapsed state, active workspace ID | Yes — wipes all workspaces and tabs |
+| `ext-reviews.json` | Fixed external-review definitions | Yes — removes only the definitions; external tmux resources are untouched |
+| `external-servers.json` | External-server registrations and terminal-creation idempotency/audit history | Yes — unregisters every server; external tmux resources are untouched |
+| `external-terminal-marker-key` | Generated secret that authenticates ownership markers on created external sessions | Not without accepting that existing marked sessions will become unowned; a different key is generated when next needed |
 | `hooks.json` | Claude Code `--settings` mapping (event → script) + `statusLine.command` | Yes — regenerated on next start |
 | `status-hook.sh`, `statusline.sh` | POST to `/api/status/hook` and `/api/status/statusline` with `x-pmux-token` | Yes — regenerated on next start |
 | `rate-limits.json` | Latest Claude statusline JSON: `ts`, `model`, `five_hour`, `seven_day`, `context`, `cost` | Yes — repopulates as Claude runs |
@@ -117,6 +123,8 @@ Delete the whole folder to force a recompute on the next stats request.
 | One workspace's layout | `workspaces/{wsId}/layout.json` |
 | Usage statistics | `stats/` |
 | Push subscriptions | `push-subscriptions.json` |
+| External review definitions | `ext-reviews.json` (external tmux resources are untouched) |
+| External server registrations | `external-servers.json` (external tmux resources are untouched) |
 | Stuck "already running" | `pmux.lock` (only if no process alive) |
 | Everything (factory reset) | `~/.purplemux/` |
 
@@ -130,7 +138,7 @@ The whole directory is plain JSON plus a few shell scripts. To back up:
 tar czf purplemux-backup.tgz -C ~ .purplemux
 ```
 
-To restore on a fresh machine, untar and start purplemux. Hook scripts will be rewritten with the new server's port; everything else (workspaces, history, settings) lifts over as-is.
+To restore on a fresh machine, untar and start purplemux. Hook scripts will be rewritten with the new server's port; everything else (workspaces, history, settings) lifts over as-is. Keep `external-servers.json` and `external-terminal-marker-key` together to preserve external-terminal ownership. Restored external reviews and registrations are usable only when their frozen socket and tmux identities still match.
 
 {% call callout('warning') %}
 Don't restore `pmux.lock` — it's tied to a specific PID and will block startup. Exclude it: `--exclude pmux.lock`.

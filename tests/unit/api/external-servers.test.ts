@@ -114,6 +114,17 @@ describe('external server API', () => {
     });
   });
 
+  it('reports a reconciled duplicate terminal name as a known client error', async () => {
+    mocks.createTerminal.mockRejectedValue(new ExternalServerError('duplicate session: work'));
+    const res = response();
+
+    await terminals(request('POST', { requestId: 'request-1', name: 'work' }),
+      res as unknown as NextApiResponse);
+
+    expect(res.status).toHaveBeenCalledWith(400);
+    expect(res.json).toHaveBeenCalledWith({ error: 'duplicate session: work' });
+  });
+
   it('maps validation, missing registration, and storage failures', async () => {
     mocks.register.mockRejectedValue(new ExternalServerError('Invalid socket'));
     let res = response();

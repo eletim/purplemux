@@ -3,7 +3,7 @@ import { verifyCliToken } from '@/lib/cli-token';
 
 const GUIDE = `# purplemux CLI HTTP API
 
-All endpoints require header \`x-pmux-token: <PMUX_TOKEN>\`.
+Unless stated otherwise below, endpoints require header \`x-pmux-token: <PMUX_TOKEN>\`.
 
 ## Workspaces
 

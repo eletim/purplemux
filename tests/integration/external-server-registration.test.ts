@@ -81,6 +81,19 @@ describe('external tmux server registrations', () => {
     }
   });
 
+  it('preserves a duplicate session-name error when reconciliation finds no created session', async () => {
+    vi.spyOn(os, 'homedir').mockReturnValue(directory);
+    vi.resetModules();
+    const store = await import('@/lib/external-server-store');
+    const server = await store.registerExternalServer({ name: 'external', socketPath: socket });
+
+    await expect(store.createExternalTerminal(server.id,
+      { requestId: 'duplicate-name', name: 'external' }))
+      .rejects.toThrow('duplicate session: external');
+    expect((await store.listExternalServers())[0].terminalCreations).toEqual([]);
+    expect(tmux('list-sessions', '-F', '#{session_name}')).toBe('external');
+  });
+
   it('creates a marked session and records its history without adopting existing resources', async () => {
     vi.spyOn(os, 'homedir').mockReturnValue(directory);
     vi.resetModules();

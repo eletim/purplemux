@@ -235,9 +235,14 @@ The default is HTTP. Always use HTTPS when exposing the app externally:
 |---|---|
 | `config.json` | Authentication (hashed) and app settings |
 | `workspaces.json` | Workspace layouts, tabs, directories |
+| `ext-reviews.json` | External review definitions; deleting it removes only the definitions, not external tmux resources |
+| `external-servers.json` | External server registrations and terminal creation history; deleting it unregisters the servers without stopping tmux resources |
+| `external-terminal-marker-key` | Secret used to authenticate owned external-terminal markers; deleting it makes existing marked sessions unowned |
 | `vapid-keys.json` | Web Push VAPID keys (auto-generated) |
 | `push-subscriptions.json` | Push subscription data |
 | `hooks/` | User-defined hooks |
+
+Back up `external-servers.json` and `external-terminal-marker-key` together to preserve external-terminal ownership across a restore. `ext-reviews.json` is included in a full data-directory backup, but restored definitions are usable only when their frozen external tmux targets still match.
 
 ## Architecture
 

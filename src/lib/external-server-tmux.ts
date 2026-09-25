@@ -23,6 +23,13 @@ export class ExternalTerminalOutcomeUnknownError extends ExternalServerError {
   }
 }
 
+const knownExternalTerminalCreationError = (error: unknown): ExternalServerError | undefined => {
+  const duplicate = error instanceof Error
+    ? error.message.match(/(?:^|\n)(duplicate session: [^\r\n]+)(?:\r?\n|$)/)
+    : null;
+  return duplicate ? new ExternalServerError(duplicate[1]) : undefined;
+};
+
 export const validateExternalServerInput = (input: IRegisterExternalServer): void => {
   if (!input || typeof input.name !== 'string' || !input.name.trim()
     || /[\n\r\0]/.test(input.name) || typeof input.socketPath !== 'string'
@@ -225,8 +232,9 @@ export const createExternalTerminal = async (
     await assertExternalServerSocketIdentity(server, signal);
     return { serverId: server.id, sessionId: fields[0], sessionCreated: fields[1],
       windowId: fields[2], name, provenance, createdNow: true };
-  } catch {
+  } catch (error) {
     signal?.throwIfAborted();
+    const knownError = knownExternalTerminalCreationError(error);
     const afterFailure = await discoverExternalServer(server, signal);
     const created = afterFailure.sessions.find((session) => session.provenance?.requestId === input.requestId);
     if (created?.windows[0]) {
@@ -254,6 +262,7 @@ export const createExternalTerminal = async (
         signal?.throwIfAborted();
       }
     }
+    if (knownError) throw knownError;
     throw new ExternalTerminalOutcomeUnknownError(input.requestId);
   }
 };
