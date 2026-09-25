@@ -80,7 +80,14 @@ describe('external tmux server registrations', () => {
       pid: expect.any(Number), currentPath: expect.any(String), index: 0,
     }));
 
-    tmux('new-session', '-d', '-s', 'new-session', 'sleep 300');
+    tmux('link-window', '-d', '-s', '$0:@0', '-t', '$0:4');
+    inventory = await discoverExternalServer(server);
+    expect(inventory.sessions[0].windows.filter(({ id }) => id === '@0').map(({ index }) => index))
+      .toEqual([0, 4]);
+
+    const unusualPath = path.join(directory, '日-é-😀-path\twith\na newline');
+    await fs.mkdir(unusualPath);
+    tmux('new-session', '-d', '-s', 'new-session', '-c', unusualPath, 'sleep 300');
     tmux('new-window', '-d', '-t', '$0', '-n', 'fresh-window', 'sleep 300');
     inventory = await discoverExternalServer(server);
     expect(inventory.sessions.map(({ id, name }) => ({ id, name }))).toEqual([
@@ -88,11 +95,19 @@ describe('external tmux server registrations', () => {
     ]);
     expect(inventory.sessions[0].windows.map(({ id, name }) => ({ id, name }))).toContainEqual(
       { id: '@2', name: 'fresh-window' });
+    expect(inventory.sessions[1].windows[0].panes[0].currentPath).toBe(unusualPath);
 
     tmux('kill-window', '-t', '$0:@2');
     inventory = await discoverExternalServer(server);
     expect(inventory.sessions[0].windows.some(({ id }) => id === '@2')).toBe(false);
     expect(tmux('list-windows', '-t', '$0', '-F', '#{window_id}').split('\n')).not.toContain('@2');
+
+    tmux('set-option', '-g', 'exit-empty', 'off');
+    tmux('kill-session', '-a', '-t', '$0');
+    tmux('kill-session', '-t', '$0');
+    inventory = await discoverExternalServer(server);
+    expect(inventory).toMatchObject({ exists: true, sessions: [] });
+    expect(inventory).not.toHaveProperty('unavailableReason');
 
     tmux('kill-server');
     inventory = await discoverExternalServer(server);

@@ -64,12 +64,16 @@ export const freezeExternalServer = async (
   }
 };
 
-const INVENTORY_FORMAT = [
-  '#{session_id}', '#{session_name}', '#{session_attached}',
-  '#{window_id}', '#{window_name}', '#{window_index}', '#{window_active}',
-  '#{pane_id}', '#{pane_index}', '#{pane_active}', '#{pane_pid}',
-  '#{pane_current_command}', '#{pane_current_path}', '#{pane_dead}',
-].join('\t');
+const INVENTORY_FIELDS = [
+  'session_id', 'session_name', 'session_attached',
+  'window_id', 'window_name', 'window_index', 'window_active',
+  'pane_id', 'pane_index', 'pane_active', 'pane_pid',
+  'pane_current_command', 'pane_current_path', 'pane_dead',
+] as const;
+
+// tmux's n: modifier reports UTF-8 byte length. Length-prefix every field because
+// valid paths may contain any delimiter except NUL, including tabs and newlines.
+const INVENTORY_FORMAT = INVENTORY_FIELDS.map((field) => `#{n:${field}}:#{${field}}`).join('');
 
 const flag = (value: string): boolean => {
   if (value === '0') return false;
@@ -84,11 +88,38 @@ const integer = (value: string): number => {
 
 const attached = (value: string): boolean => integer(value) > 0;
 
+const parseInventoryRecords = (stdout: string): string[][] => {
+  const records: string[][] = [];
+  let offset = 0;
+  while (offset < stdout.length) {
+    const fields: string[] = [];
+    for (let field = 0; field < INVENTORY_FIELDS.length; field += 1) {
+      const colon = stdout.indexOf(':', offset);
+      if (colon === -1) throw new ExternalServerError('Invalid external tmux runtime inventory');
+      const byteLength = integer(stdout.slice(offset, colon));
+      offset = colon + 1;
+      const start = offset;
+      let consumed = 0;
+      while (consumed < byteLength && offset < stdout.length) {
+        const codePoint = stdout.codePointAt(offset);
+        if (codePoint === undefined) break;
+        const character = String.fromCodePoint(codePoint);
+        consumed += Buffer.byteLength(character);
+        offset += character.length;
+      }
+      if (consumed !== byteLength) throw new ExternalServerError('Invalid external tmux runtime inventory');
+      fields.push(stdout.slice(start, offset));
+    }
+    if (stdout[offset] !== '\n') throw new ExternalServerError('Invalid external tmux runtime inventory');
+    offset += 1;
+    records.push(fields);
+  }
+  return records;
+};
+
 const parseExternalServerInventory = (server: IExternalServer, stdout: string): IExternalServerInventory => {
   const sessions = new Map<string, IExternalTmuxSession>();
-  for (const line of stdout.trim() ? stdout.trimEnd().split('\n') : []) {
-    const fields = line.split('\t');
-    if (fields.length !== 14) throw new ExternalServerError('Invalid external tmux runtime inventory');
+  for (const fields of parseInventoryRecords(stdout)) {
     const [sessionId, sessionName, sessionAttached, windowId, windowName, windowIndex,
       windowActive, paneId, paneIndex, paneActive, panePid, currentCommand, currentPath, paneDead] = fields;
     if (!/^\$\d+$/.test(sessionId) || !/^@\d+$/.test(windowId) || !/^%\d+$/.test(paneId)) {
@@ -103,12 +134,13 @@ const parseExternalServerInventory = (server: IExternalServer, stdout: string): 
       throw new ExternalServerError('External tmux runtime changed during discovery');
     }
 
-    let window = session.windows.find((candidate) => candidate.id === windowId);
+    const linkIndex = integer(windowIndex);
+    let window = session.windows.find((candidate) => candidate.index === linkIndex);
     if (!window) {
-      window = { id: windowId, name: windowName, index: integer(windowIndex), exists: true,
+      window = { id: windowId, name: windowName, index: linkIndex, exists: true,
         active: flag(windowActive), panes: [] };
       session.windows.push(window);
-    } else if (window.name !== windowName || window.index !== integer(windowIndex)
+    } else if (window.id !== windowId || window.name !== windowName
       || window.active !== flag(windowActive)) {
       throw new ExternalServerError('External tmux runtime changed during discovery');
     }
@@ -120,6 +152,9 @@ const parseExternalServerInventory = (server: IExternalServer, stdout: string): 
   }
   return { ...server, exists: true, sessions: [...sessions.values()] };
 };
+
+const isZeroSessionFailure = (error: unknown): boolean => error instanceof Error
+  && /no current target|no sessions/.test(error.message);
 
 /** Discover current resources only; this never persists targets or invokes a creating tmux command. */
 export const discoverExternalServer = async (
@@ -134,6 +169,19 @@ export const discoverExternalServer = async (
     return parseExternalServerInventory(server, stdout);
   } catch (error) {
     signal?.throwIfAborted();
+    if (isZeroSessionFailure(error)) {
+      try {
+        const { stdout } = await execTmux(externalServerTmuxTarget(server),
+          ['display-message', '-p', '#{pid}'], { timeout: 5000, signal });
+        if (!/^\d+\n?$/.test(stdout)) throw new ExternalServerError('External tmux server is unavailable');
+        await assertExternalServerSocketIdentity(server, signal);
+        return { ...server, exists: true, sessions: [] };
+      } catch (probeError) {
+        signal?.throwIfAborted();
+        return { ...server, exists: false, sessions: [], unavailableReason: probeError instanceof Error
+          ? probeError.message : 'External tmux server is unavailable' };
+      }
+    }
     return { ...server, exists: false, sessions: [], unavailableReason: error instanceof Error
       ? error.message : 'External tmux server is unavailable' };
   }
