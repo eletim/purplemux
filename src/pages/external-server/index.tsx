@@ -8,8 +8,8 @@ import type { IExternalTerminalTarget } from '@/types/terminal';
 import { requireAuth } from '@/lib/require-auth';
 import { loadMessagesServer } from '@/lib/load-messages';
 
-const ExternalTargetTerminal = dynamic(
-  () => import('@/components/features/ext-review/external-target-terminal'),
+const ExternalTerminalSurface = dynamic(
+  () => import('@/components/features/workspace/external-terminal-surface'),
   { ssr: false },
 );
 const endpoint = '/api/cli/external-servers';
@@ -73,7 +73,7 @@ export default function ExternalServersPage() {
                   onClick={() => setSelected(target)}>{serverName} / {sessionName} / {windowName}</button>;
               })}
             </nav>
-            {active && <ExternalTargetTerminal key={`${active.serverId}:${active.sessionId}:${active.windowId}`}
+            {active && <ExternalTerminalSurface key={`${active.serverId}:${active.sessionId}:${active.windowId}`}
               externalTerminalTarget={active} />}
           </>}
     </main>
