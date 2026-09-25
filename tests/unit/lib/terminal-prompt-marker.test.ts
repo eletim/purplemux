@@ -207,41 +207,47 @@ describe('terminal prompt markers', () => {
     const advancedOne = snapshotPromptRows(createBuffer(['two', 'three', 'four', 'five', 'six']), 0, 5);
 
     expect(getNewlyVisiblePromptRows(
-      { viewportY: 10, rows: previous }, { viewportY: 13, rows: advancedThree },
+      previous, advancedThree, 3,
     ).map((row) => row.text.trimEnd()))
       .toEqual(['six', 'seven', 'eight']);
     expect(getNewlyVisiblePromptRows(
-      { viewportY: 10, rows: previous }, { viewportY: 12, rows: advancedTwo },
+      previous, advancedTwo, 2,
     ).map((row) => row.text.trimEnd()))
       .toEqual(['six', 'seven']);
     expect(getNewlyVisiblePromptRows(
-      { viewportY: 10, rows: previous }, { viewportY: 11, rows: advancedOne },
+      previous, advancedOne, 1,
     ).map((row) => row.text.trimEnd()))
       .toEqual(['six']);
     expect(getNewlyVisiblePromptRows(
-      { viewportY: 13, rows: advancedThree }, { viewportY: 13, rows: advancedThree },
+      advancedThree, advancedThree, 0,
     )).toEqual([]);
     expect(getNewlyVisiblePromptRows(
-      { viewportY: 10, rows: previous },
-      {
-        viewportY: 13,
-        rows: snapshotPromptRows(
-          createBuffer(['unrelated', 'redraw', 'without', 'validated', 'overlap']), 0, 5,
-        ),
-      },
+      previous,
+      snapshotPromptRows(
+        createBuffer(['unrelated', 'redraw', 'without', 'validated', 'overlap']), 0, 5,
+      ),
+      3,
     )).toEqual([]);
     const threeRowScreen = snapshotPromptRows(createBuffer(['six', 'seven', 'eight']), 0, 3);
     expect(getNewlyVisiblePromptRows(
-      { viewportY: 10, rows: threeRowScreen }, { viewportY: 10, rows: threeRowScreen },
+      threeRowScreen, threeRowScreen, 0,
     )).toEqual([]);
   });
 
-  it('uses row displacement when repeated content makes multiple overlaps possible', () => {
+  it('uses known displacement when repeated content makes multiple overlaps possible', () => {
     const repeatedRows = snapshotPromptRows(createBuffer(['', '', '', '', '']), 0, 5);
 
     expect(getNewlyVisiblePromptRows(
-      { viewportY: 20, rows: repeatedRows }, { viewportY: 21, rows: repeatedRows },
+      repeatedRows, repeatedRows, 1,
     )).toHaveLength(1);
+  });
+
+  it('accepts a full three-row redraw with no overlapping rows', () => {
+    const previous = snapshotPromptRows(createBuffer(['one', 'two', 'three']), 0, 3);
+    const current = snapshotPromptRows(createBuffer(['four', 'five', 'six']), 0, 3);
+
+    expect(getNewlyVisiblePromptRows(previous, current, 3).map((row) => row.text))
+      .toEqual(['four', 'five', 'six']);
   });
 
   it('does not return a partial block when loading the next rows fails', async () => {
@@ -255,30 +261,23 @@ describe('terminal prompt markers', () => {
     })).resolves.toBeNull();
   });
 
-  it('restores the measured final displacement after a copy-mode re-entry no-op', async () => {
+  it('restores exactly the measured number of one-row scrolls', async () => {
     const targetRows = snapshotPromptRows(createBuffer(['one', 'two', 'three']), 0, 3);
     const otherRows = snapshotPromptRows(createBuffer(['four', 'five', 'six']), 0, 3);
-    let currentY = 15;
-    let needsReentry = true;
-    const requestedRows: number[] = [];
+    let remaining = 5;
+    let scrolls = 0;
 
     await expect(restorePromptViewport({
-      targetViewport: { viewportY: 10, rows: targetRows },
-      readViewport: () => ({
-        viewportY: currentY,
-        rows: currentY === 10 ? targetRows : otherRows,
-      }),
-      scrollUp: async (rows) => {
-        requestedRows.push(rows);
-        if (needsReentry) {
-          needsReentry = false;
-        } else {
-          currentY -= rows;
-        }
+      targetRows,
+      displacement: 5,
+      readRows: () => remaining === 0 ? targetRows : otherRows,
+      scrollUpOneRow: async () => {
+        scrolls++;
+        remaining--;
+        return true;
       },
-      maxAttempts: 7,
     })).resolves.toBe(true);
-    expect(requestedRows).toEqual([3, 3, 2]);
+    expect(scrolls).toBe(5);
   });
 
   it('keeps a wrapped logical line intact across three-row loads', async () => {

@@ -271,17 +271,14 @@ const useTerminal = ({ readOnly = false, theme, fontSize = DEFAULT_FONT_SIZE, li
 
         const screen = terminal.element.querySelector<HTMLElement>('.xterm-screen');
 
-        const readVisibleViewport = () => {
+        const readVisibleRows = () => {
           const buffer = terminal.buffer.active;
           const viewportY = buffer.viewportY;
-          return {
+          return snapshotPromptRows(
+            buffer,
             viewportY,
-            rows: snapshotPromptRows(
-              buffer,
-              viewportY,
-              Math.min(buffer.length, viewportY + terminal.rows),
-            ),
-          };
+            Math.min(buffer.length, viewportY + terminal.rows),
+          );
         };
 
         const dispatchWheel = (direction: 'up' | 'down', precise = false): void => {
@@ -299,22 +296,22 @@ const useTerminal = ({ readOnly = false, theme, fontSize = DEFAULT_FONT_SIZE, li
           }));
         };
 
-        const waitForScrollRender = (scroll: () => void): Promise<void> => new Promise((resolve) => {
+        const waitForScrollRender = (scroll: () => void): Promise<boolean> => new Promise((resolve) => {
           let settledTimer = 0;
           let fallbackTimer = 0;
           let finished = false;
-          const finish = () => {
+          const finish = (rendered = false) => {
             if (finished) return;
             finished = true;
             window.clearTimeout(settledTimer);
             window.clearTimeout(fallbackTimer);
             pendingPromptCopyWaits.delete(finish);
             subscription.dispose();
-            resolve();
+            resolve(rendered);
           };
           const subscription = terminal.onWriteParsed(() => {
             window.clearTimeout(settledTimer);
-            settledTimer = window.setTimeout(finish, PROMPT_COPY_SCROLL_RETRY_DELAY_MS);
+            settledTimer = window.setTimeout(() => finish(true), PROMPT_COPY_SCROLL_RETRY_DELAY_MS);
           });
 
           fallbackTimer = window.setTimeout(finish, 350);
@@ -327,9 +324,8 @@ const useTerminal = ({ readOnly = false, theme, fontSize = DEFAULT_FONT_SIZE, li
           gutter.inert = true;
           const buffer = terminal.buffer.active;
           const visibleEnd = Math.min(buffer.length, buffer.viewportY + terminal.rows);
-          const initialViewport = readVisibleViewport();
-          let visibleViewport = initialViewport;
-          let scrollSteps = 0;
+          const initialVisibleRows = readVisibleRows();
+          let visibleRows = initialVisibleRows;
           let scrollDisplacement = 0;
           let text: string | null = null;
           let restored = false;
@@ -340,23 +336,21 @@ const useTerminal = ({ readOnly = false, theme, fontSize = DEFAULT_FONT_SIZE, li
                 initialRows: snapshotPromptRows(buffer, row, visibleEnd),
                 promptPrefix: callbacksRef.current.promptPrefix,
                 loadNextRows: async () => {
-                  if (disposed || scrollSteps >= MAX_PROMPT_COPY_SCROLL_STEPS) return null;
-                  const previousViewport = visibleViewport;
-                  // tmux.conf requests three rows; the live bottom may advance fewer.
-                  await waitForScrollRender(() => dispatchWheel('down'));
-                  if (disposed) return null;
+                  if (disposed || scrollDisplacement >= MAX_PROMPT_COPY_SCROLL_STEPS) return null;
+                  const previousRows = visibleRows;
+                  const rendered = await waitForScrollRender(() => dispatchWheel('down', true));
+                  if (disposed || !rendered) return null;
 
                   for (let attempt = 0; attempt <= PROMPT_COPY_SCROLL_RENDER_RETRIES; attempt++) {
                     if (attempt > 0) {
                       await waitForPromptCopyDelay(PROMPT_COPY_SCROLL_RETRY_DELAY_MS);
                       if (disposed) return null;
                     }
-                    const currentViewport = readVisibleViewport();
-                    const newRows = getNewlyVisiblePromptRows(previousViewport, currentViewport);
+                    const currentRows = readVisibleRows();
+                    const newRows = getNewlyVisiblePromptRows(previousRows, currentRows, 1);
                     if (newRows.length > 0) {
-                      visibleViewport = currentViewport;
-                      scrollSteps++;
-                      scrollDisplacement += currentViewport.viewportY - previousViewport.viewportY;
+                      visibleRows = currentRows;
+                      scrollDisplacement++;
                       return newRows;
                     }
                   }
@@ -366,21 +360,12 @@ const useTerminal = ({ readOnly = false, theme, fontSize = DEFAULT_FONT_SIZE, li
             } finally {
               if (!disposed) {
                 restored = await restorePromptViewport({
-                  targetViewport: initialViewport,
-                  readViewport: () => disposed ? initialViewport : readVisibleViewport(),
-                  scrollUp: async (rows) => {
-                    if (disposed) return;
-                    if (rows === 3) {
-                      await waitForScrollRender(() => dispatchWheel('up'));
-                      return;
-                    }
-                    for (let row = 0; row < rows && !disposed; row++) {
-                      await waitForScrollRender(() => dispatchWheel('up', true));
-                    }
-                  },
-                  // At the live bottom tmux exits copy-mode. The first upward wheel
-                  // only re-enters it, so allow one observed no-op before restoring.
-                  maxAttempts: scrollDisplacement + 2,
+                  targetRows: initialVisibleRows,
+                  displacement: scrollDisplacement,
+                  readRows: () => disposed ? initialVisibleRows : readVisibleRows(),
+                  scrollUpOneRow: () => disposed
+                    ? Promise.resolve(false)
+                    : waitForScrollRender(() => dispatchWheel('up', true)),
                 });
               }
             }

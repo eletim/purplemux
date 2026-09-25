@@ -13,11 +13,6 @@ export interface ITerminalPromptRow {
   readonly text: string;
 }
 
-export interface ITerminalPromptViewport {
-  readonly viewportY: number;
-  readonly rows: readonly ITerminalPromptRow[];
-}
-
 const normalizePromptCandidate = (text: string): string => text
   .replace(/^[\s\u200B\u200C\u200D\uFEFF]+/, '');
 
@@ -102,42 +97,36 @@ export const arePromptRowsEqual = (
 ));
 
 export const getNewlyVisiblePromptRows = (
-  previous: ITerminalPromptViewport,
-  current: ITerminalPromptViewport,
+  previous: readonly ITerminalPromptRow[],
+  current: readonly ITerminalPromptRow[],
+  displacement: number,
 ): ITerminalPromptRow[] => {
-  const displacement = current.viewportY - previous.viewportY;
-  if (displacement < 1 || displacement > 3 || displacement >= current.rows.length) return [];
-  const overlap = current.rows.length - displacement;
-  if (overlap > previous.rows.length) return [];
-  return arePromptRowsEqual(previous.rows.slice(-overlap), current.rows.slice(0, overlap))
-    ? current.rows.slice(overlap)
+  if (displacement < 1 || displacement > 3 || displacement > current.length) return [];
+  const overlap = current.length - displacement;
+  if (overlap === 0) return [...current];
+  if (overlap > previous.length) return [];
+  return arePromptRowsEqual(previous.slice(-overlap), current.slice(0, overlap))
+    ? current.slice(overlap)
     : [];
 };
 
 interface IRestorePromptViewportOptions {
-  targetViewport: ITerminalPromptViewport;
-  readViewport: () => ITerminalPromptViewport;
-  scrollUp: (rows: number) => Promise<void>;
-  maxAttempts: number;
+  targetRows: readonly ITerminalPromptRow[];
+  displacement: number;
+  readRows: () => readonly ITerminalPromptRow[];
+  scrollUpOneRow: () => Promise<boolean>;
 }
 
 export const restorePromptViewport = async ({
-  targetViewport,
-  readViewport,
-  scrollUp,
-  maxAttempts,
+  targetRows,
+  displacement,
+  readRows,
+  scrollUpOneRow,
 }: IRestorePromptViewportOptions): Promise<boolean> => {
-  for (let attempt = 0; attempt < maxAttempts; attempt++) {
-    const current = readViewport();
-    if (current.viewportY === targetViewport.viewportY
-      && arePromptRowsEqual(current.rows, targetViewport.rows)) return true;
-    const displacement = current.viewportY - targetViewport.viewportY;
-    if (displacement <= 0) return false;
-    await scrollUp(Math.min(3, displacement));
+  for (let row = 0; row < displacement; row++) {
+    if (!await scrollUpOneRow()) return false;
   }
-  const current = readViewport();
-  return current.viewportY === targetViewport.viewportY
-    && arePromptRowsEqual(current.rows, targetViewport.rows);
+  return arePromptRowsEqual(readRows(), targetRows);
 };
 
 interface ICollectPromptBlockOptions {
