@@ -48,7 +48,21 @@
   border: 0;
   padding: 0;
   background: transparent;
+  cursor: pointer;
   opacity: 0.65;
+  pointer-events: auto;
+}
+
+.terminal-prompt-marker:hover,
+.terminal-prompt-marker:focus-visible {
+  opacity: 1;
+  outline: none;
+}
+
+.terminal-prompt-marker:hover::before,
+.terminal-prompt-marker:focus-visible::before {
+  border-color: var(--terminal-fg);
+  background: color-mix(in srgb, var(--terminal-fg) 18%, transparent);
 }
 
 .terminal-prompt-marker::before {

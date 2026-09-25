@@ -57,6 +57,7 @@ App-wide settings. `authPassword` is scrypt-hashed (`scrypt:{salt}:{hash}`); del
 | `customCSS` | User-injected CSS string |
 | `locale` | `en` / `ko` / `ja` / … |
 | `fontSize` | `small` / `normal` / `large` |
+| `promptPrefix` | Prefix used to recognize shell prompts and show prompt-copy circles. A circle copies from its prompt through the following output, stopping before the next matching prompt; empty or mismatched prefixes disable the feature |
 | `notificationsEnabled` | System/web-push notification toggle |
 | `dangerouslySkipPermissions` | Pass `--dangerously-skip-permissions` to Claude |
 | `editorUrl` / `editorPreset` | External editor (e.g. code-server, VS Code) |

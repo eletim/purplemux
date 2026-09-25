@@ -48,6 +48,7 @@ Plus
 - **Tab management** — Multiple tabs, drag to reorder, auto titles from process names
 - **Keyboard shortcuts** — Splits, tab switching, focus movement
 - **Terminal themes** — Dark / light mode, multiple color themes
+- **Prompt-circle copying** — Click a prompt circle to copy that prompt and all following output, stopping before the next prompt. Circles depend on the configured `promptPrefix`; an empty prefix or one that does not match the shell prompt disables them
 - **Workspaces & groups** — Save and restore panel layouts, tabs, and working directories. Organize workspaces into groups with drag-and-drop
 - **Git workflow** — Side-by-side / line-by-line diff with syntax highlighting, inline hunk expansion, and a paginated history tab. Fetch / pull / push from the panel with ahead/behind indicators — if sync fails (dirty worktree, conflicts), Ask Claude or Codex in one click
 - **Web browser panel** — Embedded browser for checking dev output (Electron). Drive it from the `purplemux` CLI and switch viewports with a built-in device emulator

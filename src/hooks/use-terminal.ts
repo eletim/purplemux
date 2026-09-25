@@ -11,7 +11,13 @@ import type { ITerminalThemeColors } from "@/lib/terminal-themes";
 import { createMultilineUrlLinkProvider } from "@/lib/multiline-url-link-provider";
 import { copyToClipboard } from "@/lib/clipboard";
 import { DEFAULT_LINE_HEIGHT } from "@/lib/terminal-line-height";
-import { syncPromptMarkers } from "@/lib/terminal-prompt-marker";
+import {
+  collectPromptBlock,
+  getNewlyVisiblePromptRows,
+  restorePromptViewport,
+  snapshotPromptRows,
+  syncPromptMarkers,
+} from "@/lib/terminal-prompt-marker";
 import isElectron from "@/hooks/use-is-electron";
 
 interface IUseTerminalOptions {
@@ -28,6 +34,9 @@ interface IUseTerminalOptions {
 }
 
 const COPY_TOAST_ID = 'terminal-copy';
+const PROMPT_COPY_SCROLL_RENDER_RETRIES = 4;
+const PROMPT_COPY_SCROLL_RETRY_DELAY_MS = 50;
+const MAX_PROMPT_COPY_SCROLL_STEPS = 2000;
 
 const DEFAULT_FONT_SIZE = 12;
 
@@ -176,6 +185,18 @@ const useTerminal = ({ readOnly = false, theme, fontSize = DEFAULT_FONT_SIZE, li
     let resizeObserver: ResizeObserver | null = null;
     let promptMarkerResizeObserver: ResizeObserver | null = null;
     let cleanupTouch: (() => void) | null = null;
+    const pendingPromptCopyWaits = new Set<() => void>();
+
+    const waitForPromptCopyDelay = (delay: number): Promise<void> => new Promise((resolve) => {
+      let timer = 0;
+      const finish = () => {
+        window.clearTimeout(timer);
+        pendingPromptCopyWaits.delete(finish);
+        resolve();
+      };
+      pendingPromptCopyWaits.add(finish);
+      timer = window.setTimeout(finish, delay);
+    });
 
     loadFonts().then(() => {
       if (disposed) return;
@@ -245,8 +266,125 @@ const useTerminal = ({ readOnly = false, theme, fontSize = DEFAULT_FONT_SIZE, li
         containerNode.classList.add('terminal-prompt-markers-enabled');
         const gutter = document.createElement('div');
         gutter.className = 'terminal-prompt-marker-gutter';
-        gutter.setAttribute('aria-hidden', 'true');
+        gutter.setAttribute('aria-hidden', 'false');
         terminal.element.appendChild(gutter);
+
+        const screen = terminal.element.querySelector<HTMLElement>('.xterm-screen');
+
+        const readVisibleRows = () => {
+          const buffer = terminal.buffer.active;
+          const viewportY = buffer.viewportY;
+          return snapshotPromptRows(
+            buffer,
+            viewportY,
+            Math.min(buffer.length, viewportY + terminal.rows),
+          );
+        };
+
+        const dispatchWheel = (direction: 'up' | 'down', precise = false): void => {
+          if (!screen) return;
+          const rect = screen.getBoundingClientRect();
+          screen.dispatchEvent(new WheelEvent('wheel', {
+            deltaY: direction === 'down' ? 1 : -1,
+            deltaMode: WheelEvent.DOM_DELTA_LINE,
+            altKey: precise,
+            ctrlKey: precise,
+            clientX: rect.left + rect.width / 2,
+            clientY: rect.top + rect.height / 2,
+            bubbles: true,
+            cancelable: true,
+          }));
+        };
+
+        const waitForScrollRender = (scroll: () => void): Promise<boolean> => new Promise((resolve) => {
+          let settledTimer = 0;
+          let fallbackTimer = 0;
+          let finished = false;
+          const finish = (rendered = false) => {
+            if (finished) return;
+            finished = true;
+            window.clearTimeout(settledTimer);
+            window.clearTimeout(fallbackTimer);
+            pendingPromptCopyWaits.delete(finish);
+            subscription.dispose();
+            resolve(rendered);
+          };
+          const subscription = terminal.onWriteParsed(() => {
+            window.clearTimeout(settledTimer);
+            settledTimer = window.setTimeout(() => finish(true), PROMPT_COPY_SCROLL_RETRY_DELAY_MS);
+          });
+
+          fallbackTimer = window.setTimeout(finish, 350);
+          pendingPromptCopyWaits.add(finish);
+          scroll();
+        });
+
+        const copyPromptBlock = async (row: number) => {
+          if (disposed || gutter.inert) return;
+          gutter.inert = true;
+          const buffer = terminal.buffer.active;
+          const visibleEnd = Math.min(buffer.length, buffer.viewportY + terminal.rows);
+          const initialVisibleRows = readVisibleRows();
+          let visibleRows = initialVisibleRows;
+          let scrollDisplacement = 0;
+          let text: string | null = null;
+          let restored = false;
+
+          try {
+            try {
+              text = await collectPromptBlock({
+                initialRows: snapshotPromptRows(buffer, row, visibleEnd),
+                promptPrefix: callbacksRef.current.promptPrefix,
+                loadNextRows: async () => {
+                  if (disposed || scrollDisplacement >= MAX_PROMPT_COPY_SCROLL_STEPS) return null;
+                  const previousRows = visibleRows;
+                  const rendered = await waitForScrollRender(() => dispatchWheel('down', true));
+                  if (disposed || !rendered) return null;
+
+                  for (let attempt = 0; attempt <= PROMPT_COPY_SCROLL_RENDER_RETRIES; attempt++) {
+                    if (attempt > 0) {
+                      await waitForPromptCopyDelay(PROMPT_COPY_SCROLL_RETRY_DELAY_MS);
+                      if (disposed) return null;
+                    }
+                    const currentRows = readVisibleRows();
+                    const newRows = getNewlyVisiblePromptRows(previousRows, currentRows, 1);
+                    if (newRows.length > 0) {
+                      visibleRows = currentRows;
+                      scrollDisplacement++;
+                      return newRows;
+                    }
+                  }
+                  return null;
+                },
+              });
+            } finally {
+              if (!disposed) {
+                restored = await restorePromptViewport({
+                  targetRows: initialVisibleRows,
+                  displacement: scrollDisplacement,
+                  readRows: () => disposed ? initialVisibleRows : readVisibleRows(),
+                  scrollUpOneRow: () => disposed
+                    ? Promise.resolve(false)
+                    : waitForScrollRender(() => dispatchWheel('up', true)),
+                });
+              }
+            }
+
+            if (!text || disposed || !restored) return;
+            const ok = await copyToClipboard(text);
+            if (ok && !disposed) {
+              toast.success(callbacksRef.current.t('copyPaneSuccess'), {
+                id: COPY_TOAST_ID,
+                duration: 1500,
+              });
+            }
+          } finally {
+            if (!disposed) {
+              gutter.inert = false;
+              promptMarkerSyncRef.current();
+            }
+          }
+        };
 
         const syncMarkers = () => {
           promptMarkerRaf = 0;
@@ -263,6 +401,8 @@ const useTerminal = ({ readOnly = false, theme, fontSize = DEFAULT_FONT_SIZE, li
             screenTop: screenRect.top - terminalRect.top,
             screenHeight: screenRect.height,
             promptPrefix: callbacksRef.current.promptPrefix,
+            label: callbacksRef.current.t('copyPaneLabel'),
+            onCopy: (row) => void copyPromptBlock(row),
           });
         };
 
@@ -276,7 +416,6 @@ const useTerminal = ({ readOnly = false, theme, fontSize = DEFAULT_FONT_SIZE, li
         terminal.onResize(scheduleMarkerSync);
         terminal.onWriteParsed(scheduleMarkerSync);
 
-        const screen = terminal.element.querySelector<HTMLElement>('.xterm-screen');
         if (screen) {
           promptMarkerResizeObserver = new ResizeObserver(scheduleMarkerSync);
           promptMarkerResizeObserver.observe(screen);
@@ -353,12 +492,16 @@ const useTerminal = ({ readOnly = false, theme, fontSize = DEFAULT_FONT_SIZE, li
 
       if (!readOnly && isTouchDevice && screenEl) {
         let lastY = 0;
+        let touchStartedOnPromptMarker = false;
 
         const onTouchStart = (e: TouchEvent) => {
+          touchStartedOnPromptMarker = e.target instanceof Element
+            && e.target.closest('.terminal-prompt-marker') !== null;
           lastY = e.touches[0].clientY;
         };
 
         const onTouchMove = (e: TouchEvent) => {
+          if (touchStartedOnPromptMarker) return;
           const currentY = e.touches[0].clientY;
           const deltaY = lastY - currentY;
           lastY = currentY;
@@ -387,6 +530,7 @@ const useTerminal = ({ readOnly = false, theme, fontSize = DEFAULT_FONT_SIZE, li
 
     return () => {
       disposed = true;
+      for (const finish of [...pendingPromptCopyWaits]) finish();
       setIsReady(false);
       cancelAnimationFrame(resizeRaf);
       cancelAnimationFrame(promptMarkerRaf);
