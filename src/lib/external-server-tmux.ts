@@ -106,16 +106,13 @@ const parseExternalServerInventory = (server: IExternalServer, stdout: string): 
 
     let session = sessions.get(sessionId);
     if (!session) {
-      const persisted = server.ownedTerminals?.find((candidate) => candidate.owner === 'purplemux'
-        && candidate.resourceType === 'session' && candidate.sessionId === sessionId
-        && candidate.sessionCreated === sessionCreated);
       const markerMatch = /^v1:([-_A-Za-z0-9]{21}):([-_A-Za-z0-9]{1,128}):(\d{13})$/.exec(marker);
       const markerCreatedAt = markerMatch ? new Date(Number(markerMatch[3])) : undefined;
-      const provenance = persisted ?? (markerMatch && !Number.isNaN(markerCreatedAt?.getTime()) ? {
+      const provenance = markerMatch && !Number.isNaN(markerCreatedAt?.getTime()) ? {
         id: markerMatch[1], requestId: markerMatch[2], owner: 'purplemux' as const,
         resourceType: 'session' as const, sessionId, sessionCreated,
         createdAt: markerCreatedAt!.toISOString(),
-      } : undefined);
+      } : undefined;
       session = { id: sessionId, name: '', sessionCreated, exists: true,
         attached: attached(sessionAttached), owned: Boolean(provenance),
         ...(provenance ? { provenance } : {}), windows: [] };
@@ -152,7 +149,7 @@ const validateExternalTerminalInput = (input: ICreateExternalTerminal): string =
   return input.name?.trim() ?? `purplemux-${nanoid(8)}`;
 };
 
-/** Create one isolated session and return the exact identities needed for ownership persistence. */
+/** Create one isolated, marked session and return the identities needed for creation history. */
 export const createExternalTerminal = async (
   server: IExternalServer,
   input: ICreateExternalTerminal,
@@ -203,7 +200,7 @@ export const createExternalTerminal = async (
   }
 };
 
-/** Compensate a failed ownership commit without ever targeting a replacement session. */
+/** Compensate a failed creation-history commit without ever targeting a replacement session. */
 export const rollbackExternalTerminalCreation = async (
   server: IExternalServer,
   terminal: Pick<ICreatedExternalTerminal, 'sessionId' | 'sessionCreated'>,

@@ -26,6 +26,25 @@ afterEach(async () => {
 });
 
 describe('external tmux server registrations', () => {
+  it('migrates legacy ownership records into non-authoritative creation history', async () => {
+    const provenance = { id: '123456789012345678901', requestId: 'legacy-request',
+      owner: 'purplemux', resourceType: 'session', sessionId: '$1', sessionCreated: '1750000000',
+      createdAt: '2026-09-26T00:00:00.000Z' };
+    await fs.mkdir(path.join(directory, '.purplemux'));
+    await fs.writeFile(path.join(directory, '.purplemux', 'external-servers.json'), JSON.stringify([{
+      id: 'legacy-server', name: 'legacy', socketPath: socket, socketIdentity: '1:2:3',
+      ownedTerminals: [provenance],
+    }]));
+    vi.spyOn(os, 'homedir').mockReturnValue(directory);
+    vi.resetModules();
+    const store = await import('@/lib/external-server-store');
+
+    expect(await store.listExternalServers()).toEqual([{
+      id: 'legacy-server', name: 'legacy', socketPath: socket, socketIdentity: '1:2:3',
+      terminalCreations: [provenance],
+    }]);
+  });
+
   it('persists a stable server identity and unregisters without touching tmux', async () => {
     vi.spyOn(os, 'homedir').mockReturnValue(directory);
     vi.resetModules();
@@ -42,7 +61,7 @@ describe('external tmux server registrations', () => {
     expect(tmux('list-windows', '-t', 'external', '-F', '#{window_id}').split('\n')).toHaveLength(2);
   });
 
-  it('creates a new session and persists exact ownership without adopting existing resources', async () => {
+  it('creates a marked session and records its history without adopting existing resources', async () => {
     vi.spyOn(os, 'homedir').mockReturnValue(directory);
     vi.resetModules();
     const store = await import('@/lib/external-server-store');
@@ -55,7 +74,7 @@ describe('external tmux server registrations', () => {
         sessionId: '$1', sessionCreated: expect.stringMatching(/^\d+$/), createdAt: expect.any(String) } });
     expect(created?.provenance.id).toHaveLength(21);
     const registrations = await store.listExternalServers();
-    expect(registrations[0].ownedTerminals).toEqual([created?.provenance]);
+    expect(registrations[0].terminalCreations).toEqual([created?.provenance]);
 
     const inventory = await discoverExternalServer(registrations[0]);
     expect(inventory.sessions.find(({ id }) => id === '$0')).toMatchObject({ owned: false });
@@ -83,7 +102,7 @@ describe('external tmux server registrations', () => {
     expect(tmux('list-sessions', '-F', '#{session_name}')).toBe('external');
   });
 
-  it('rolls back an exact created session when ownership persistence fails, then retries cleanly', async () => {
+  it('rolls back an exact created session when history persistence fails, then retries cleanly', async () => {
     vi.spyOn(os, 'homedir').mockReturnValue(directory);
     vi.resetModules();
     const store = await import('@/lib/external-server-store');
@@ -93,14 +112,14 @@ describe('external tmux server registrations', () => {
     await expect(store.createExternalTerminal(server.id, { requestId: 'retry-operation', name: 'recoverable' }))
       .rejects.toThrow('storage unavailable');
     expect(tmux('list-sessions', '-F', '#{session_name}')).toBe('external');
-    expect((await store.listExternalServers())[0].ownedTerminals).toEqual([]);
+    expect((await store.listExternalServers())[0].terminalCreations).toEqual([]);
 
     rename.mockRestore();
     const retried = await store.createExternalTerminal(server.id,
       { requestId: 'retry-operation', name: 'recoverable' });
     expect(tmux('list-sessions', '-F', '#{session_name}').split('\n'))
       .toEqual(['external', 'recoverable']);
-    expect((await store.listExternalServers())[0].ownedTerminals).toEqual([retried?.provenance]);
+    expect((await store.listExternalServers())[0].terminalCreations).toEqual([retried?.provenance]);
   });
 
   it('rejects the managed socket and fails closed after socket replacement', async () => {

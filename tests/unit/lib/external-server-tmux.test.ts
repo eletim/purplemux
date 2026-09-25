@@ -31,7 +31,7 @@ describe('external tmux runtime decoding', () => {
     });
   });
 
-  it('creates a new session and returns stable identities for ownership persistence', async () => {
+  it('creates a marked session and returns stable identities for creation history', async () => {
     mocks.exec.mockResolvedValueOnce({ stdout: '$0\t1750000000\t\t0\t@0\t0\t1\t%0\t0\t1\t123\t0\n', stderr: '' })
       .mockResolvedValueOnce({ stdout: '$4\t1750000001\t@7\n', stderr: '' });
     const identity = { id: '123456789012345678901', requestId: 'request-1',
@@ -122,22 +122,25 @@ describe('external tmux runtime decoding', () => {
       .rejects.toThrow('changed before ownership rollback');
   });
 
-  it('marks only an exact persisted session identity as owned', async () => {
-    const provenance = { id: 'terminal-1', owner: 'purplemux' as const, resourceType: 'session' as const,
+  it('uses only the tmux marker as live ownership authority', async () => {
+    const provenance = { id: '123456789012345678901', requestId: 'persisted-request',
+      owner: 'purplemux' as const, resourceType: 'session' as const,
       sessionId: '$0', sessionCreated: '1750000000', createdAt: '2026-09-26T00:00:00.000Z' };
-    const inventory = await discoverExternalServer({
+    const server = {
       id: 'server', name: 'dev', socketPath: '/known/socket', socketIdentity: '1:2:3',
-      ownedTerminals: [provenance],
-    });
-    expect(inventory.sessions[0]).toMatchObject({ owned: true, provenance });
+      terminalCreations: [provenance],
+    };
+    const withoutMarker = await discoverExternalServer(server);
+    expect(withoutMarker.sessions[0]).toMatchObject({ owned: false });
+    expect(withoutMarker.sessions[0]).not.toHaveProperty('provenance');
 
-    mocks.exec.mockResolvedValue({ stdout: '$0\t1750000002\t\t0\t@0\t0\t1\t%0\t0\t1\t123\t0\n', stderr: '' });
-    const replacement = await discoverExternalServer({
-      id: 'server', name: 'dev', socketPath: '/known/socket', socketIdentity: '1:2:3',
-      ownedTerminals: [provenance],
+    mocks.exec.mockResolvedValue({
+      stdout: '$0\t1750000000\tv1:123456789012345678901:persisted-request:1790380800000'
+        + '\t0\t@0\t0\t1\t%0\t0\t1\t123\t0\n',
+      stderr: '',
     });
-    expect(replacement.sessions[0]).toMatchObject({ owned: false });
-    expect(replacement.sessions[0]).not.toHaveProperty('provenance');
+    const withMarker = await discoverExternalServer(server);
+    expect(withMarker.sessions[0]).toMatchObject({ owned: true, provenance });
   });
 
   it('uses tmux 2.9-compatible enumeration and confines invalid UTF-8 to its field', async () => {

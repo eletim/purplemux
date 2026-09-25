@@ -61,13 +61,16 @@ GET /api/cli/external-servers
           "currentCommand", "currentPath", "dead" }] }] }] }
   An unavailable or replaced registered server has exists:false, sessions:[], and
   unavailableReason. Sessions include owned:false for pre-existing resources.
-  PurpleMux-created sessions have owned:true and persisted provenance.
+  Only a valid resource-bound tmux provenance marker confers owned:true. Persisted
+  terminal creation records are idempotency/audit data and never independently
+  authorize lifecycle actions.
   CLI equivalent: purplemux external-server list
 
 POST /api/cli/external-servers/<serverId>/terminals
   Body: { "requestId": "client-stable-id", "name"?: "terminal-name" }
   Creates a new tmux session (never an implicit window in an existing session) and
-  persists PurpleMux ownership bound to its exact session ID and creation identity.
+  sets its authoritative PurpleMux ownership marker. The same provenance is recorded
+  separately as idempotency/audit history.
   Returns { "serverId", "sessionId", "sessionCreated", "windowId", "name",
             "provenance": { "id", "requestId", "owner":"purplemux", "resourceType":"session",
               "sessionId", "sessionCreated", "createdAt" } }.
@@ -75,11 +78,11 @@ POST /api/cli/external-servers/<serverId>/terminals
   CLI equivalent: purplemux external-server create-terminal SERVER_ID [--name NAME]
                   [--request-id ID]
   Registration alone never owns pre-existing sessions. Default lifecycle actions may
-  manage only matching owned records; unowned destruction requires explicit policy.
-  If ownership persistence fails, the exact newly created session is rolled back so a
-  retry cannot accumulate a live unowned terminal.
-  Ownership is also marked on the tmux session, so creation can be reconciled after a
-  lost/invalid response and remains identifiable across unregister/re-register.
+  manage only sessions with matching markers; unowned destruction requires explicit policy.
+  If creation-history persistence fails, the exact newly created session is rolled back
+  so a retry cannot accumulate an unrecorded terminal. The tmux session marker is the
+  sole live ownership authority, so creation can be reconciled after a lost/invalid
+  response and remains identifiable across unregister/re-register.
 
 DELETE /api/cli/external-servers/<serverId>
   Removes only the registration, including when the server is unavailable.

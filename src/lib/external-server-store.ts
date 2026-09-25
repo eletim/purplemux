@@ -6,7 +6,7 @@ import { createExternalTerminal as createTmuxExternalTerminal,
   freezeExternalServer, rollbackExternalTerminalCreation } from '@/lib/external-server-tmux';
 import { stopExternalTerminals } from '@/lib/external-terminal-resources';
 import type { ICreatedExternalTerminal, ICreateExternalTerminal,
-  IExternalServer, IRegisterExternalServer } from '@/types/external-server';
+  IExternalServer, IExternalTerminalProvenance, IRegisterExternalServer } from '@/types/external-server';
 
 const file = path.join(os.homedir(), '.purplemux', 'external-servers.json');
 const state = globalThis as typeof globalThis & { __purplemuxExternalServerLock?: Promise<void> };
@@ -23,7 +23,14 @@ const read = async (): Promise<IExternalServer[]> => {
   try {
     const data = JSON.parse(await fs.readFile(file, 'utf8'));
     if (!Array.isArray(data)) throw new Error('Invalid external server registrations');
-    return data;
+    return data.map((entry) => {
+      const legacy = entry as IExternalServer & { ownedTerminals?: IExternalTerminalProvenance[] };
+      const { ownedTerminals, ...server } = legacy;
+      return {
+        ...server,
+        terminalCreations: server.terminalCreations ?? ownedTerminals ?? [],
+      };
+    });
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === 'ENOENT') return [];
     throw error;
@@ -48,7 +55,7 @@ export const registerExternalServer = (input: IRegisterExternalServer): Promise<
   withLock(async () => {
     const frozen = await freezeExternalServer(input);
     const servers = await read();
-    const server = { id: nanoid(), ...frozen, ownedTerminals: [] };
+    const server = { id: nanoid(), ...frozen, terminalCreations: [] };
     await write([...servers, server]);
     return server;
   });
@@ -60,7 +67,7 @@ export const createExternalTerminal = (
   const servers = await read();
   const index = servers.findIndex((server) => server.id === serverId);
   if (index < 0) return undefined;
-  const prior = servers[index].ownedTerminals?.find((entry) => entry.requestId === input.requestId);
+  const prior = servers[index].terminalCreations?.find((entry) => entry.requestId === input.requestId);
   const identity = prior ?? {
     id: nanoid(), requestId: input.requestId,
     createdAt: new Date().toISOString(),
@@ -78,7 +85,7 @@ export const createExternalTerminal = (
   };
   servers[index] = {
     ...servers[index],
-    ownedTerminals: [...(servers[index].ownedTerminals ?? []), provenance],
+    terminalCreations: [...(servers[index].terminalCreations ?? []), provenance],
   };
   try {
     await write(servers);
@@ -87,7 +94,7 @@ export const createExternalTerminal = (
       await rollbackExternalTerminalCreation(servers[index], created);
     } catch (rollbackError) {
       throw new AggregateError([writeError, rollbackError],
-        'Failed to persist ownership and roll back the created external terminal');
+        'Failed to persist terminal creation history and roll back the created external terminal');
     }
     throw writeError;
   }

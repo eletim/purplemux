@@ -8,8 +8,8 @@ export interface IExternalServer {
   name: string;
   socketPath: string;
   socketIdentity: string;
-  /** Exact external resources created by PurpleMux. Missing on legacy registrations. */
-  ownedTerminals?: IExternalTerminalProvenance[];
+  /** Idempotency/audit records only; live ownership comes exclusively from the tmux marker. */
+  terminalCreations?: IExternalTerminalProvenance[];
 }
 
 export interface IExternalTerminalProvenance {
