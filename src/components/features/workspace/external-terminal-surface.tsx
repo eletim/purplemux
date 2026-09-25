@@ -1,10 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import useConfigStore from '@/hooks/use-config-store';
 import useIsMobileDevice from '@/hooks/use-is-mobile-device';
-import useTerminal from '@/hooks/use-terminal';
-import useTerminalTheme from '@/hooks/use-terminal-theme';
-import useTerminalWebSocket from '@/hooks/use-terminal-websocket';
-import { resolveLineHeight } from '@/lib/terminal-line-height';
+import useTerminalSurface from '@/hooks/use-terminal-surface';
 import { toCtrlChar } from '@/lib/terminal-keys';
 import type { IExternalTerminalTarget } from '@/types/terminal';
 import MobileTerminalToolbar from '@/components/features/mobile/mobile-terminal-toolbar';
@@ -16,30 +13,18 @@ type TExternalTerminalSurfaceProps =
   | { targetId: string; windowId: string; externalTerminalTarget?: never }
   | { targetId?: never; windowId?: never; externalTerminalTarget: IExternalTerminalTarget };
 
-const TERMINAL_FONT_SIZES: Record<string, number> = {
-  normal: 12,
-  large: 14,
-  'x-large': 16,
-};
-
 export default function ExternalTerminalSurface(props: TExternalTerminalSurfaceProps) {
   const externalTerminalTarget = props.externalTerminalTarget;
   const targetId = props.targetId;
   const externalServerId = externalTerminalTarget?.serverId;
   const externalSessionId = externalTerminalTarget?.sessionId;
   const windowId = externalTerminalTarget?.windowId ?? props.windowId!;
-  const { theme } = useTerminalTheme();
-  const configFontSize = useConfigStore((state) => state.fontSize);
-  const configLineHeight = useConfigStore((state) => state.lineHeight);
-  const configLineHeightCustom = useConfigStore((state) => state.lineHeightCustom);
   const keyBarMode = useConfigStore((state) => state.terminalKeyBar);
-  const promptPrefix = useConfigStore((state) => state.promptPrefix);
   const isMobileDevice = useIsMobileDevice();
   const [ctrlArmed, setCtrlArmed] = useState(false);
   const [shiftArmed, setShiftArmed] = useState(false);
   const ctrlArmedRef = useRef(false);
   const shiftArmedRef = useRef(false);
-  const writeRef = useRef<(data: Uint8Array) => void>(() => {});
 
   useEffect(() => { ctrlArmedRef.current = ctrlArmed; }, [ctrlArmed]);
   useEffect(() => { shiftArmedRef.current = shiftArmed; }, [shiftArmed]);
@@ -67,23 +52,16 @@ export default function ExternalTerminalSurface(props: TExternalTerminalSurfaceP
     reconnect,
     sendStdin,
     sendWebStdin,
-    sendResize,
-  } = useTerminalWebSocket({
+    terminalRef,
+    fit,
+    focus,
+    isReady,
+    theme,
+  } = useTerminalSurface({
     externalTarget: targetId ? { id: targetId, windowId } : undefined,
     externalTerminalTarget,
-    onData: (data) => writeRef.current(data),
+    onInput: (data, send) => send(applyArmedModifier(data)),
   });
-  const { terminalRef, write, fit, focus, isReady } = useTerminal({
-    enablePromptCopy: true,
-    promptPrefix,
-    theme: theme.colors,
-    fontSize: TERMINAL_FONT_SIZES[configFontSize] ?? TERMINAL_FONT_SIZES.normal,
-    lineHeight: resolveLineHeight(configLineHeight, configLineHeightCustom),
-    onInput: (data) => sendStdin(applyArmedModifier(data)),
-    onResize: sendResize,
-  });
-
-  useEffect(() => { writeRef.current = write; }, [write]);
 
   useEffect(() => {
     if (!isReady) return;

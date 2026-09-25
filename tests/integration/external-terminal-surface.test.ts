@@ -69,7 +69,7 @@ vi.mock('@/components/features/workspace/terminal-key-bar', () => ({ default: ()
 beforeEach(() => vi.clearAllMocks());
 afterEach(cleanup);
 
-describe('external terminal surface', () => {
+describe('shared external terminal surface', () => {
   it('uses the standard terminal interactions for a discovered external window', () => {
     const target = { serverId: 'server-1', sessionId: '$1', windowId: '@2' };
     render(createElement(ExternalTerminalSurface, { externalTerminalTarget: target }));
@@ -81,14 +81,25 @@ describe('external terminal surface', () => {
       promptPrefix: '$ ',
       fontSize: 14,
       lineHeight: 1.25,
-      onResize: mocks.sendResize,
     }));
     expect(mocks.connect).toHaveBeenCalledWith('server-1:$1:@2', 100, 30);
     expect(mocks.focus).toHaveBeenCalledOnce();
 
-    const terminalOptions = mocks.terminalOptions.mock.calls[0][0] as { onInput: (data: string) => void };
-    act(() => terminalOptions.onInput('ls\r'));
+    const terminalOptions = mocks.terminalOptions.mock.calls[0][0] as {
+      onInput: (data: string) => void;
+      onResize: (cols: number, rows: number) => void;
+    };
+    act(() => {
+      terminalOptions.onInput('ls\r');
+      terminalOptions.onResize(120, 40);
+    });
     expect(mocks.sendStdin).toHaveBeenCalledWith('ls\r');
+    expect(mocks.sendResize).toHaveBeenCalledWith(120, 40);
+
+    const websocketOptions = mocks.websocketOptions.mock.calls[0][0] as { onData: (data: Uint8Array) => void };
+    const output = new Uint8Array([65]);
+    act(() => websocketOptions.onData(output));
+    expect(mocks.write).toHaveBeenCalledWith(output);
 
     fireEvent.click(screen.getByRole('button', { name: 'Send web input' }));
     expect(mocks.sendWebStdin).toHaveBeenCalledWith('pasted input\r');
