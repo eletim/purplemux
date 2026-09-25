@@ -267,6 +267,25 @@ const cmdExternalServerList = async (args) => {
   out(body);
 };
 
+const cmdExternalServerCreateTerminal = async (args) => {
+  const serverId = args[0];
+  if (!isReviewId(serverId)) die('an external server ID is required');
+  let name;
+  if (args.length > 1) {
+    if (args.length !== 3 || args[1] !== '--name' || !args[2] || args[2].startsWith('--')) {
+      die('usage: external-server create-terminal ID [--name NAME]');
+    }
+    name = args[2];
+  }
+  requireEnv();
+  const { body } = await api('POST',
+    `/api/cli/external-servers/${encodeURIComponent(serverId)}/terminals`, name ? { name } : {});
+  if (!body || typeof body.sessionId !== 'string' || typeof body.windowId !== 'string') {
+    die('invalid external terminal creation response: expected sessionId and windowId');
+  }
+  out(body);
+};
+
 const cmdExternalServerUnregister = async (args) => {
   if (args.length !== 1 || !isReviewId(args[0])) die('exactly one external server ID is required');
   requireEnv();
@@ -501,6 +520,8 @@ Commands:
   external-server register --socket PATH --name NAME
                                            Register an external tmux server; print its stable ID
   external-server list                     List registrations with fresh tmux runtime inventory
+  external-server create-terminal ID [--name NAME]
+                                           Create an owned tmux session on a registered server
   external-server unregister ID            Remove registration without changing tmux resources
   tab list [-w WS]                         List tabs (optionally scoped to workspace)
   tab create -w WS [-n NAME] [-t TYPE]     Create a tab in workspace (type: terminal | claude-code | codex-cli | agent-sessions | web-browser | diff)
@@ -550,6 +571,7 @@ const main = async () => {
     case 'external-server':
       if (sub === 'register') return cmdExternalServerRegister(rest);
       if (sub === 'list') return cmdExternalServerList(rest);
+      if (sub === 'create-terminal') return cmdExternalServerCreateTerminal(rest);
       if (sub === 'unregister') return cmdExternalServerUnregister(rest);
       die(`unknown external-server command: ${sub || '(none)'}. Run 'purplemux help' for usage.`);
       break;

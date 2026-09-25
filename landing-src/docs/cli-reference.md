@@ -53,6 +53,7 @@ All subcommands require a running server. They read the port from `~/.purplemux/
 | `purplemux workspace delete -w WS --if-empty` | Conditionally delete an empty workspace |
 | `purplemux external-server register --socket PATH --name NAME` | Register an external tmux server |
 | `purplemux external-server list` | List external server registrations |
+| `purplemux external-server create-terminal ID [--name NAME]` | Create an owned session on a registered server |
 | `purplemux external-server unregister ID` | Remove a registration without changing tmux resources |
 | `purplemux tab list [-w WS]` | List tabs (optionally scoped to a workspace) |
 | `purplemux tab create -w WS [-n NAME] [-t TYPE]` | Create a new tab |
@@ -77,7 +78,7 @@ If a transport failure or server error makes the mutation outcome uncertain, rec
 
 ### External tmux server registration
 
-Use `external-server register` with a display name and known absolute tmux socket path. It returns a stable registration ID with the name, path, and frozen Unix socket identity. Registration rejects the PurpleMux-owned `purple` socket. Operations against a registered server recheck that identity and fail closed if the socket disappears or the path is replaced. `external-server unregister ID` deletes only the registration, even if the server is unavailable; it never sends tmux commands or kills sessions, windows, or panes. External Reviews remain a separate fixed-window, read-only feature.
+Use `external-server register` with a display name and known absolute tmux socket path. It returns a stable registration ID with the name, path, and frozen Unix socket identity. `external-server create-terminal ID` predictably creates a new session and persists provenance bound to its exact tmux identity; pre-existing sessions remain unowned. Registration rejects the PurpleMux-owned `purple` socket. Operations against a registered server recheck that identity and fail closed if the socket disappears or the path is replaced. `external-server unregister ID` deletes only the registration, even if the server is unavailable; it never sends tmux commands or kills sessions, windows, or panes. External Reviews remain a separate fixed-window, read-only feature.
 
 ### External review (0.5.0)
 
@@ -112,6 +113,7 @@ The external server lifecycle API accepts the same CLI token or authenticated br
 |---|---|
 | `POST /api/cli/external-servers` | Body: `{"socketPath":"/absolute/known/tmux/socket","name":"dev-server"}`. Returns the stored `id`, `name`, `socketPath`, and `socketIdentity`; invalid or unavailable sockets return 400. |
 | `GET /api/cli/external-servers` | `{"servers":[...]}` lists persisted registrations without freezing sessions or windows. |
+| `POST /api/cli/external-servers/<serverId>/terminals` | Optional body `{"name":"terminal-name"}`. Creates a new owned tmux session and returns its exact session/window identities and persisted provenance. |
 | `DELETE /api/cli/external-servers/<serverId>` | `{"deleted":true}` on success; missing registrations return 404. Registration-only deletion. |
 
 ### `tab create` panel types

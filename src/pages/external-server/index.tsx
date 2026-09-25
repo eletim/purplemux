@@ -22,6 +22,8 @@ const fetchServers = async (): Promise<{ servers: IExternalServerInventory[] }> 
 export default function ExternalServersPage() {
   const { data, error, mutate } = useSWR(endpoint, fetchServers);
   const [selected, setSelected] = useState<IExternalTerminalTarget | null>(null);
+  const [creatingServerId, setCreatingServerId] = useState<string | null>(null);
+  const [creationError, setCreationError] = useState<string | null>(null);
   const availableTargets = useMemo(() => {
     const targets: Array<{
       target: IExternalTerminalTarget;
@@ -51,6 +53,24 @@ export default function ExternalServersPage() {
     && target.sessionId === selected.sessionId && target.windowId === selected.windowId)
     ? selected : availableTargets[0]?.target;
 
+  const createTerminal = async (serverId: string) => {
+    setCreatingServerId(serverId);
+    setCreationError(null);
+    try {
+      const response = await fetch(`${endpoint}/${encodeURIComponent(serverId)}/terminals`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}',
+      });
+      const body = await response.json();
+      if (!response.ok) throw new Error(body.error || 'Unable to create external terminal.');
+      setSelected({ serverId, sessionId: body.sessionId, windowId: body.windowId });
+      await mutate();
+    } catch (createError) {
+      setCreationError(createError instanceof Error ? createError.message : 'Unable to create external terminal.');
+    } finally {
+      setCreatingServerId(null);
+    }
+  };
+
   return (
     <main className="mx-auto max-w-6xl p-6 space-y-5">
       <Head><title>External tmux · purplemux</title></Head>
@@ -61,6 +81,14 @@ export default function ExternalServersPage() {
         </div>
         <button className="border rounded px-3 py-2" onClick={() => void mutate()}>Refresh</button>
       </div>
+      {data && <div aria-label="External tmux servers" className="flex flex-wrap gap-2">
+        {data.servers.map((server) => <button key={server.id} className="border rounded px-3 py-2"
+          disabled={!server.exists || creatingServerId !== null}
+          onClick={() => void createTerminal(server.id)}>
+          {creatingServerId === server.id ? 'Creating…' : `New Terminal on ${server.name}`}
+        </button>)}
+      </div>}
+      {creationError && <p role="alert">{creationError}</p>}
       {error ? <p role="alert">{error.message}</p> : !data ? <p role="status">Loading external servers…</p>
         : availableTargets.length === 0 ? <p role="status">No external windows are available.</p>
           : <>

@@ -2,9 +2,11 @@ import fs from 'fs/promises';
 import os from 'os';
 import path from 'path';
 import { nanoid } from 'nanoid';
-import { freezeExternalServer } from '@/lib/external-server-tmux';
+import { createExternalTerminal as createTmuxExternalTerminal,
+  freezeExternalServer } from '@/lib/external-server-tmux';
 import { stopExternalTerminals } from '@/lib/external-terminal-resources';
-import type { IExternalServer, IRegisterExternalServer } from '@/types/external-server';
+import type { ICreatedExternalTerminal, ICreateExternalTerminal,
+  IExternalServer, IRegisterExternalServer } from '@/types/external-server';
 
 const file = path.join(os.homedir(), '.purplemux', 'external-servers.json');
 const state = globalThis as typeof globalThis & { __purplemuxExternalServerLock?: Promise<void> };
@@ -46,10 +48,34 @@ export const registerExternalServer = (input: IRegisterExternalServer): Promise<
   withLock(async () => {
     const frozen = await freezeExternalServer(input);
     const servers = await read();
-    const server = { id: nanoid(), ...frozen };
+    const server = { id: nanoid(), ...frozen, ownedTerminals: [] };
     await write([...servers, server]);
     return server;
   });
+
+export const createExternalTerminal = (
+  serverId: string,
+  input: ICreateExternalTerminal = {},
+): Promise<ICreatedExternalTerminal | undefined> => withLock(async () => {
+  const servers = await read();
+  const index = servers.findIndex((server) => server.id === serverId);
+  if (index < 0) return undefined;
+  const created = await createTmuxExternalTerminal(servers[index], input);
+  const provenance = {
+    id: nanoid(),
+    owner: 'purplemux' as const,
+    resourceType: 'session' as const,
+    sessionId: created.sessionId,
+    sessionCreated: created.sessionCreated,
+    createdAt: new Date().toISOString(),
+  };
+  servers[index] = {
+    ...servers[index],
+    ownedTerminals: [...(servers[index].ownedTerminals ?? []), provenance],
+  };
+  await write(servers);
+  return { ...created, provenance };
+});
 
 /** Registration-only deletion: this function never invokes tmux. */
 export const unregisterExternalServer = (id: string): Promise<boolean> => withLock(async () => {

@@ -1,9 +1,12 @@
 import path from 'path';
+import { nanoid } from 'nanoid';
 import { ExternalTmuxSocketError, frozenExternalTmuxSocketIdentity } from '@/lib/external-tmux-socket';
 import { execTmux, execTmuxBuffer, externalTmuxTarget, type TmuxTarget } from '@/lib/tmux-target';
 import type {
   IExternalServer,
   IExternalServerInventory,
+  ICreatedExternalTerminal,
+  ICreateExternalTerminal,
   IExternalTmuxPane,
   IExternalTmuxSession,
   IExternalTmuxWindow,
@@ -69,7 +72,7 @@ export const freezeExternalServer = async (
 // Keep the enumerated fields ASCII-only so this works on tmux 2.9 and cannot be
 // confused by delimiters in names or paths. Free-form fields are fetched below.
 const INVENTORY_FORMAT = [
-  '#{session_id}', '#{session_attached}', '#{window_id}', '#{window_index}',
+  '#{session_id}', '#{session_created}', '#{session_attached}', '#{window_id}', '#{window_index}',
   '#{window_active}', '#{pane_id}', '#{pane_index}', '#{pane_active}',
   '#{pane_pid}', '#{pane_dead}',
 ].join('\t');
@@ -91,18 +94,24 @@ const parseExternalServerInventory = (server: IExternalServer, stdout: string): 
   const sessions = new Map<string, IExternalTmuxSession>();
   for (const line of stdout.trim() ? stdout.trimEnd().split('\n') : []) {
     const fields = line.split('\t');
-    if (fields.length !== 10) throw new ExternalServerError('Invalid external tmux runtime inventory');
-    const [sessionId, sessionAttached, windowId, windowIndex, windowActive,
+    if (fields.length !== 11) throw new ExternalServerError('Invalid external tmux runtime inventory');
+    const [sessionId, sessionCreated, sessionAttached, windowId, windowIndex, windowActive,
       paneId, paneIndex, paneActive, panePid, paneDead] = fields;
-    if (!/^\$\d+$/.test(sessionId) || !/^@\d+$/.test(windowId) || !/^%\d+$/.test(paneId)) {
+    if (!/^\$\d+$/.test(sessionId) || !/^\d+$/.test(sessionCreated)
+      || !/^@\d+$/.test(windowId) || !/^%\d+$/.test(paneId)) {
       throw new ExternalServerError('Invalid external tmux runtime inventory');
     }
 
     let session = sessions.get(sessionId);
     if (!session) {
-      session = { id: sessionId, name: '', exists: true, attached: attached(sessionAttached), windows: [] };
+      const provenance = server.ownedTerminals?.find((candidate) => candidate.owner === 'purplemux'
+        && candidate.resourceType === 'session' && candidate.sessionId === sessionId
+        && candidate.sessionCreated === sessionCreated);
+      session = { id: sessionId, name: '', sessionCreated, exists: true,
+        attached: attached(sessionAttached), owned: Boolean(provenance),
+        ...(provenance ? { provenance } : {}), windows: [] };
       sessions.set(sessionId, session);
-    } else if (session.attached !== attached(sessionAttached)) {
+    } else if (session.sessionCreated !== sessionCreated || session.attached !== attached(sessionAttached)) {
       throw new ExternalServerError('External tmux runtime changed during discovery');
     }
 
@@ -122,6 +131,41 @@ const parseExternalServerInventory = (server: IExternalServer, stdout: string): 
       pid: integer(panePid), currentCommand: '', currentPath: '', dead: flag(paneDead) });
   }
   return { ...server, exists: true, sessions: [...sessions.values()] };
+};
+
+const validateExternalTerminalInput = (input: ICreateExternalTerminal): string => {
+  if (!input || (input.name !== undefined && (typeof input.name !== 'string'
+    || !input.name.trim() || /[:.\n\r\0]/.test(input.name)))) {
+    throw new ExternalServerError('Terminal name must be non-empty and cannot contain colon or period');
+  }
+  return input.name?.trim() ?? `purplemux-${nanoid(8)}`;
+};
+
+/** Create one isolated session and return the exact identities needed for ownership persistence. */
+export const createExternalTerminal = async (
+  server: IExternalServer,
+  input: ICreateExternalTerminal = {},
+  signal?: AbortSignal,
+): Promise<Omit<ICreatedExternalTerminal, 'provenance'>> => {
+  const name = validateExternalTerminalInput(input);
+  try {
+    const { stdout } = await execTmux(externalServerTmuxTarget(server), [
+      'new-session', '-d', '-P', '-F',
+      '#{session_id}\t#{session_created}\t#{window_id}', '-s', name,
+    ], { timeout: 5000, signal });
+    const fields = stdout.trimEnd().split('\t');
+    if (fields.length !== 3 || !/^\$\d+$/.test(fields[0]) || !/^\d+$/.test(fields[1])
+      || !/^@\d+$/.test(fields[2])) {
+      throw new ExternalServerError('Invalid external tmux terminal creation result');
+    }
+    await assertExternalServerSocketIdentity(server, signal);
+    return { serverId: server.id, sessionId: fields[0], sessionCreated: fields[1],
+      windowId: fields[2], name };
+  } catch (error) {
+    signal?.throwIfAborted();
+    if (error instanceof ExternalServerError) throw error;
+    throw new ExternalServerError('Unable to create external tmux terminal');
+  }
 };
 
 const readExternalTmuxField = async (backend: TmuxTarget, target: string, field: string,

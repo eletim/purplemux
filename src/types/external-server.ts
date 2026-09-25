@@ -8,6 +8,30 @@ export interface IExternalServer {
   name: string;
   socketPath: string;
   socketIdentity: string;
+  /** Exact external resources created by PurpleMux. Missing on legacy registrations. */
+  ownedTerminals?: IExternalTerminalProvenance[];
+}
+
+export interface IExternalTerminalProvenance {
+  id: string;
+  owner: 'purplemux';
+  resourceType: 'session';
+  sessionId: string;
+  sessionCreated: string;
+  createdAt: string;
+}
+
+export interface ICreateExternalTerminal {
+  name?: string;
+}
+
+export interface ICreatedExternalTerminal {
+  serverId: string;
+  sessionId: string;
+  sessionCreated: string;
+  windowId: string;
+  name: string;
+  provenance: IExternalTerminalProvenance;
 }
 
 export interface IExternalTmuxPane {
@@ -33,8 +57,11 @@ export interface IExternalTmuxWindow {
 export interface IExternalTmuxSession {
   id: string;
   name: string;
+  sessionCreated: string;
   exists: true;
   attached: boolean;
+  owned: boolean;
+  provenance?: IExternalTerminalProvenance;
   windows: IExternalTmuxWindow[];
 }
 

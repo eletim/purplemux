@@ -146,4 +146,25 @@ describe('external server browser page', () => {
     fireEvent.click(screen.getByRole('button', { name: 'dev / shells / second' }));
     expect(screen.getByTestId('external-terminal').textContent).toBe('server-1:$1:@4');
   });
+
+  it('creates a new owned session and opens its returned terminal target', async () => {
+    const before = { id: 'server-1', name: 'dev', socketPath: '/known/socket',
+      socketIdentity: '1:2:3', exists: true, sessions: [] };
+    const after = { ...before, sessions: [{ id: '$2', name: 'purplemux-new', sessionCreated: '1750000000',
+      exists: true, attached: false, owned: true, windows: [
+        { id: '@3', name: 'shell', index: 0, exists: true, active: true, panes: [] },
+      ] }] };
+    const fetchMock = vi.fn(async (_url: string, init?: RequestInit) => init?.method === 'POST'
+      ? response({ serverId: 'server-1', sessionId: '$2', windowId: '@3' }, 201)
+      : response({ servers: fetchMock.mock.calls.some(([, options]) => options?.method === 'POST')
+        ? [after] : [before] }));
+    vi.stubGlobal('fetch', fetchMock);
+    mount(createElement(ExternalServersPage));
+
+    fireEvent.click(await screen.findByRole('button', { name: 'New Terminal on dev' }));
+    await waitFor(() => expect(screen.getByTestId('external-terminal').textContent).toBe('server-1:$2:@3'));
+    expect(fetchMock).toHaveBeenCalledWith('/api/cli/external-servers/server-1/terminals', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}',
+    });
+  });
 });

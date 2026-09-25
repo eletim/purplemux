@@ -42,6 +42,32 @@ describe('external tmux server registrations', () => {
     expect(tmux('list-windows', '-t', 'external', '-F', '#{window_id}').split('\n')).toHaveLength(2);
   });
 
+  it('creates a new session and persists exact ownership without adopting existing resources', async () => {
+    vi.spyOn(os, 'homedir').mockReturnValue(directory);
+    vi.resetModules();
+    const store = await import('@/lib/external-server-store');
+    const server = await store.registerExternalServer({ name: 'external', socketPath: socket });
+    const created = await store.createExternalTerminal(server.id);
+
+    expect(created).toMatchObject({ serverId: server.id, sessionId: '$1', windowId: '@1',
+      name: expect.stringMatching(/^purplemux-[A-Za-z0-9_-]{8}$/),
+      provenance: { owner: 'purplemux', resourceType: 'session',
+        sessionId: '$1', sessionCreated: expect.stringMatching(/^\d+$/), createdAt: expect.any(String) } });
+    expect(created?.provenance.id).toHaveLength(21);
+    const registrations = await store.listExternalServers();
+    expect(registrations[0].ownedTerminals).toEqual([created?.provenance]);
+
+    const inventory = await discoverExternalServer(registrations[0]);
+    expect(inventory.sessions.find(({ id }) => id === '$0')).toMatchObject({ owned: false });
+    expect(inventory.sessions.find(({ id }) => id === created?.sessionId)).toMatchObject({
+      name: created?.name, owned: true, provenance: created?.provenance,
+    });
+
+    await expect(store.unregisterExternalServer(server.id)).resolves.toBe(true);
+    expect(tmux('list-sessions', '-F', '#{session_id}:#{session_name}').split('\n'))
+      .toEqual(['$0:external', `$1:${created?.name}`]);
+  });
+
   it('rejects the managed socket and fails closed after socket replacement', async () => {
     vi.stubEnv('TMUX_TMPDIR', directory);
     const managedDirectory = path.join(directory, `tmux-${process.getuid?.()}`);
@@ -60,6 +86,7 @@ describe('external tmux server registrations', () => {
     await expect(assertExternalServerSocketIdentity(server)).rejects.toThrow('identity changed');
     await expect(execTmux(externalServerTmuxTarget(server), ['list-sessions']))
       .rejects.toThrow('identity changed');
+    await expect(store.createExternalTerminal(server.id)).rejects.toThrow('identity changed');
   });
 
   it('discovers fresh sessions, windows, and pane foreground metadata without recreating deletions', async () => {

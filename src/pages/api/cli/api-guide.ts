@@ -60,8 +60,20 @@ GET /api/cli/external-servers
         "panes": [{ "id": "%0", "index", "exists": true, "active", "pid",
           "currentCommand", "currentPath", "dead" }] }] }] }
   An unavailable or replaced registered server has exists:false, sessions:[], and
-  unavailableReason. Resources are discovered on every request and never created.
+  unavailableReason. Sessions include owned:false for pre-existing resources.
+  PurpleMux-created sessions have owned:true and persisted provenance.
   CLI equivalent: purplemux external-server list
+
+POST /api/cli/external-servers/<serverId>/terminals
+  Body: { "name"?: "terminal-name" }
+  Creates a new tmux session (never an implicit window in an existing session) and
+  persists PurpleMux ownership bound to its exact session ID and creation identity.
+  Returns { "serverId", "sessionId", "sessionCreated", "windowId", "name",
+            "provenance": { "id", "owner":"purplemux", "resourceType":"session",
+              "sessionId", "sessionCreated", "createdAt" } }.
+  CLI equivalent: purplemux external-server create-terminal SERVER_ID [--name NAME]
+  Registration alone never owns pre-existing sessions. Default lifecycle actions may
+  manage only matching owned records; unowned destruction requires explicit policy.
 
 DELETE /api/cli/external-servers/<serverId>
   Removes only the registration, including when the server is unavailable.

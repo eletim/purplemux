@@ -59,6 +59,16 @@ describe('purplemux external-server commands', () => {
       token: 'test-token', body: undefined }]);
   });
 
+  it('creates a named terminal session on an encoded registration', async () => {
+    const body = { serverId: '-tbquP-K1QhHnU_ZqnRF1', sessionId: '$2', windowId: '@3' };
+    const { port, requests } = await startServer(201, body);
+    expect(JSON.parse((await run(['external-server', 'create-terminal', body.serverId,
+      '--name', 'work'], port)).stdout)).toEqual(body);
+    expect(requests).toEqual([{ method: 'POST',
+      url: `/api/cli/external-servers/${body.serverId}/terminals`, token: 'test-token',
+      body: { name: 'work' } }]);
+  });
+
   it.each([
     [[], '--socket is required'],
     [['--socket', 'relative'], '--socket must be an absolute path'],
@@ -76,6 +86,7 @@ describe('purplemux external-server commands', () => {
     const { stdout } = await run(['help']);
     expect(stdout).toContain('external-server register --socket PATH --name NAME');
     expect(stdout).toContain('external-server list');
+    expect(stdout).toContain('external-server create-terminal ID [--name NAME]');
     expect(stdout).toContain('external-server unregister ID');
     expect(stdout).not.toContain('external-target register');
   });
