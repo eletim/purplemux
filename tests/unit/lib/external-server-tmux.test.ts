@@ -40,6 +40,16 @@ describe('external tmux runtime decoding', () => {
     });
   });
 
+  it.each(['  $0  ', '=external'])('rejects selector-shaped name %j before targeting a session', async (name) => {
+    const identity = { id: '123456789012345678901', requestId: 'selector-name',
+      createdAt: '2026-09-26T00:00:00.000Z' };
+
+    await expect(createExternalTerminal(server,
+      { requestId: 'selector-name', name }, identity))
+      .rejects.toThrow('Specify a valid requestId and terminal name');
+    expect(mocks.exec).not.toHaveBeenCalled();
+  });
+
   it('creates a marked session and returns stable identities for creation history', async () => {
     mocks.exec.mockResolvedValueOnce({ stdout: inventoryLine(), stderr: '' })
       .mockResolvedValueOnce({ stdout: '$4\t1750000001\t@7\n', stderr: '' });

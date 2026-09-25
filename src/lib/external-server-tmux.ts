@@ -146,7 +146,8 @@ const validateExternalTerminalInput = (input: ICreateExternalTerminal): string =
   if (!input || typeof input.requestId !== 'string'
     || !/^[-_A-Za-z0-9]{1,128}$/.test(input.requestId)
     || (input.name !== undefined && (typeof input.name !== 'string'
-    || !input.name.trim() || /[:.\n\r\0]/.test(input.name)))) {
+    || !input.name.trim() || /[:.\n\r\0]/.test(input.name)
+    || /^(?:\$\d+|=)/.test(input.name.trim())))) {
     throw new ExternalServerError('Specify a valid requestId and terminal name');
   }
   return input.name?.trim() ?? `purplemux-${nanoid(8)}`;
