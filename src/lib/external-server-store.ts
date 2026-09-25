@@ -3,6 +3,7 @@ import os from 'os';
 import path from 'path';
 import { nanoid } from 'nanoid';
 import { freezeExternalServer } from '@/lib/external-server-tmux';
+import { stopExternalTerminals } from '@/lib/external-terminal-resources';
 import type { IExternalServer, IRegisterExternalServer } from '@/types/external-server';
 
 const file = path.join(os.homedir(), '.purplemux', 'external-servers.json');
@@ -38,6 +39,9 @@ const write = async (servers: IExternalServer[]): Promise<void> => {
 
 export const listExternalServers = (): Promise<IExternalServer[]> => withLock(read);
 
+export const getExternalServer = (id: string): Promise<IExternalServer | undefined> =>
+  withLock(async () => (await read()).find((server) => server.id === id));
+
 export const registerExternalServer = (input: IRegisterExternalServer): Promise<IExternalServer> =>
   withLock(async () => {
     const frozen = await freezeExternalServer(input);
@@ -53,5 +57,6 @@ export const unregisterExternalServer = (id: string): Promise<boolean> => withLo
   const remaining = servers.filter((server) => server.id !== id);
   if (remaining.length === servers.length) return false;
   await write(remaining);
+  stopExternalTerminals(`external-server:${id}`);
   return true;
 });

@@ -20,6 +20,8 @@ import { sendExternalInput, areExternalClientsOnWindow, captureExternalHistory, 
 import { createExternalCaptureScheduler } from '@/lib/external-capture-scheduler';
 import type { IExtReview } from '@/types/ext-review';
 import { attachTmuxPty, managedTmuxTarget, type TmuxTarget } from '@/lib/tmux-target';
+import { getExternalServer } from '@/lib/external-server-store';
+import { resolveExternalServerWindow } from '@/lib/external-server-tmux';
 
 const log = createLogger('terminal');
 
@@ -71,7 +73,7 @@ export const getLastTerminalOutput = (sessionName: string): number | undefined =
   terminalOutputTimestamps.get(sessionName);
 
 const attachToSession = (target: TmuxTarget, sessionName: string, cols: number, rows: number,
-  signal?: AbortSignal,
+  signal?: AbortSignal, controlMode?: boolean,
 ): Promise<pty.IPty> =>
   attachTmuxPty(target, sessionName, {
     name: 'xterm-256color',
@@ -79,7 +81,7 @@ const attachToSession = (target: TmuxTarget, sessionName: string, cols: number, 
     rows,
     cwd: PRISTINE_ENV.HOME || '/',
     env: buildShellEnv(),
-  }, { signal });
+  }, { signal, controlMode });
 
 const cleanup = (conn: IActiveConnection, sessionExited = false) => {
   if (conn.cleaned) return;
@@ -223,10 +225,22 @@ export const handleConnection = async (ws: WebSocket, request: IncomingMessage, 
   const urlCols = parseInt(url.searchParams.get('cols') || '', 10);
   const urlRows = parseInt(url.searchParams.get('rows') || '', 10);
   const externalTargetId = url.searchParams.get('externalTargetId');
+  const externalServerId = url.searchParams.get('externalServerId');
+  const externalSessionId = url.searchParams.get('sessionId');
   const externalWindowId = url.searchParams.get('windowId');
-  if ((externalTargetId !== null || externalWindowId !== null)
-    && (!externalTargetId || !externalWindowId || url.searchParams.has('session')
-      || url.searchParams.getAll('externalTargetId').length !== 1
+  const hasLegacyExternalTarget = externalTargetId !== null;
+  const hasExternalServerTarget = externalServerId !== null || externalSessionId !== null;
+  const hasExternalTargetParams = hasLegacyExternalTarget || hasExternalServerTarget || externalWindowId !== null;
+  const validLegacyExternalTarget = hasLegacyExternalTarget && !hasExternalServerTarget
+    && !!externalTargetId && !!externalWindowId;
+  const validExternalServerTarget = hasExternalServerTarget && !hasLegacyExternalTarget
+    && !!externalServerId && /^\$\d+$/.test(externalSessionId ?? '')
+    && /^@\d+$/.test(externalWindowId ?? '');
+  if (hasExternalTargetParams
+    && (!(validLegacyExternalTarget || validExternalServerTarget) || url.searchParams.has('session')
+      || url.searchParams.getAll('externalTargetId').length > 1
+      || url.searchParams.getAll('externalServerId').length > 1
+      || url.searchParams.getAll('sessionId').length > 1
       || url.searchParams.getAll('windowId').length !== 1)) {
     ws.close(1008, 'Invalid external target');
     return;
@@ -277,6 +291,7 @@ export const handleConnection = async (ws: WebSocket, request: IncomingMessage, 
   let lastHeartbeat = Date.now();
   let sessionName = '';
   let tmuxTarget: TmuxTarget = managedTmuxTarget;
+  let connectionKind: 'managed' | 'legacy-external' | 'external-server' = 'managed';
   let externalDefinition: IExtReview | undefined;
   let externalWindowGuard: ExternalWindowGuard | undefined;
   let webStdinQueue = Promise.resolve();
@@ -307,7 +322,7 @@ export const handleConnection = async (ws: WebSocket, request: IncomingMessage, 
 
     switch (msg.type) {
       case MSG_STDIN: {
-        if (tmuxTarget.kind === 'external') {
+        if (connectionKind === 'legacy-external') {
           externalInputQueue = externalInputQueue.then(() => {
             if (conn?.cleaned) return;
             return sendExternalInput(externalDefinition!, sessionName, msg.payload, externalAbort.signal);
@@ -318,7 +333,7 @@ export const handleConnection = async (ws: WebSocket, request: IncomingMessage, 
         break;
       }
       case MSG_WEB_STDIN: {
-        if (tmuxTarget.kind === 'external') {
+        if (connectionKind === 'legacy-external') {
           externalInputQueue = externalInputQueue.then(async () => {
             if (conn?.cleaned) return;
             await sendExternalInput(externalDefinition!, sessionName, msg.payload, externalAbort.signal, true);
@@ -327,7 +342,7 @@ export const handleConnection = async (ws: WebSocket, request: IncomingMessage, 
         }
         const data = textDecoder.decode(msg.payload);
         webStdinQueue = webStdinQueue
-          .then(() => exitCopyMode(sessionName))
+          .then(() => exitCopyMode(sessionName, tmuxTarget))
           .catch(() => {})
           .then(() => { ptyProcess?.write(data); });
         break;
@@ -343,12 +358,12 @@ export const handleConnection = async (ws: WebSocket, request: IncomingMessage, 
               conn.currentCols = newCols;
               conn.currentRows = newRows;
               if (!conn.capturePaused) {
-                if (tmuxTarget.kind === 'external') ptyProcess.write(`refresh-client -C ${newCols},${newRows}\n`);
+                if (connectionKind === 'legacy-external') ptyProcess.write(`refresh-client -C ${newCols},${newRows}\n`);
                 else ptyProcess.resize(newCols, newRows);
                 if (sizeChanged) startThrottleWindow('resize');
               }
             } else {
-              if (tmuxTarget.kind === 'external') ptyProcess.write(`refresh-client -C ${newCols},${newRows}\n`);
+              if (connectionKind === 'legacy-external') ptyProcess.write(`refresh-client -C ${newCols},${newRows}\n`);
               else ptyProcess.resize(newCols, newRows);
             }
           }
@@ -393,8 +408,9 @@ export const handleConnection = async (ws: WebSocket, request: IncomingMessage, 
     cleanup(conn);
   });
 
-  if (externalTargetId && externalWindowId) {
-    externalTerminals.set(ws, { targetId: externalTargetId, stop: () => {
+  if ((externalTargetId || externalServerId) && externalWindowId) {
+    const resourceId = externalTargetId ?? `external-server:${externalServerId}`;
+    externalTerminals.set(ws, { targetId: resourceId, stop: () => {
       externalAbort.abort();
       externalWindowGuard?.stop();
       if (ws.readyState === WebSocket.OPEN) ws.close(1000, 'External target unregistered');
@@ -403,6 +419,51 @@ export const handleConnection = async (ws: WebSocket, request: IncomingMessage, 
         cleanup(conn);
       }
     } });
+  }
+
+  if (externalServerId && externalSessionId && externalWindowId) {
+    let server;
+    try {
+      server = await getExternalServer(externalServerId);
+    } catch {
+      ws.close(1011, 'External server registration unavailable');
+      return;
+    }
+    if (!server) {
+      ws.close(1008, 'External server is not registered');
+      return;
+    }
+    try {
+      tmuxTarget = await resolveExternalServerWindow(
+        server,
+        externalSessionId,
+        externalWindowId,
+        externalAbort.signal,
+      );
+    } catch {
+      ws.close(1011, 'External terminal unavailable');
+      return;
+    }
+    if (ws.readyState !== WebSocket.OPEN) return;
+    connectionKind = 'external-server';
+    sessionName = `${externalSessionId}:${externalWindowId}`;
+    currentCols = urlCols > 0 ? urlCols : (pending.resize?.cols || 80);
+    currentRows = urlRows > 0 ? urlRows : (pending.resize?.rows || 24);
+    try {
+      ptyProcess = await attachToSession(
+        tmuxTarget,
+        sessionName,
+        currentCols,
+        currentRows,
+        externalAbort.signal,
+        false,
+      );
+    } catch (err) {
+      log.error(`external server tmux attach failed: ${err instanceof Error ? err.message : err}`);
+      ws.close(1011, 'External terminal attach failed');
+      return;
+    }
+  } else if (externalTargetId && externalWindowId) {
     let definition;
     try {
       definition = await loadExtReviewDefinition(externalTargetId);
@@ -423,6 +484,7 @@ export const handleConnection = async (ws: WebSocket, request: IncomingMessage, 
     if (ws.readyState !== WebSocket.OPEN) return;
     sessionName = `${definition.sessionId}:${externalWindowId}`;
     tmuxTarget = extReviewTmuxTarget(definition);
+    connectionKind = 'legacy-external';
     externalDefinition = definition;
     currentCols = urlCols > 0 ? urlCols : (pending.resize?.cols || 80);
     currentRows = urlRows > 0 ? urlRows : (pending.resize?.rows || 24);
@@ -433,7 +495,14 @@ export const handleConnection = async (ws: WebSocket, request: IncomingMessage, 
         || !await areExternalClientsOnWindow(definition, [externalWindowGuard.pid], externalWindowId)) {
         throw new Error('External window guard unavailable');
       }
-      ptyProcess = await attachToSession(tmuxTarget, sessionName, currentCols, currentRows, externalAbort.signal);
+      ptyProcess = await attachToSession(
+        tmuxTarget,
+        sessionName,
+        currentCols,
+        currentRows,
+        externalAbort.signal,
+        true,
+      );
       ptyProcess.write(`refresh-client -C ${currentCols},${currentRows}\n`);
       await assertExtReviewSocketIdentity(definition, externalAbort.signal);
     } catch (err) {
@@ -487,7 +556,7 @@ export const handleConnection = async (ws: WebSocket, request: IncomingMessage, 
   if (pending.resize && pending.resize.cols > 0 && pending.resize.rows > 0) {
     currentCols = pending.resize.cols;
     currentRows = pending.resize.rows;
-    if (tmuxTarget.kind === 'external') ptyProcess.write(`refresh-client -C ${currentCols},${currentRows}\n`);
+    if (connectionKind === 'legacy-external') ptyProcess.write(`refresh-client -C ${currentCols},${currentRows}\n`);
     else ptyProcess.resize(currentCols, currentRows);
   }
 
@@ -505,7 +574,7 @@ export const handleConnection = async (ws: WebSocket, request: IncomingMessage, 
     ws,
     pty: ptyProcess,
     sessionName,
-    external: !!externalTargetId,
+    external: connectionKind !== 'managed',
     windowGuard: externalWindowGuard,
     clientId,
     heartbeatTimer,
@@ -541,7 +610,7 @@ export const handleConnection = async (ws: WebSocket, request: IncomingMessage, 
   };
 
   const sendCheckedStdout = (data: string) => {
-    if (tmuxTarget.kind !== 'external' || !externalWindowId) return sendStdout(data);
+    if (connectionKind !== 'legacy-external' || !externalWindowId) return sendStdout(data);
     externalQueuedBytes += Buffer.byteLength(data);
     if (externalQueuedBytes > BACKPRESSURE_HIGH && !externalQueuePaused) {
       externalQueuePaused = true;
@@ -634,7 +703,7 @@ export const handleConnection = async (ws: WebSocket, request: IncomingMessage, 
   conn.disposables.push(
     ptyProcess.onData((data: string) => {
       if (conn.cleaned || ws.readyState !== WebSocket.OPEN) return;
-      if (tmuxTarget.kind === 'external') {
+      if (connectionKind === 'legacy-external') {
         captureExternalOutput();
         return;
       }
@@ -649,7 +718,7 @@ export const handleConnection = async (ws: WebSocket, request: IncomingMessage, 
     }),
   );
 
-  if (tmuxTarget.kind === 'external') captureExternalOutput();
+  if (connectionKind === 'legacy-external') captureExternalOutput();
 
   conn.disposables.push(
     ptyProcess.onExit(({ exitCode, signal }) => {

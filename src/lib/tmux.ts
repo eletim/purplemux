@@ -8,7 +8,7 @@ import { buildShellLaunchCommand } from '@/lib/shell-env';
 import { createLogger } from '@/lib/logger';
 import { isLinux } from '@/lib/platform';
 import { getProcessArgs } from '@/lib/process-utils';
-import { execTmux, managedTmuxTarget, spawnTmux } from '@/lib/tmux-target';
+import { execTmux, managedTmuxTarget, spawnTmux, type TmuxTarget } from '@/lib/tmux-target';
 
 const log = createLogger('terminal');
 
@@ -381,9 +381,12 @@ export const getPaneTitle = async (sessionName: string): Promise<string | null> 
   }
 };
 
-export const exitCopyMode = async (sessionName: string): Promise<void> => {
+export const exitCopyMode = async (
+  sessionName: string,
+  target: TmuxTarget = managedTmuxTarget,
+): Promise<void> => {
   await execTmux(
-    managedTmuxTarget,
+    target,
     ['copy-mode', '-q', '-t', sessionName],
     { timeout: CMD_TIMEOUT },
   ).catch(() => {});
