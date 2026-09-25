@@ -37,9 +37,18 @@ export const captureExternalHistory = async (review: IExtReview, windowId: strin
   const before = await list();
   const match = /^(%\d+)\t(@\d+)$/.exec(before);
   if (!match || match[2] !== windowId) return null;
-  const { stdout } = await execTmux(backend, ['capture-pane',
-    '-p', '-e', '-S', '-2000', '-E', '-1', '-t', `${target}.${match[1]}`],
-  { timeout: 5000, maxBuffer: 4 * 1024 * 1024, signal });
+  let stdout: string;
+  try {
+    ({ stdout } = await execTmux(backend, ['capture-pane',
+      '-p', '-e', '-S', '-2000', '-E', '-1', '-t', `${target}.${match[1]}`],
+    { timeout: 5000, maxBuffer: 4 * 1024 * 1024, signal }));
+  } catch (error) {
+    await resolveExtReviewTargets(review, signal);
+    if (await list() !== before) {
+      throw new ExtReviewSnapshotRaceError('External pane changed during history capture');
+    }
+    throw error;
+  }
   await resolveExtReviewTargets(review, signal);
   if (await list() !== before) throw new ExtReviewSnapshotRaceError('External pane changed during history capture');
   return stdout;

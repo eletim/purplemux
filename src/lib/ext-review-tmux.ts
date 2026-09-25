@@ -127,12 +127,23 @@ export const captureExtReviewWindow = async (review: IExtReview, windowId: strin
   const cols = Math.max(...panes.map(([, , , left, , width]) => Number(left) + Number(width)));
   const rows = Math.max(...panes.map(([, , , , top, , height]) => Number(top) + Number(height)));
   let screen = `\x1b[8;${rows};${cols}t\x1b[?25l\x1b[0m\x1b[2J\x1b[H`;
-  for (const [, , pane, left, top, , height] of panes) {
-    const content = await run(['capture-pane', '-p', '-e', '-N', '-t', `${target}.${pane}`]);
-    const lines = content.split('\n').slice(0, Number(height));
-    lines.forEach((line, row) => {
-      screen += `\x1b[${Number(top) + row + 1};${Number(left) + 1}H\x1b[0m${line}`;
-    });
+  try {
+    for (const [, , pane, left, top, , height] of panes) {
+      const content = await run(['capture-pane', '-p', '-e', '-N', '-t', `${target}.${pane}`]);
+      const lines = content.split('\n').slice(0, Number(height));
+      lines.forEach((line, row) => {
+        screen += `\x1b[${Number(top) + row + 1};${Number(left) + 1}H\x1b[0m${line}`;
+      });
+    }
+  } catch (error) {
+    // A pane may disappear after list-panes but before capture-pane. Retry only
+    // after proving the frozen server/session/window identity is still intact
+    // and the failure coincided with a pane-membership change.
+    await resolveExtReviewTargets(review, signal);
+    if (await list() !== before) {
+      throw new ExtReviewSnapshotRaceError('Frozen window panes changed during observation');
+    }
+    throw error;
   }
   // Do not publish a snapshot if identities or pane membership changed mid-read.
   await resolveExtReviewTargets(review, signal);
