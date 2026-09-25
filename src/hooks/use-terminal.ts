@@ -324,35 +324,53 @@ const useTerminal = ({ readOnly = false, theme, fontSize = DEFAULT_FONT_SIZE, li
           const initialVisibleRows = readVisibleRows();
           let visibleRows = initialVisibleRows;
           let scrollSteps = 0;
+          let text: string | null = null;
+          let restored = false;
 
           try {
-            const text = await collectPromptBlock({
-              initialRows: snapshotPromptRows(buffer, row, visibleEnd),
-              promptPrefix: callbacksRef.current.promptPrefix,
-              loadNextRows: async () => {
-                if (disposed || scrollSteps >= MAX_PROMPT_COPY_SCROLL_STEPS) return null;
-                const previousRows = visibleRows;
-                // tmux.conf maps one wheel event to an exact three-line scroll.
-                await waitForScrollRender(() => dispatchWheel('down'));
-                if (disposed) return null;
+            try {
+              text = await collectPromptBlock({
+                initialRows: snapshotPromptRows(buffer, row, visibleEnd),
+                promptPrefix: callbacksRef.current.promptPrefix,
+                loadNextRows: async () => {
+                  if (disposed || scrollSteps >= MAX_PROMPT_COPY_SCROLL_STEPS) return null;
+                  const previousRows = visibleRows;
+                  // tmux.conf requests three rows; the live bottom may advance fewer.
+                  await waitForScrollRender(() => dispatchWheel('down'));
+                  if (disposed) return null;
 
-                for (let attempt = 0; attempt <= PROMPT_COPY_SCROLL_RENDER_RETRIES; attempt++) {
-                  if (attempt > 0) {
-                    await waitForPromptCopyDelay(PROMPT_COPY_SCROLL_RETRY_DELAY_MS);
-                    if (disposed) return null;
+                  for (let attempt = 0; attempt <= PROMPT_COPY_SCROLL_RENDER_RETRIES; attempt++) {
+                    if (attempt > 0) {
+                      await waitForPromptCopyDelay(PROMPT_COPY_SCROLL_RETRY_DELAY_MS);
+                      if (disposed) return null;
+                    }
+                    const currentRows = readVisibleRows();
+                    const newRows = getNewlyVisiblePromptRows(previousRows, currentRows);
+                    if (newRows.length > 0) {
+                      visibleRows = currentRows;
+                      scrollSteps++;
+                      return newRows;
+                    }
                   }
-                  const currentRows = readVisibleRows();
-                  const newRows = getNewlyVisiblePromptRows(previousRows, currentRows);
-                  if (newRows.length > 0) {
-                    visibleRows = currentRows;
-                    scrollSteps++;
-                    return newRows;
-                  }
-                }
-                return null;
-              },
-            });
-            if (!text || disposed) return;
+                  return null;
+                },
+              });
+            } finally {
+              if (!disposed) {
+                restored = await restorePromptViewport({
+                  targetRows: initialVisibleRows,
+                  readRows: () => disposed ? initialVisibleRows : readVisibleRows(),
+                  scrollUp: () => disposed
+                    ? Promise.resolve()
+                    : waitForScrollRender(() => dispatchWheel('up')),
+                  // At the live bottom tmux exits copy-mode. The first upward wheel
+                  // only re-enters it, so allow one observed no-op before restoring.
+                  maxAttempts: scrollSteps + 1,
+                });
+              }
+            }
+
+            if (!text || disposed || !restored) return;
             const ok = await copyToClipboard(text);
             if (ok && !disposed) {
               toast.success(callbacksRef.current.t('copyPaneSuccess'), {
@@ -361,18 +379,6 @@ const useTerminal = ({ readOnly = false, theme, fontSize = DEFAULT_FONT_SIZE, li
               });
             }
           } finally {
-            if (!disposed) {
-              await restorePromptViewport({
-                targetRows: initialVisibleRows,
-                readRows: () => disposed ? initialVisibleRows : readVisibleRows(),
-                scrollUp: () => disposed
-                  ? Promise.resolve()
-                  : waitForScrollRender(() => dispatchWheel('up')),
-                // At the live bottom tmux exits copy-mode. The first upward wheel
-                // only re-enters it, so allow one observed no-op before restoring.
-                maxAttempts: scrollSteps + 1,
-              });
-            }
             if (!disposed) {
               gutter.inert = false;
               promptMarkerSyncRef.current();

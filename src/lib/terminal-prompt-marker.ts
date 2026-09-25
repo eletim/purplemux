@@ -101,13 +101,18 @@ export const getNewlyVisiblePromptRows = (
   current: readonly ITerminalPromptRow[],
 ): ITerminalPromptRow[] => {
   if (arePromptRowsEqual(previous, current)) return [];
-  const overlap = current.length - 3;
-  if (overlap < 0 || overlap > previous.length) return [];
-  const previousOverlap = overlap === 0 ? [] : previous.slice(-overlap);
-  if (!arePromptRowsEqual(previousOverlap, current.slice(0, overlap))) {
-    return [];
+
+  // tmux normally advances three rows per wheel event, but the final scroll
+  // may stop one or two rows short when it reaches the live bottom.
+  for (let addedRows = Math.min(3, current.length - 1); addedRows > 0; addedRows--) {
+    const overlap = current.length - addedRows;
+    if (overlap > previous.length) continue;
+    if (arePromptRowsEqual(previous.slice(-overlap), current.slice(0, overlap))) {
+      return current.slice(overlap);
+    }
   }
-  return current.slice(overlap);
+
+  return [];
 };
 
 interface IRestorePromptViewportOptions {
@@ -148,7 +153,7 @@ export const collectPromptBlock = async ({
     if (!block.text || block.complete) return block.text;
 
     const nextRows = await loadNextRows();
-    if (!nextRows || nextRows.length === 0) return block.text;
+    if (!nextRows || nextRows.length === 0) return null;
     rows.push(...nextRows);
   }
 };

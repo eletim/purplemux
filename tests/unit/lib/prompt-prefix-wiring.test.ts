@@ -29,7 +29,7 @@ describe('prompt-prefix terminal wiring', () => {
     expect(source).toContain('if (disposed || gutter.inert) return;');
     expect(source).toContain('gutter.inert = true;');
     expect(source).toContain('for (const finish of [...pendingPromptCopyWaits]) finish();');
-    expect(source).toMatch(/if \(!text \|\| disposed\) return;[\s\S]*?copyToClipboard\(text\)/);
+    expect(source).toMatch(/if \(!text \|\| disposed \|\| !restored\) return;[\s\S]*?copyToClipboard\(text\)/);
   });
 
   it('keeps the existing success toast after a prompt block is copied', () => {

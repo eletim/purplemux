@@ -200,7 +200,7 @@ describe('terminal prompt markers', () => {
     expect(loadedGroups.every((group) => group.length === 3)).toBe(true);
   });
 
-  it('adds exactly three rows only after an exact three-row scroll', () => {
+  it('adds one to three rows after validating the overlap for a full or final scroll', () => {
     const previous = snapshotPromptRows(createBuffer(['one', 'two', 'three', 'four', 'five']), 0, 5);
     const advancedThree = snapshotPromptRows(createBuffer(['four', 'five', 'six', 'seven', 'eight']), 0, 5);
     const advancedTwo = snapshotPromptRows(createBuffer(['three', 'four', 'five', 'six', 'seven']), 0, 5);
@@ -208,11 +208,27 @@ describe('terminal prompt markers', () => {
 
     expect(getNewlyVisiblePromptRows(previous, advancedThree).map((row) => row.text.trimEnd()))
       .toEqual(['six', 'seven', 'eight']);
-    expect(getNewlyVisiblePromptRows(previous, advancedTwo)).toEqual([]);
-    expect(getNewlyVisiblePromptRows(previous, advancedOne)).toEqual([]);
+    expect(getNewlyVisiblePromptRows(previous, advancedTwo).map((row) => row.text.trimEnd()))
+      .toEqual(['six', 'seven']);
+    expect(getNewlyVisiblePromptRows(previous, advancedOne).map((row) => row.text.trimEnd()))
+      .toEqual(['six']);
     expect(getNewlyVisiblePromptRows(advancedThree, advancedThree)).toEqual([]);
+    expect(getNewlyVisiblePromptRows(previous, snapshotPromptRows(
+      createBuffer(['unrelated', 'redraw', 'without', 'validated', 'overlap']), 0, 5,
+    ))).toEqual([]);
     const threeRowScreen = snapshotPromptRows(createBuffer(['six', 'seven', 'eight']), 0, 3);
     expect(getNewlyVisiblePromptRows(threeRowScreen, threeRowScreen)).toEqual([]);
+  });
+
+  it('does not return a partial block when loading the next rows fails', async () => {
+    await expect(collectPromptBlock({
+      initialRows: snapshotPromptRows(createBuffer([
+        'eletim@E-ryzen:~$ first',
+        'partial output',
+      ]), 0, 2),
+      promptPrefix: PROMPT_PREFIX,
+      loadNextRows: vi.fn().mockResolvedValue(null),
+    })).resolves.toBeNull();
   });
 
   it('restores by observed rows when the first upward scroll only re-enters copy-mode', async () => {
