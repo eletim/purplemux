@@ -49,6 +49,7 @@ const mount = (component: React.ReactNode) => render(createElement(SWRConfig, { 
 beforeEach(() => {
   vi.clearAllMocks();
   ObservationSocket.instances = [];
+  window.sessionStorage.clear();
   vi.stubGlobal('WebSocket', ObservationSocket);
 });
 afterEach(() => { cleanup(); vi.useRealTimers(); vi.unstubAllGlobals(); });
@@ -145,5 +146,59 @@ describe('external server browser page', () => {
     expect((await screen.findByTestId('external-terminal')).textContent).toBe('server-1:$1:@2');
     fireEvent.click(screen.getByRole('button', { name: 'dev / shells / second' }));
     expect(screen.getByTestId('external-terminal').textContent).toBe('server-1:$1:@4');
+  });
+
+  it('creates a new owned session and opens its returned terminal target', async () => {
+    const before = { id: 'server-1', name: 'dev', socketPath: '/known/socket',
+      socketIdentity: '1:2:3', exists: true, sessions: [] };
+    const after = { ...before, sessions: [{ id: '$2', name: 'purplemux-new', sessionCreated: '1750000000',
+      exists: true, attached: false, owned: true, windows: [
+        { id: '@3', name: 'shell', index: 0, exists: true, active: true, panes: [] },
+      ] }] };
+    const fetchMock = vi.fn(async (_url: string, init?: RequestInit) => init?.method === 'POST'
+      ? response({ serverId: 'server-1', sessionId: '$2', windowId: '@3',
+        provenance: { requestId: JSON.parse(String(init.body)).requestId } }, 201)
+      : response({ servers: fetchMock.mock.calls.some(([, options]) => options?.method === 'POST')
+        ? [after] : [before] }));
+    vi.stubGlobal('fetch', fetchMock);
+    mount(createElement(ExternalServersPage));
+
+    fireEvent.click(await screen.findByRole('button', { name: 'New Terminal on dev' }));
+    await waitFor(() => expect(screen.getByTestId('external-terminal').textContent).toBe('server-1:$2:@3'));
+    const creation = fetchMock.mock.calls.find(([, init]) => init?.method === 'POST')!;
+    expect(creation[0]).toBe('/api/cli/external-servers/server-1/terminals');
+    expect(JSON.parse(String(creation[1]?.body))).toEqual({ requestId: expect.any(String) });
+  });
+
+  it('reuses an unknown request and does not report a committed creation as failed on refresh', async () => {
+    const server = { id: 'server-1', name: 'dev', socketPath: '/known/socket',
+      socketIdentity: '1:2:3', exists: true, sessions: [] };
+    let postCount = 0;
+    const requestBodies: Array<{ requestId: string }> = [];
+    const fetchMock = vi.fn(async (_url: string, init?: RequestInit) => {
+      if (init?.method === 'POST') {
+        const request = JSON.parse(String(init.body));
+        requestBodies.push(request);
+        postCount += 1;
+        if (postCount === 1) return response({ error: 'creation outcome is unknown',
+          outcomeUnknown: true, requestId: request.requestId }, 503);
+        return response({ serverId: 'server-1', sessionId: '$2', windowId: '@3',
+          provenance: { requestId: request.requestId } }, 201);
+      }
+      if (postCount > 1) return response({ error: 'refresh failed' }, 500);
+      return response({ servers: [server] });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    mount(createElement(ExternalServersPage));
+
+    fireEvent.click(await screen.findByRole('button', { name: 'New Terminal on dev' }));
+    await screen.findByText('creation outcome is unknown');
+    cleanup();
+    mount(createElement(ExternalServersPage));
+    fireEvent.click(await screen.findByRole('button', { name: 'New Terminal on dev' }));
+    await waitFor(() => expect(requestBodies).toHaveLength(2));
+    expect(requestBodies[1]).toEqual(requestBodies[0]);
+    await waitFor(() => expect(screen.queryByText('creation outcome is unknown')).toBeNull());
+    expect(screen.queryByText('Unable to create external terminal.')).toBeNull();
   });
 });

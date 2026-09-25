@@ -5,6 +5,7 @@
 'use strict';
 
 const fs = require('fs');
+const crypto = require('crypto');
 const os = require('os');
 const path = require('path');
 
@@ -267,6 +268,48 @@ const cmdExternalServerList = async (args) => {
   out(body);
 };
 
+const cmdExternalServerCreateTerminal = async (args) => {
+  const serverId = args[0];
+  if (!isReviewId(serverId)) die('an external server ID is required');
+  let name;
+  let requestId;
+  for (let i = 1; i < args.length; i += 2) {
+    const flag = args[i];
+    if (!['--name', '--request-id'].includes(flag) || !args[i + 1] || args[i + 1].startsWith('--')) {
+      die('usage: external-server create-terminal ID [--name NAME] [--request-id ID]');
+    }
+    if (flag === '--name') name = args[i + 1];
+    else requestId = args[i + 1];
+  }
+  requestId ??= crypto.randomUUID();
+  requireEnv();
+  let resp;
+  try {
+    resp = await fetch(`${BASE}/api/cli/external-servers/${encodeURIComponent(serverId)}/terminals`, {
+      method: 'POST', headers: { 'X-Pmux-Token': TOKEN, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ requestId, ...(name ? { name } : {}) }),
+    });
+  } catch {
+    die(`external terminal creation outcome unknown; retry with --request-id ${requestId} (transport failure)`);
+  }
+  let body;
+  try { body = await resp.json(); } catch {
+    die(`external terminal creation outcome unknown; retry with --request-id ${requestId} (invalid JSON response)`);
+  }
+  if (!resp.ok) {
+    const message = body?.error || `HTTP ${resp.status}`;
+    if (resp.status >= 500) {
+      die(`external terminal creation outcome unknown; retry with --request-id ${requestId} (server error: ${message})`);
+    }
+    die(message);
+  }
+  if (!body || typeof body.sessionId !== 'string' || typeof body.windowId !== 'string'
+    || body.provenance?.requestId !== requestId) {
+    die(`external terminal creation outcome unknown; retry with --request-id ${requestId} (invalid response)`);
+  }
+  out(body);
+};
+
 const cmdExternalServerUnregister = async (args) => {
   if (args.length !== 1 || !isReviewId(args[0])) die('exactly one external server ID is required');
   requireEnv();
@@ -501,6 +544,8 @@ Commands:
   external-server register --socket PATH --name NAME
                                            Register an external tmux server; print its stable ID
   external-server list                     List registrations with fresh tmux runtime inventory
+  external-server create-terminal ID [--name NAME] [--request-id ID]
+                                           Create an owned tmux session on a registered server
   external-server unregister ID            Remove registration without changing tmux resources
   tab list [-w WS]                         List tabs (optionally scoped to workspace)
   tab create -w WS [-n NAME] [-t TYPE]     Create a tab in workspace (type: terminal | claude-code | codex-cli | agent-sessions | web-browser | diff)
@@ -550,6 +595,7 @@ const main = async () => {
     case 'external-server':
       if (sub === 'register') return cmdExternalServerRegister(rest);
       if (sub === 'list') return cmdExternalServerList(rest);
+      if (sub === 'create-terminal') return cmdExternalServerCreateTerminal(rest);
       if (sub === 'unregister') return cmdExternalServerUnregister(rest);
       die(`unknown external-server command: ${sub || '(none)'}. Run 'purplemux help' for usage.`);
       break;

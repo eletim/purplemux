@@ -2,9 +2,11 @@ import fs from 'fs/promises';
 import os from 'os';
 import path from 'path';
 import { nanoid } from 'nanoid';
-import { freezeExternalServer } from '@/lib/external-server-tmux';
+import { createExternalTerminal as createTmuxExternalTerminal,
+  freezeExternalServer, rollbackExternalTerminalCreation } from '@/lib/external-server-tmux';
 import { stopExternalTerminals } from '@/lib/external-terminal-resources';
-import type { IExternalServer, IRegisterExternalServer } from '@/types/external-server';
+import type { ICreatedExternalTerminal, ICreateExternalTerminal,
+  IExternalServer, IExternalTerminalProvenance, IRegisterExternalServer } from '@/types/external-server';
 
 const file = path.join(os.homedir(), '.purplemux', 'external-servers.json');
 const state = globalThis as typeof globalThis & { __purplemuxExternalServerLock?: Promise<void> };
@@ -21,7 +23,14 @@ const read = async (): Promise<IExternalServer[]> => {
   try {
     const data = JSON.parse(await fs.readFile(file, 'utf8'));
     if (!Array.isArray(data)) throw new Error('Invalid external server registrations');
-    return data;
+    return data.map((entry) => {
+      const legacy = entry as IExternalServer & { ownedTerminals?: IExternalTerminalProvenance[] };
+      const { ownedTerminals, ...server } = legacy;
+      return {
+        ...server,
+        terminalCreations: server.terminalCreations ?? ownedTerminals ?? [],
+      };
+    });
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === 'ENOENT') return [];
     throw error;
@@ -46,10 +55,44 @@ export const registerExternalServer = (input: IRegisterExternalServer): Promise<
   withLock(async () => {
     const frozen = await freezeExternalServer(input);
     const servers = await read();
-    const server = { id: nanoid(), ...frozen };
+    const server = { id: nanoid(), ...frozen, terminalCreations: [] };
     await write([...servers, server]);
     return server;
   });
+
+export const createExternalTerminal = (
+  serverId: string,
+  input: ICreateExternalTerminal,
+): Promise<ICreatedExternalTerminal | undefined> => withLock(async () => {
+  const servers = await read();
+  const index = servers.findIndex((server) => server.id === serverId);
+  if (index < 0) return undefined;
+  const prior = servers[index].terminalCreations?.find((entry) => entry.requestId === input.requestId);
+  const identity = prior
+    ? { ...prior, requestId: input.requestId }
+    : { id: nanoid(), requestId: input.requestId, createdAt: new Date().toISOString() };
+  const created = await createTmuxExternalTerminal(servers[index], input, identity);
+  const { createdNow, ...terminal } = created;
+  if (prior) return terminal;
+  const provenance = created.provenance;
+  servers[index] = {
+    ...servers[index],
+    terminalCreations: [...(servers[index].terminalCreations ?? []), provenance],
+  };
+  try {
+    await write(servers);
+  } catch (writeError) {
+    if (!createdNow) throw writeError;
+    try {
+      await rollbackExternalTerminalCreation(servers[index], created);
+    } catch (rollbackError) {
+      throw new AggregateError([writeError, rollbackError],
+        'Failed to persist terminal creation history and roll back the created external terminal');
+    }
+    throw writeError;
+  }
+  return terminal;
+});
 
 /** Registration-only deletion: this function never invokes tmux. */
 export const unregisterExternalServer = (id: string): Promise<boolean> => withLock(async () => {
