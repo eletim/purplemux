@@ -53,8 +53,14 @@ POST /api/cli/external-servers
   CLI equivalent: purplemux external-server register --socket /absolute/path --name dev-server
 
 GET /api/cli/external-servers
-  Response: { "servers": [{ "id", "name", "socketPath", "socketIdentity" }] }
-  Lists registrations without discovering or freezing sessions and windows.
+  Returns every registration with a fresh runtime inventory. A live server has
+  { "id", "name", "socketPath", "socketIdentity", "exists": true,
+    "sessions": [{ "id": "$0", "name", "exists": true, "attached",
+      "windows": [{ "id": "@0", "name", "index", "exists": true, "active",
+        "panes": [{ "id": "%0", "index", "exists": true, "active", "pid",
+          "currentCommand", "currentPath", "dead" }] }] }] }
+  An unavailable or replaced registered server has exists:false, sessions:[], and
+  unavailableReason. Resources are discovered on every request and never created.
   CLI equivalent: purplemux external-server list
 
 DELETE /api/cli/external-servers/<serverId>

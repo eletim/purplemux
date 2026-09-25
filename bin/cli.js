@@ -500,7 +500,7 @@ Commands:
   ext-review delete ID                     Delete only the Review definition
   external-server register --socket PATH --name NAME
                                            Register an external tmux server; print its stable ID
-  external-server list                     List external tmux server registrations
+  external-server list                     List registrations with fresh tmux runtime inventory
   external-server unregister ID            Remove registration without changing tmux resources
   tab list [-w WS]                         List tabs (optionally scoped to workspace)
   tab create -w WS [-n NAME] [-t TYPE]     Create a tab in workspace (type: terminal | claude-code | codex-cli | agent-sessions | web-browser | diff)

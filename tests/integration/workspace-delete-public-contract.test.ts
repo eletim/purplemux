@@ -137,10 +137,14 @@ exec ${quote(realTmux)} "$@"
     const registration = await cli('external-server', 'register', '--socket', socket, '--name', 'dev server');
     expect(registration).toMatchObject({ name: 'dev server', socketPath: socket,
       socketIdentity: expect.stringMatching(/^\d+:\d+:\d+$/) });
-    expect((await cli('external-server', 'list')).servers).toEqual([registration]);
+    expect((await cli('external-server', 'list')).servers).toMatchObject([{
+      ...registration, exists: true, sessions: [{ id: '$0', name: 'external', exists: true }],
+    }]);
     tmux('new-window', '-d', '-t', 'external', '-n', 'added', 'echo ADDED_SECRET; exec sleep 300');
     initial = state();
     pids.push(Number(tmux('display-message', '-p', '-t', '$0:@2', '#{pane_pid}')));
+    expect((await cli('external-server', 'list')).servers[0].sessions[0].windows)
+      .toEqual(expect.arrayContaining([expect.objectContaining({ id: '@2', name: 'added', exists: true })]));
     expect(await cli('ext-review', 'get', review.id)).toMatchObject({ id: review.id, windowIds: ['@0'] });
     expect(await cli('external-server', 'unregister', registration.id)).toEqual({ deleted: true });
     expect((await cli('external-server', 'list')).servers).toEqual([]);

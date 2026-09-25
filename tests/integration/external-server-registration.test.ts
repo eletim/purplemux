@@ -3,7 +3,8 @@ import fs from 'fs/promises';
 import os from 'os';
 import path from 'path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { assertExternalServerSocketIdentity, externalServerTmuxTarget } from '@/lib/external-server-tmux';
+import { assertExternalServerSocketIdentity, discoverExternalServer,
+  externalServerTmuxTarget } from '@/lib/external-server-tmux';
 import { execTmux } from '@/lib/tmux-target';
 
 let directory: string;
@@ -59,5 +60,43 @@ describe('external tmux server registrations', () => {
     await expect(assertExternalServerSocketIdentity(server)).rejects.toThrow('identity changed');
     await expect(execTmux(externalServerTmuxTarget(server), ['list-sessions']))
       .rejects.toThrow('identity changed');
+  });
+
+  it('discovers fresh sessions, windows, and pane foreground metadata without recreating deletions', async () => {
+    vi.spyOn(os, 'homedir').mockReturnValue(directory);
+    vi.resetModules();
+    const store = await import('@/lib/external-server-store');
+    const server = await store.registerExternalServer({ name: 'external', socketPath: socket });
+
+    let inventory = await discoverExternalServer(server);
+    expect(inventory).toMatchObject({ id: server.id, exists: true, sessions: [{
+      id: '$0', name: 'external', exists: true, windows: [{
+        id: '@0', exists: true, active: true, panes: [{
+          id: '%0', exists: true, active: true, currentCommand: 'sleep', dead: false,
+        }],
+      }],
+    }] });
+    expect(inventory.sessions[0].windows[0].panes[0]).toEqual(expect.objectContaining({
+      pid: expect.any(Number), currentPath: expect.any(String), index: 0,
+    }));
+
+    tmux('new-session', '-d', '-s', 'new-session', 'sleep 300');
+    tmux('new-window', '-d', '-t', '$0', '-n', 'fresh-window', 'sleep 300');
+    inventory = await discoverExternalServer(server);
+    expect(inventory.sessions.map(({ id, name }) => ({ id, name }))).toEqual([
+      { id: '$0', name: 'external' }, { id: '$1', name: 'new-session' },
+    ]);
+    expect(inventory.sessions[0].windows.map(({ id, name }) => ({ id, name }))).toContainEqual(
+      { id: '@2', name: 'fresh-window' });
+
+    tmux('kill-window', '-t', '$0:@2');
+    inventory = await discoverExternalServer(server);
+    expect(inventory.sessions[0].windows.some(({ id }) => id === '@2')).toBe(false);
+    expect(tmux('list-windows', '-t', '$0', '-F', '#{window_id}').split('\n')).not.toContain('@2');
+
+    tmux('kill-server');
+    inventory = await discoverExternalServer(server);
+    expect(inventory).toMatchObject({ exists: false, sessions: [], unavailableReason: expect.any(String) });
+    expect(() => tmux('list-sessions')).toThrow();
   });
 });
