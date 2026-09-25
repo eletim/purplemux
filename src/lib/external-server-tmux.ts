@@ -4,7 +4,9 @@ import { execTmux, execTmuxBuffer, externalTmuxTarget, type TmuxTarget } from '@
 import type {
   IExternalServer,
   IExternalServerInventory,
+  IExternalTmuxPane,
   IExternalTmuxSession,
+  IExternalTmuxWindow,
   IRegisterExternalServer,
 } from '@/types/external-server';
 
@@ -134,67 +136,122 @@ const readExternalTmuxField = async (backend: TmuxTarget, target: string, field:
   return stdout.subarray(0, -1).toString('utf8');
 };
 
+const METADATA_CONCURRENCY = 8;
+
+const runMetadataTasks = async (tasks: Array<() => Promise<void>>): Promise<void> => {
+  let next = 0;
+  let failed = false;
+  let failure: unknown;
+  const worker = async () => {
+    while (!failed) {
+      const index = next;
+      next += 1;
+      if (index >= tasks.length) return;
+      try {
+        await tasks[index]();
+      } catch (error) {
+        failed = true;
+        failure = error;
+      }
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(METADATA_CONCURRENCY, tasks.length) }, worker));
+  if (failed) throw failure;
+};
+
 const populateExternalServerMetadata = async (inventory: IExternalServerInventory,
   signal?: AbortSignal): Promise<void> => {
   const backend = externalServerTmuxTarget(inventory);
-  const windowNames = new Map<string, string>();
-  const paneMetadata = new Map<string, { currentCommand: string; currentPath: string }>();
+  const tasks: Array<() => Promise<void>> = [];
+  const windows = new Map<string, IExternalTmuxWindow[]>();
+  const panes = new Map<string, IExternalTmuxPane[]>();
   for (const session of inventory.sessions) {
-    session.name = await readExternalTmuxField(backend, session.id, 'session_name', signal);
+    tasks.push(async () => { session.name = await readExternalTmuxField(backend,
+      session.id, 'session_name', signal); });
     for (const window of session.windows) {
-      let windowName = windowNames.get(window.id);
-      if (windowName === undefined) {
-        windowName = await readExternalTmuxField(backend, window.id, 'window_name', signal);
-        windowNames.set(window.id, windowName);
-      }
-      window.name = windowName;
+      const links = windows.get(window.id) ?? [];
+      links.push(window);
+      windows.set(window.id, links);
       for (const pane of window.panes) {
-        let metadata = paneMetadata.get(pane.id);
-        if (!metadata) {
-          metadata = {
-            currentCommand: await readExternalTmuxField(backend, pane.id, 'pane_current_command', signal),
-            currentPath: await readExternalTmuxField(backend, pane.id, 'pane_current_path', signal),
-          };
-          paneMetadata.set(pane.id, metadata);
-        }
-        Object.assign(pane, metadata);
+        const appearances = panes.get(pane.id) ?? [];
+        appearances.push(pane);
+        panes.set(pane.id, appearances);
       }
     }
   }
+  for (const [windowId, links] of windows) {
+    tasks.push(async () => {
+      const name = await readExternalTmuxField(backend, windowId, 'window_name', signal);
+      links.forEach((window) => { window.name = name; });
+    });
+  }
+  for (const [paneId, appearances] of panes) {
+    tasks.push(async () => {
+      const currentCommand = await readExternalTmuxField(backend, paneId, 'pane_current_command', signal);
+      appearances.forEach((pane) => { pane.currentCommand = currentCommand; });
+    });
+    tasks.push(async () => {
+      const currentPath = await readExternalTmuxField(backend, paneId, 'pane_current_path', signal);
+      appearances.forEach((pane) => { pane.currentPath = currentPath; });
+    });
+  }
+  await runMetadataTasks(tasks);
 };
 
 const isZeroSessionFailure = (error: unknown): boolean => error instanceof Error
   && /no current target|no sessions/.test(error.message);
+
+const assertExternalServerLive = async (server: IExternalServer, signal?: AbortSignal): Promise<void> => {
+  const { stdout } = await execTmux(externalServerTmuxTarget(server),
+    ['display-message', '-p', '#{pid}'], { timeout: 5000, signal });
+  if (!/^\d+\n?$/.test(stdout)) throw new ExternalServerError('External tmux server is unavailable');
+  await assertExternalServerSocketIdentity(server, signal);
+};
+
+const unavailableInventory = (server: IExternalServer, error: unknown): IExternalServerInventory => ({
+  ...server,
+  exists: false,
+  sessions: [],
+  unavailableReason: error instanceof Error ? error.message : 'External tmux server is unavailable',
+});
 
 /** Discover current resources only; this never persists targets or invokes a creating tmux command. */
 export const discoverExternalServer = async (
   server: IExternalServer,
   signal?: AbortSignal,
 ): Promise<IExternalServerInventory> => {
-  try {
-    const { stdout } = await execTmux(externalServerTmuxTarget(server),
-      ['list-panes', '-a', '-F', INVENTORY_FORMAT],
-      { timeout: 5000, maxBuffer: 4 * 1024 * 1024, signal });
-    const inventory = parseExternalServerInventory(server, stdout);
-    await populateExternalServerMetadata(inventory, signal);
-    await assertExternalServerSocketIdentity(server, signal);
-    return inventory;
-  } catch (error) {
-    signal?.throwIfAborted();
-    if (isZeroSessionFailure(error)) {
-      try {
-        const { stdout } = await execTmux(externalServerTmuxTarget(server),
-          ['display-message', '-p', '#{pid}'], { timeout: 5000, signal });
-        if (!/^\d+\n?$/.test(stdout)) throw new ExternalServerError('External tmux server is unavailable');
-        await assertExternalServerSocketIdentity(server, signal);
-        return { ...server, exists: true, sessions: [] };
-      } catch (probeError) {
-        signal?.throwIfAborted();
-        return { ...server, exists: false, sessions: [], unavailableReason: probeError instanceof Error
-          ? probeError.message : 'External tmux server is unavailable' };
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    try {
+      const { stdout } = await execTmux(externalServerTmuxTarget(server),
+        ['list-panes', '-a', '-F', INVENTORY_FORMAT],
+        { timeout: 5000, maxBuffer: 4 * 1024 * 1024, signal });
+      const inventory = parseExternalServerInventory(server, stdout);
+      await populateExternalServerMetadata(inventory, signal);
+      await assertExternalServerSocketIdentity(server, signal);
+      return inventory;
+    } catch (error) {
+      signal?.throwIfAborted();
+      if (isZeroSessionFailure(error)) {
+        try {
+          await assertExternalServerLive(server, signal);
+          return { ...server, exists: true, sessions: [] };
+        } catch (probeError) {
+          signal?.throwIfAborted();
+          return unavailableInventory(server, probeError);
+        }
       }
+      if (attempt === 0) {
+        try {
+          await assertExternalServerLive(server, signal);
+          continue;
+        } catch (probeError) {
+          signal?.throwIfAborted();
+          return unavailableInventory(server, probeError);
+        }
+      }
+      return unavailableInventory(server, error);
     }
-    return { ...server, exists: false, sessions: [], unavailableReason: error instanceof Error
-      ? error.message : 'External tmux server is unavailable' };
   }
+  // The loop always returns, but keep the total return type explicit.
+  return unavailableInventory(server, new ExternalServerError('External tmux server is unavailable'));
 };

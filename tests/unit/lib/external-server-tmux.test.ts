@@ -40,4 +40,54 @@ describe('external tmux runtime decoding', () => {
       name: 'shell', panes: [{ currentCommand: 'bash', currentPath: '/tmp/�' }],
     }] }] });
   });
+
+  it('retries a live snapshot when a resource disappears during metadata lookup', async () => {
+    const stale = '$0\t0\t@0\t0\t1\t%0\t0\t0\t123\t0\n'
+      + '$0\t0\t@0\t0\t1\t%1\t1\t1\t124\t0\n';
+    const survivor = '$0\t0\t@0\t0\t1\t%1\t0\t1\t124\t0\n';
+    mocks.exec.mockReset()
+      .mockResolvedValueOnce({ stdout: stale, stderr: '' })
+      .mockResolvedValueOnce({ stdout: '456\n', stderr: '' })
+      .mockResolvedValueOnce({ stdout: survivor, stderr: '' });
+    mocks.execBuffer.mockImplementation(async (_target, args: string[]) => {
+      if (args[3] === '%0') throw new Error('can\'t find pane: %0');
+      const field = args.at(-1);
+      const value = field === '#{session_name}' ? 'external' : field === '#{window_name}' ? 'shell'
+        : field === '#{pane_current_path}' ? '/tmp' : 'bash';
+      return { stdout: Buffer.from(`${value}\n`), stderr: Buffer.alloc(0) };
+    });
+
+    const inventory = await discoverExternalServer({
+      id: 'server', name: 'dev', socketPath: '/known/socket', socketIdentity: '1:2:3',
+    });
+
+    expect(inventory).toMatchObject({ exists: true, sessions: [{ windows: [{ panes: [{ id: '%1' }] }] }] });
+    expect(inventory.sessions[0].windows[0].panes).toHaveLength(1);
+    expect(mocks.exec).toHaveBeenCalledTimes(3);
+  });
+
+  it('bounds concurrent metadata commands for large inventories', async () => {
+    mocks.exec.mockResolvedValue({ stdout: Array.from({ length: 20 }, (_, pane) =>
+      `$0\t0\t@0\t0\t1\t%${pane}\t${pane}\t${pane === 0 ? 1 : 0}\t${100 + pane}\t0`).join('\n') + '\n', stderr: '' });
+    let active = 0;
+    let maximum = 0;
+    mocks.execBuffer.mockImplementation(async (_target, args: string[]) => {
+      active += 1;
+      maximum = Math.max(maximum, active);
+      await new Promise((resolve) => setTimeout(resolve, 2));
+      active -= 1;
+      const field = args.at(-1);
+      const value = field === '#{session_name}' ? 'external' : field === '#{window_name}' ? 'shell'
+        : field === '#{pane_current_path}' ? '/tmp' : 'bash';
+      return { stdout: Buffer.from(`${value}\n`), stderr: Buffer.alloc(0) };
+    });
+
+    const inventory = await discoverExternalServer({
+      id: 'server', name: 'dev', socketPath: '/known/socket', socketIdentity: '1:2:3',
+    });
+
+    expect(inventory.sessions[0].windows[0].panes).toHaveLength(20);
+    expect(maximum).toBeGreaterThan(1);
+    expect(maximum).toBeLessThanOrEqual(8);
+  });
 });
