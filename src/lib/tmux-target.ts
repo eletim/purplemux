@@ -120,13 +120,20 @@ export const attachTmuxPty = async (
   target: TmuxTarget,
   sessionName: string,
   options: pty.IPtyForkOptions,
-  settings: { noOutput?: boolean; signal?: AbortSignal; onSpawn?: (client: pty.IPty) => void } = {},
+  settings: {
+    controlMode?: boolean;
+    noOutput?: boolean;
+    readOnly?: boolean;
+    signal?: AbortSignal;
+    onSpawn?: (client: pty.IPty) => void;
+  } = {},
 ): Promise<pty.IPty> => {
   await validateTmuxTarget(target, settings.signal);
   const externalFlags = settings.noOutput ? 'read-only,ignore-size,no-output' : 'read-only,ignore-size';
-  const client = pty.spawn('tmux', tmuxTargetArgs(target, target.kind === 'external'
+  const controlMode = settings.controlMode ?? target.kind === 'external';
+  const client = pty.spawn('tmux', tmuxTargetArgs(target, controlMode
     ? ['-u', '-C', 'attach-session', '-f', externalFlags, '-t', sessionName]
-    : ['-u', 'attach-session', '-t', sessionName]), options);
+    : ['-u', 'attach-session', ...(settings.readOnly ? ['-r'] : []), '-t', sessionName]), options);
   // Control clients must subscribe before node-pty can emit initial protocol events.
   settings.onSpawn?.(client);
   try {

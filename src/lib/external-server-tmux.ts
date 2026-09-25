@@ -255,3 +255,24 @@ export const discoverExternalServer = async (
   // The loop always returns, but keep the total return type explicit.
   return unavailableInventory(server, new ExternalServerError('External tmux server is unavailable'));
 };
+
+export const resolveExternalServerWindow = async (
+  server: IExternalServer,
+  sessionId: string,
+  windowId: string,
+  signal?: AbortSignal,
+): Promise<TmuxTarget> => {
+  if (!/^\$\d+$/.test(sessionId) || !/^@\d+$/.test(windowId)) {
+    throw new ExternalServerError('Invalid external tmux window target');
+  }
+  const inventory = await discoverExternalServer(server, signal);
+  if (!inventory.exists) {
+    throw new ExternalServerError(inventory.unavailableReason ?? 'External tmux server is unavailable');
+  }
+  const session = inventory.sessions.find((candidate) => candidate.id === sessionId);
+  if (!session?.windows.some((window) => window.id === windowId)) {
+    throw new ExternalServerError('External tmux window is unavailable');
+  }
+  await assertExternalServerSocketIdentity(server, signal);
+  return externalServerTmuxTarget(server);
+};

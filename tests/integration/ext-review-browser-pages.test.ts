@@ -15,11 +15,19 @@ vi.mock('@/lib/require-auth', () => ({ requireAuth: vi.fn() }));
 vi.mock('@/lib/load-messages', () => ({ loadMessagesServer: vi.fn() }));
 vi.mock('next/head', () => ({ default: () => null }));
 vi.mock('next/link', () => ({ default: ({ href, children }: { href: string; children: React.ReactNode }) => createElement('a', { href }, children) }));
-vi.mock('next/dynamic', () => ({ default: () => ({ reviewId, windowId }: { reviewId: string; windowId: string }) => createElement('div', { 'data-testid': 'viewer' }, `${reviewId}:${windowId}`) }));
+vi.mock('next/dynamic', () => ({ default: () => ({ reviewId, windowId, externalTerminalTarget }: {
+  reviewId?: string;
+  windowId?: string;
+  externalTerminalTarget?: { serverId: string; sessionId: string; windowId: string };
+}) => createElement('div', { 'data-testid': externalTerminalTarget ? 'external-terminal' : 'viewer' },
+  externalTerminalTarget
+    ? `${externalTerminalTarget.serverId}:${externalTerminalTarget.sessionId}:${externalTerminalTarget.windowId}`
+    : `${reviewId}:${windowId}`) }));
 
 import ReviewTerminal from '@/components/features/ext-review/review-terminal';
 import ExtReviewsPage from '@/pages/ext-review';
 import ExtReviewPage from '@/pages/ext-review/[id]';
+import ExternalServersPage from '@/pages/external-server';
 
 class ObservationSocket {
   static OPEN = 1;
@@ -120,5 +128,22 @@ describe('external Review browser pages', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Check again' }));
     await waitFor(() => expect(screen.getByRole('alert').textContent).toContain('deleted or does not exist'));
     expect(screen.queryByRole('navigation')).toBeNull();
+  });
+});
+
+describe('external server browser page', () => {
+  it('opens discovered windows through the shared production terminal renderer', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => response({ servers: [{
+      id: 'server-1', name: 'dev', socketPath: '/known/socket', socketIdentity: '1:2:3', exists: true,
+      sessions: [{ id: '$1', name: 'shells', exists: true, attached: false, windows: [
+        { id: '@2', name: 'first', index: 0, exists: true, active: true, panes: [] },
+        { id: '@4', name: 'second', index: 1, exists: true, active: false, panes: [] },
+      ] }],
+    }] })));
+    mount(createElement(ExternalServersPage));
+
+    expect((await screen.findByTestId('external-terminal')).textContent).toBe('server-1:$1:@2');
+    fireEvent.click(screen.getByRole('button', { name: 'dev / shells / second' }));
+    expect(screen.getByTestId('external-terminal').textContent).toBe('server-1:$1:@4');
   });
 });

@@ -4,7 +4,7 @@ import os from 'os';
 import path from 'path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { assertExternalServerSocketIdentity, discoverExternalServer,
-  externalServerTmuxTarget } from '@/lib/external-server-tmux';
+  externalServerTmuxTarget, resolveExternalServerWindow } from '@/lib/external-server-tmux';
 import { execTmux } from '@/lib/tmux-target';
 
 let directory: string;
@@ -113,5 +113,23 @@ describe('external tmux server registrations', () => {
     inventory = await discoverExternalServer(server);
     expect(inventory).toMatchObject({ exists: false, sessions: [], unavailableReason: expect.any(String) });
     expect(() => tmux('list-sessions')).toThrow();
+  });
+
+  it('resolves only an exact discovered session and window on the frozen socket', async () => {
+    vi.spyOn(os, 'homedir').mockReturnValue(directory);
+    vi.resetModules();
+    const store = await import('@/lib/external-server-store');
+    const server = await store.registerExternalServer({ name: 'external', socketPath: socket });
+    tmux('new-window', '-d', '-t', '$0', 'sleep 300');
+
+    await expect(resolveExternalServerWindow(server, '$0', '@0')).resolves.toMatchObject({
+      kind: 'external', socketPath: socket,
+    });
+    await expect(resolveExternalServerWindow(server, '$1', '@0'))
+      .rejects.toThrow('window is unavailable');
+    await expect(resolveExternalServerWindow(server, '$0', '@999'))
+      .rejects.toThrow('window is unavailable');
+    await expect(resolveExternalServerWindow(server, 'external', '@0'))
+      .rejects.toThrow('Invalid external tmux window target');
   });
 });

@@ -7,7 +7,7 @@ import type { IExtReview } from '@/types/ext-review';
 import { requireAuth } from '@/lib/require-auth';
 import { loadMessagesServer } from '@/lib/load-messages';
 
-const ExternalTargetTerminal = dynamic(() => import('@/components/features/ext-review/external-target-terminal'), { ssr: false });
+const ExternalTerminalSurface = dynamic(() => import('@/components/features/workspace/external-terminal-surface'), { ssr: false });
 const fetchTarget = async (url: string): Promise<IExtReview> => {
   const response = await fetch(url);
   if (!response.ok) throw new Error('External target unavailable');
@@ -29,7 +29,7 @@ export default function ExternalTargetPage({ id }: { id: string }) {
         <nav aria-label="Registered windows" className="flex flex-wrap gap-3">{target.windowIds.map((window) => (
           <button key={window} aria-pressed={windowId === window} className="border rounded px-3 py-2" onClick={() => setSelectedWindow(window)}>{window}</button>
         ))}</nav>
-        {windowId && <ExternalTargetTerminal key={`${id}:${windowId}`} targetId={id} windowId={windowId} />}
+        {windowId && <ExternalTerminalSurface key={`${id}:${windowId}`} targetId={id} windowId={windowId} />}
       </>}
     </main>
   );
