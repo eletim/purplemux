@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { WebSocket, WebSocketServer } from 'ws';
 import {
   encodeResize,
+  encodeKillSession,
   encodeStdin,
   encodeWebStdin,
   MSG_STDOUT,
@@ -84,6 +85,30 @@ afterEach(async () => {
 });
 
 describe('shared terminal path for discovered external windows', () => {
+  it('rejects kill frames while the external target is still resolving', async () => {
+    const store = await import('@/lib/external-server-store');
+    const getExternalServer = store.getExternalServer;
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    const lookup = vi.spyOn(store, 'getExternalServer').mockImplementation(async (...args) => {
+      await gate;
+      return getExternalServer(...args);
+    });
+
+    const connected = await connect();
+    try {
+      connected.ws.send(encodeKillSession());
+      await vi.waitFor(() => expect(connected.closed()).toEqual({
+        code: 1008,
+        reason: 'External target cannot be killed',
+      }));
+      expect(lookup).toHaveBeenCalledWith(registrationId);
+      expect(tmux('display-message', '-p', '-t', '$0:@0', '#{window_id}')).toBe('@0');
+    } finally {
+      release();
+    }
+  });
+
   it('shares display, input, web input, resize, scrollback, reconnect, and switching behavior', async () => {
     const first = await connect();
     await vi.waitFor(() => expect(first.output()).toContain('FIRST_WINDOW'));

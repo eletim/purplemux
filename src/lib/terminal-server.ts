@@ -340,6 +340,11 @@ export const handleConnection = async (ws: WebSocket, request: IncomingMessage, 
     const msg = parseMessage(raw);
     if (!msg) return;
 
+    if (msg.type === MSG_KILL_SESSION && externalServerId) {
+      ws.close(1008, 'External target cannot be killed');
+      return;
+    }
+
     if (!ptyProcess) {
       if (msg.type === MSG_RESIZE && msg.payload.length >= 4) {
         const view = new DataView(msg.payload.buffer, msg.payload.byteOffset, msg.payload.byteLength);
@@ -413,7 +418,7 @@ export const handleConnection = async (ws: WebSocket, request: IncomingMessage, 
         break;
       }
       case MSG_KILL_SESSION: {
-        if (conn?.external) {
+        if (connectionKind !== 'managed' || conn?.external) {
           ws.close(1008, 'External target cannot be killed');
           break;
         }
