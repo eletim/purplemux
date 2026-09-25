@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { nanoid } from 'nanoid';
 import Head from 'next/head';
 import dynamic from 'next/dynamic';
@@ -23,10 +23,21 @@ const fetchServers = async (): Promise<{ servers: IExternalServerInventory[] }> 
 const requestStorageKey = (serverId: string) => `purplemux-external-terminal-request:${serverId}`;
 
 export default function ExternalServersPage() {
-  const { data, error, mutate } = useSWR(endpoint, fetchServers, {
+  const refreshSequence = useRef({ started: 0, completed: 0 });
+  const fetchInventory = useCallback(async () => {
+    const sequence = ++refreshSequence.current.started;
+    const inventory = await fetchServers();
+    refreshSequence.current.completed = Math.max(refreshSequence.current.completed, sequence);
+    return inventory;
+  }, []);
+  const { data, error, isValidating, mutate } = useSWR(endpoint, fetchInventory, {
     refreshInterval: inventoryRefreshInterval,
   });
   const [selected, setSelected] = useState<IExternalTerminalTarget | null>(null);
+  const [createdTarget, setCreatedTarget] = useState<{
+    target: IExternalTerminalTarget;
+    afterRefresh: number;
+  } | null>(null);
   const [creatingServerId, setCreatingServerId] = useState<string | null>(null);
   const [creationError, setCreationError] = useState<string | null>(null);
   const requestIds = useRef(new Map<string, string>());
@@ -55,9 +66,14 @@ export default function ExternalServersPage() {
     }
     return targets;
   }, [data]);
-  const active = selected && availableTargets.some(({ target }) => target.serverId === selected.serverId
+  const active = createdTarget?.target ?? (selected && availableTargets.some(({ target }) => target.serverId === selected.serverId
     && target.sessionId === selected.sessionId && target.windowId === selected.windowId)
-    ? selected : availableTargets[0]?.target;
+    ? selected : availableTargets[0]?.target);
+  useEffect(() => {
+    if (createdTarget && refreshSequence.current.completed > createdTarget.afterRefresh) {
+      setCreatedTarget(null);
+    }
+  }, [createdTarget, data, isValidating]);
 
   const createTerminal = async (serverId: string) => {
     setCreatingServerId(serverId);
@@ -91,7 +107,9 @@ export default function ExternalServersPage() {
       setCreatingServerId(null);
       return;
     }
-    setSelected({ serverId, sessionId: body.sessionId, windowId: body.windowId });
+    const target = { serverId, sessionId: body.sessionId, windowId: body.windowId };
+    setSelected(target);
+    setCreatedTarget({ target, afterRefresh: refreshSequence.current.started });
     setCreatingServerId(null);
     // Creation already committed. A refresh failure must not be presented as a failed mutation.
     void mutate().catch(() => {});
@@ -108,7 +126,8 @@ export default function ExternalServersPage() {
         <button className="border rounded px-3 py-2" onClick={() => void mutate()}>Refresh</button>
       </div>
       {creationError && <p role="alert">{creationError}</p>}
-      {error ? <p role="alert">{error.message}</p> : !data ? <p role="status">Loading external servers…</p>
+      {error && <p role="alert">{error.message}</p>}
+      {!data ? !error && <p role="status">Loading external servers…</p>
         : <>
           {data.servers.length === 0 ? <p role="status">No external servers are registered.</p>
             : <div aria-label="External tmux servers" className="space-y-4">
@@ -142,15 +161,15 @@ export default function ExternalServersPage() {
                               && active.sessionId === target.sessionId && active.windowId === target.windowId;
                             return <button key={window.id} aria-label={`${server.name} / ${session.name} / ${window.name}`}
                               aria-pressed={isActive} className="border rounded px-3 py-2"
-                              onClick={() => setSelected(target)}>{window.name}</button>;
+                              onClick={() => { setCreatedTarget(null); setSelected(target); }}>{window.name}</button>;
                           })}
                         </nav>
                       </section>
                     ))}</div>}
               </section>)}
             </div>}
-          {availableTargets.length === 0 ? <p role="status">No external windows are available.</p>
-            : active && <ExternalTerminalSurface key={`${active.serverId}:${active.sessionId}:${active.windowId}`}
+          {!active ? <p role="status">No external windows are available.</p>
+            : <ExternalTerminalSurface key={`${active.serverId}:${active.sessionId}:${active.windowId}`}
               externalTerminalTarget={active} />}
         </>}
     </main>

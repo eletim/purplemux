@@ -191,17 +191,24 @@ describe('external server browser page', () => {
       exists: true, attached: false, owned: true, windows: [
         { id: '@3', name: 'shell', index: 0, exists: true, active: true, panes: [] },
       ] }] };
-    const fetchMock = vi.fn(async (_url: string, init?: RequestInit) => init?.method === 'POST'
-      ? response({ serverId: 'server-1', sessionId: '$2', windowId: '@3',
-        provenance: { requestId: JSON.parse(String(init.body)).requestId } }, 201)
-      : response({ servers: fetchMock.mock.calls.some(([, options]) => options?.method === 'POST')
-        ? [after] : [before] }));
+    let resolveRefresh!: (value: ReturnType<typeof response>) => void;
+    const refresh = new Promise<ReturnType<typeof response>>((resolve) => { resolveRefresh = resolve; });
+    let created = false;
+    const fetchMock = vi.fn(async (_url: string, init?: RequestInit) => {
+      if (init?.method === 'POST') {
+        created = true;
+        return response({ serverId: 'server-1', sessionId: '$2', windowId: '@3',
+          provenance: { requestId: JSON.parse(String(init.body)).requestId } }, 201);
+      }
+      return created ? refresh : response({ servers: [before] });
+    });
     vi.stubGlobal('fetch', fetchMock);
     mount(createElement(ExternalServersPage));
 
     fireEvent.click(await screen.findByRole('button', { name: 'New Terminal on dev' }));
     await waitFor(() => expect(screen.getByTestId('external-terminal').textContent).toBe('server-1:$2:@3'));
-    expect(screen.getByRole('region', { name: 'dev / purplemux-new session' }).textContent)
+    resolveRefresh(response({ servers: [after] }));
+    expect((await screen.findByRole('region', { name: 'dev / purplemux-new session' })).textContent)
       .toContain('Owned by PurpleMux');
     const creation = fetchMock.mock.calls.find(([, init]) => init?.method === 'POST')!;
     expect(creation[0]).toBe('/api/cli/external-servers/server-1/terminals');
@@ -238,5 +245,6 @@ describe('external server browser page', () => {
     expect(requestBodies[1]).toEqual(requestBodies[0]);
     await waitFor(() => expect(screen.queryByText('creation outcome is unknown')).toBeNull());
     expect(screen.queryByText('Unable to create external terminal.')).toBeNull();
+    expect(screen.getByTestId('external-terminal').textContent).toBe('server-1:$2:@3');
   });
 });
