@@ -5,17 +5,29 @@ import { attachTmuxPty, execTmux, validateTmuxTarget, type TmuxTarget } from '@/
 
 const EXTERNAL_HISTORY_MAX_BUFFER = 64 * 1024 * 1024;
 
-export const captureExternalHistory = async (
+export const deleteExternalHistoryBuffer = async (
   backend: TmuxTarget,
-  target: string,
-  historyLines: number,
+  bufferName: string,
+): Promise<void> => {
+  await execTmux(backend, ['delete-buffer', '-b', bufferName], { timeout: 5000 }).catch(() => {});
+};
+
+export const readExternalHistoryBuffer = async (
+  backend: TmuxTarget,
+  bufferName: string,
   signal?: AbortSignal,
 ): Promise<string> => {
-  const { stdout } = await execTmux(backend, [
-    'capture-pane', '-p', '-e', '-S', `-${historyLines}`, '-E', '-1', '-t', target,
-  ], { timeout: 5000, maxBuffer: EXTERNAL_HISTORY_MAX_BUFFER, signal });
-  await validateTmuxTarget(backend, signal);
-  return stdout.replaceAll('\n', '\r\n');
+  try {
+    const { stdout } = await execTmux(backend, ['show-buffer', '-b', bufferName], {
+      timeout: 5000,
+      maxBuffer: EXTERNAL_HISTORY_MAX_BUFFER,
+      signal,
+    });
+    await validateTmuxTarget(backend, signal);
+    return stdout.replaceAll('\n', '\r\n');
+  } finally {
+    await deleteExternalHistoryBuffer(backend, bufferName);
+  }
 };
 
 export const sendExternalInput = async (backend: TmuxTarget, target: string, data: Uint8Array,

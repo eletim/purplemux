@@ -7,7 +7,7 @@ vi.mock('@/lib/tmux-target', () => ({
   validateTmuxTarget: mocks.validate,
 }));
 
-import { captureExternalHistory } from '@/lib/external-terminal-safety';
+import { readExternalHistoryBuffer } from '@/lib/external-terminal-safety';
 
 describe('external terminal safety', () => {
   beforeEach(() => {
@@ -20,12 +20,14 @@ describe('external terminal safety', () => {
     const backend = { kind: 'external' as const, socketPath: '/known/socket', validate: vi.fn() };
     const signal = new AbortController().signal;
 
-    await expect(captureExternalHistory(backend, '$1:@2', 5000, signal))
+    await expect(readExternalHistoryBuffer(backend, 'purplemux-history-id', signal))
       .resolves.toBe('old\r\nhistory\r\n');
 
-    expect(mocks.exec).toHaveBeenCalledWith(backend, [
-      'capture-pane', '-p', '-e', '-S', '-5000', '-E', '-1', '-t', '$1:@2',
-    ], { timeout: 5000, maxBuffer: 64 * 1024 * 1024, signal });
+    expect(mocks.exec).toHaveBeenNthCalledWith(1, backend,
+      ['show-buffer', '-b', 'purplemux-history-id'],
+      { timeout: 5000, maxBuffer: 64 * 1024 * 1024, signal });
     expect(mocks.validate).toHaveBeenCalledWith(backend, signal);
+    expect(mocks.exec).toHaveBeenNthCalledWith(2, backend,
+      ['delete-buffer', '-b', 'purplemux-history-id'], { timeout: 5000 });
   });
 });

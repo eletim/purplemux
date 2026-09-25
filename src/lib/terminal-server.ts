@@ -1,4 +1,5 @@
 import { IncomingMessage } from 'http';
+import { randomUUID } from 'crypto';
 import { WebSocket } from 'ws';
 import type * as pty from 'node-pty';
 import {
@@ -14,7 +15,7 @@ import { encodeStdout } from '@/lib/terminal-protocol';
 import { reconcileTabCwd } from '@/lib/layout-store';
 import { createLogger } from '@/lib/logger';
 import { externalTerminals } from '@/lib/external-terminal-resources';
-import { captureExternalHistory, sendExternalInput,
+import { deleteExternalHistoryBuffer, readExternalHistoryBuffer, sendExternalInput,
   areExternalClientsOnTarget, ExternalWindowGuard } from '@/lib/external-terminal-safety';
 import { attachTmuxPty, managedTmuxTarget, type TmuxTarget } from '@/lib/tmux-target';
 import { getExternalServer } from '@/lib/external-server-store';
@@ -75,6 +76,7 @@ const attachToSession = (target: TmuxTarget, sessionName: string, cols: number, 
     signal?: AbortSignal;
     controlMode?: boolean;
     readOnly?: boolean;
+    historyCapture?: { bufferName: string; historyLines: number };
     onSpawn?: (client: pty.IPty) => void;
   } = {},
 ): Promise<pty.IPty> =>
@@ -301,6 +303,7 @@ export const handleConnection = async (ws: WebSocket, request: IncomingMessage, 
   let externalValidationQueue = Promise.resolve(true);
   let initialExternalOutput = '';
   let initialExternalHistory = '';
+  let externalHistoryBufferName = '';
   let initialExternalOutputDisposable: pty.IDisposable | undefined;
 
   const externalWindowIsSafe = (): Promise<boolean> => {
@@ -501,13 +504,7 @@ export const handleConnection = async (ws: WebSocket, request: IncomingMessage, 
         externalWindowId,
         externalAbort.signal,
       );
-      // Establish the history/live boundary before the PTY can emit its initial redraw.
-      initialExternalHistory = await captureExternalHistory(
-        tmuxTarget,
-        sessionName,
-        EXTERNAL_SCROLLBACK_LINES,
-        externalAbort.signal,
-      );
+      externalHistoryBufferName = `purplemux-history-${randomUUID()}`;
       ptyProcess = await attachToSession(
         tmuxTarget,
         sessionName,
@@ -517,13 +514,26 @@ export const handleConnection = async (ws: WebSocket, request: IncomingMessage, 
           signal: externalAbort.signal,
           controlMode: false,
           readOnly: true,
+          historyCapture: {
+            bufferName: externalHistoryBufferName,
+            historyLines: EXTERNAL_SCROLLBACK_LINES,
+          },
           onSpawn: (client) => {
             initialExternalOutputDisposable = client.onData((data) => { initialExternalOutput += data; });
           },
         },
       );
+      initialExternalHistory = await readExternalHistoryBuffer(
+        tmuxTarget,
+        externalHistoryBufferName,
+        externalAbort.signal,
+      );
+      externalHistoryBufferName = '';
       if (!await externalWindowIsSafe()) throw new Error('External window guard unavailable');
     } catch (err) {
+      if (externalHistoryBufferName) {
+        await deleteExternalHistoryBuffer(tmuxTarget, externalHistoryBufferName);
+      }
       externalWindowGuard?.stop();
       ptyProcess?.kill();
       log.error(`external server tmux attach failed: ${err instanceof Error ? err.message : err}`);

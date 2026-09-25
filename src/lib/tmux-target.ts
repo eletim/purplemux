@@ -124,6 +124,7 @@ export const attachTmuxPty = async (
     controlMode?: boolean;
     noOutput?: boolean;
     readOnly?: boolean;
+    historyCapture?: { bufferName: string; historyLines: number };
     signal?: AbortSignal;
     onSpawn?: (client: pty.IPty) => void;
   } = {},
@@ -131,9 +132,17 @@ export const attachTmuxPty = async (
   await validateTmuxTarget(target, settings.signal);
   const externalFlags = settings.noOutput ? 'read-only,ignore-size,no-output' : 'read-only,ignore-size';
   const controlMode = settings.controlMode ?? target.kind === 'external';
-  const client = pty.spawn('tmux', tmuxTargetArgs(target, controlMode
-    ? ['-u', '-C', 'attach-session', '-f', externalFlags, '-t', sessionName]
-    : ['-u', 'attach-session', ...(settings.readOnly ? ['-r'] : []), '-t', sessionName]), options);
+  if (settings.historyCapture && controlMode) {
+    throw new Error('History capture requires a normal tmux client');
+  }
+  const attachArgs = ['attach-session', ...(settings.readOnly ? ['-r'] : []), '-t', sessionName];
+  const clientArgs = settings.historyCapture
+    ? ['-u', 'capture-pane', '-e', '-S', `-${settings.historyCapture.historyLines}`,
+      '-E', '-1', '-b', settings.historyCapture.bufferName, '-t', sessionName, ';', ...attachArgs]
+    : controlMode
+      ? ['-u', '-C', 'attach-session', '-f', externalFlags, '-t', sessionName]
+      : ['-u', ...attachArgs];
+  const client = pty.spawn('tmux', tmuxTargetArgs(target, clientArgs), options);
   // Control clients must subscribe before node-pty can emit initial protocol events.
   settings.onSpawn?.(client);
   try {

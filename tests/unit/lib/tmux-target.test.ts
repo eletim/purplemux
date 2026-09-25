@@ -101,6 +101,23 @@ describe('tmux target operations', () => {
     ], expect.objectContaining({ name: 'xterm' }));
   });
 
+  it('captures history and attaches a normal client in one tmux command queue', async () => {
+    const target = externalTmuxTarget('/known/tmux.sock', vi.fn().mockResolvedValue(undefined));
+
+    await attachTmuxPty(target, '$1:@2', { name: 'xterm', cols: 80, rows: 24, cwd: '/' }, {
+      controlMode: false,
+      readOnly: true,
+      historyCapture: { bufferName: 'purplemux-history-id', historyLines: 5000 },
+    });
+
+    expect(mocks.ptySpawn).toHaveBeenCalledWith('tmux', [
+      '-N', '-S', '/known/tmux.sock', '-u',
+      'capture-pane', '-e', '-S', '-5000', '-E', '-1',
+      '-b', 'purplemux-history-id', '-t', '$1:@2',
+      ';', 'attach-session', '-r', '-t', '$1:@2',
+    ], expect.objectContaining({ name: 'xterm' }));
+  });
+
   it('does not spawn a PTY when external validation fails', async () => {
     const changed = new Error('socket changed');
     const target = externalTmuxTarget('/known/tmux.sock', vi.fn().mockRejectedValue(changed));
