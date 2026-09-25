@@ -25,7 +25,7 @@ describe('external terminal safety', () => {
 
     expect(mocks.exec).toHaveBeenCalledWith(backend, [
       'capture-pane', '-p', '-e', '-S', '-5000', '-E', '-1', '-t', '$1:@2',
-    ], { timeout: 5000, signal });
+    ], { timeout: 5000, maxBuffer: 64 * 1024 * 1024, signal });
     expect(mocks.validate).toHaveBeenCalledWith(backend, signal);
   });
 });

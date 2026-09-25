@@ -3,6 +3,8 @@ import { buildShellEnv } from '@/lib/shell-env';
 import { PRISTINE_ENV } from '@/lib/pristine-env';
 import { attachTmuxPty, execTmux, validateTmuxTarget, type TmuxTarget } from '@/lib/tmux-target';
 
+const EXTERNAL_HISTORY_MAX_BUFFER = 64 * 1024 * 1024;
+
 export const captureExternalHistory = async (
   backend: TmuxTarget,
   target: string,
@@ -11,7 +13,7 @@ export const captureExternalHistory = async (
 ): Promise<string> => {
   const { stdout } = await execTmux(backend, [
     'capture-pane', '-p', '-e', '-S', `-${historyLines}`, '-E', '-1', '-t', target,
-  ], { timeout: 5000, signal });
+  ], { timeout: 5000, maxBuffer: EXTERNAL_HISTORY_MAX_BUFFER, signal });
   await validateTmuxTarget(backend, signal);
   return stdout.replaceAll('\n', '\r\n');
 };

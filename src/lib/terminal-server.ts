@@ -501,6 +501,13 @@ export const handleConnection = async (ws: WebSocket, request: IncomingMessage, 
         externalWindowId,
         externalAbort.signal,
       );
+      // Establish the history/live boundary before the PTY can emit its initial redraw.
+      initialExternalHistory = await captureExternalHistory(
+        tmuxTarget,
+        sessionName,
+        EXTERNAL_SCROLLBACK_LINES,
+        externalAbort.signal,
+      );
       ptyProcess = await attachToSession(
         tmuxTarget,
         sessionName,
@@ -514,12 +521,6 @@ export const handleConnection = async (ws: WebSocket, request: IncomingMessage, 
             initialExternalOutputDisposable = client.onData((data) => { initialExternalOutput += data; });
           },
         },
-      );
-      initialExternalHistory = await captureExternalHistory(
-        tmuxTarget,
-        sessionName,
-        EXTERNAL_SCROLLBACK_LINES,
-        externalAbort.signal,
       );
       if (!await externalWindowIsSafe()) throw new Error('External window guard unavailable');
     } catch (err) {

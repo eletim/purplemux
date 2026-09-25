@@ -161,6 +161,34 @@ describe('shared terminal path for discovered external windows', () => {
     expect(second.output()).not.toContain('FIRST_WINDOW');
   }, 30_000);
 
+  it('does not duplicate output produced while history and live attachment are initialized', async () => {
+    tmux('send-keys', '-t', '$0:@0',
+      "for n in {1..45}; do printf 'ATTACH_BOUNDARY_%03d\\n' \"$n\"; done", 'Enter');
+    await vi.waitFor(() => expect(tmux('capture-pane', '-p', '-S', '-50', '-t', '$0:@0'))
+      .toContain('ATTACH_BOUNDARY_045'));
+
+    const connecting = connect();
+    await vi.waitFor(() => expect(tmux('list-clients', '-F', '#{client_flags}').split('\n')
+      .some((flags) => !flags.includes('no-output'))).toBe(true));
+
+    tmux('send-keys', '-t', '$0:@0',
+      "for n in {1..60}; do printf 'ACTIVE_ATTACH_%03d\\n' \"$n\"; sleep 0.01; done", 'Enter');
+
+    const connected = await connecting;
+    await vi.waitFor(() => expect(new Set(
+      [...connected.output().matchAll(/ACTIVE_ATTACH_(\d{3})/g)].map((match) => match[1]),
+    ).size).toBe(60), { timeout: 5000 });
+
+    const boundaryLines = [...connected.output().matchAll(/ATTACH_BOUNDARY_(\d{3})/g)]
+      .map((match) => match[1]);
+    const counts = new Map<string, number>();
+    for (const line of boundaryLines) counts.set(line, (counts.get(line) ?? 0) + 1);
+    for (let n = 1; n <= 10; n++) {
+      const line = String(n).padStart(3, '0');
+      expect(counts.get(line)).toBe(1);
+    }
+  }, 10_000);
+
   it('fails closed for mismatched identities and a replaced socket', async () => {
     const malformed = await connect('external', '@0');
     await vi.waitFor(() => expect(malformed.closed()?.code).toBe(1008));
