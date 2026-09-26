@@ -19,6 +19,7 @@ let server: Server;
 let wss: WebSocketServer;
 let origin: string;
 let registrationId: string;
+let forcedServerBufferedAmount: number | null;
 const clients: WebSocket[] = [];
 
 const tmux = (...args: string[]) => execFileSync('tmux', ['-f', '/dev/null', '-S', socketPath, ...args], {
@@ -53,6 +54,7 @@ const connect = async (sessionId = '$0', windowId = '@0') => {
 };
 
 beforeEach(async () => {
+  forcedServerBufferedAmount = null;
   directory = await fs.mkdtemp(path.join(os.tmpdir(), 'pmux-external-terminal-'));
   socketPath = path.join(directory, 'tmux');
   tmux('new-session', '-d', '-s', 'external', '-n', 'first', '-x', '90', '-y', '30',
@@ -69,7 +71,12 @@ beforeEach(async () => {
   const { handleConnection } = await import('@/lib/terminal-server');
   server = createServer();
   wss = new WebSocketServer({ server });
-  wss.on('connection', (ws, request) => { void handleConnection(ws, request, null); });
+  wss.on('connection', (ws, request) => {
+    if (forcedServerBufferedAmount !== null) {
+      vi.spyOn(ws, 'bufferedAmount', 'get').mockImplementation(() => forcedServerBufferedAmount ?? 0);
+    }
+    void handleConnection(ws, request, null);
+  });
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
   origin = `ws://127.0.0.1:${(server.address() as { port: number }).port}`;
 });
@@ -177,6 +184,32 @@ describe('shared terminal path for discovered external windows', () => {
     );
     expect(tmux('capture-pane', '-p', '-t', '$0:@0')).not.toContain('ACTIVE_ATTACH_001');
   }, 10_000);
+
+  it('resumes after a large initial scrollback drains without further PTY output', async () => {
+    tmux('set-option', '-g', 'history-limit', '7000');
+    tmux('new-window', '-d', '-t', '$0', '-n', 'large', 'exec bash --noprofile --norc');
+    tmux('resize-window', '-t', '$0:@2', '-x', '300', '-y', '30');
+    tmux('send-keys', '-t', '$0:@2',
+      "for n in {1..5200}; do printf 'LARGE_SCROLLBACK_%04d:%0270d\\n' \"$n\" 0; done", 'Enter');
+    await vi.waitFor(() => expect(tmux('capture-pane', '-p', '-S', '-10', '-t', '$0:@2'))
+      .toContain('LARGE_SCROLLBACK_5200'), { timeout: 5000 });
+
+    forcedServerBufferedAmount = 2 * 1024 * 1024;
+    const connected = await connect('$0', '@2');
+    await vi.waitFor(() => expect(connected.output()).toContain('LARGE_SCROLLBACK_5200'), {
+      timeout: 10_000,
+    });
+    expect(Buffer.byteLength(connected.output())).toBeGreaterThan(1024 * 1024);
+
+    tmux('send-keys', '-t', '$0:@2', "printf 'AFTER_SCROLLBACK_DRAIN\\n'", 'Enter');
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    expect(connected.output()).not.toContain('AFTER_SCROLLBACK_DRAIN');
+
+    forcedServerBufferedAmount = 0;
+    await vi.waitFor(() => expect(connected.output()).toContain('AFTER_SCROLLBACK_DRAIN'), {
+      timeout: 5000,
+    });
+  }, 20_000);
 
   it('fails closed for mismatched identities and a replaced socket', async () => {
     const malformed = await connect('external', '@0');
