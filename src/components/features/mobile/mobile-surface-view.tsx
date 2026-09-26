@@ -7,24 +7,20 @@ import { Button } from '@/components/ui/button';
 import type { IDiffSettings, ITab, TPanelType } from '@/types/terminal';
 import WebBrowserPanel from '@/components/features/workspace/web-browser-panel';
 import DiffPanel from '@/components/features/workspace/diff-panel';
-import useTerminal from '@/hooks/use-terminal';
-import useTerminalWebSocket from '@/hooks/use-terminal-websocket';
+import useTerminalSurface from '@/hooks/use-terminal-surface';
 import useTabMetadataStore from '@/hooks/use-tab-metadata-store';
-import TerminalContainer from '@/components/features/workspace/terminal-container';
+import TerminalSurface from '@/components/features/workspace/terminal-surface';
 import ConnectionStatus from '@/components/features/workspace/connection-status';
 import MobileClaudeCodePanel from '@/components/features/mobile/mobile-claude-code-panel';
 import MobileCodexPanel from '@/components/features/mobile/mobile-codex-panel';
 import AgentSessionsPanel from '@/components/features/workspace/agent-sessions-panel';
-import MobileTerminalToolbar from '@/components/features/mobile/mobile-terminal-toolbar';
 import PaneAgentModePrompt from '@/components/features/workspace/pane-agent-mode-prompt';
 import { formatTabTitle, isShellProcess } from '@/lib/tab-title';
 import { isAppShortcut, isClearShortcut, isFocusInputShortcut, isShiftEnter } from '@/lib/keyboard-shortcuts';
 import type { TCliState } from '@/types/timeline';
-import useTerminalTheme from '@/hooks/use-terminal-theme';
 import useTabStore, { getInitialTabStateFromLayoutTab, selectSessionView } from '@/hooks/use-tab-store';
 import { useLayoutStore } from '@/hooks/use-layout';
 import useConfigStore, { type TGitAskProvider } from '@/hooks/use-config-store';
-import { resolveLineHeight } from '@/lib/terminal-line-height';
 import useTrustPromptDetector from '@/hooks/use-trust-prompt-detector';
 import useCodexUpdatePromptDetector from '@/hooks/use-codex-update-prompt-detector';
 import { useAgentInstallCheck } from '@/hooks/use-agent-install-check';
@@ -92,8 +88,6 @@ interface IMobileSurfaceViewProps {
   onOpenNewTabDialog?: () => void;
 }
 
-const MOBILE_FONT_SIZE = 11;
-
 const MobileSurfaceView = ({
   paneId,
   tabs,
@@ -126,10 +120,6 @@ const MobileSurfaceView = ({
   const layoutWsId = useLayoutStore((state) => state.workspaceId);
   const diffSettings = useLayoutStore((state) => state.layout?.diffSettings);
 
-  const { theme: terminalTheme } = useTerminalTheme();
-  const configLineHeight = useConfigStore((s) => s.lineHeight);
-  const configLineHeightCustom = useConfigStore((s) => s.lineHeightCustom);
-  const promptPrefix = useConfigStore((s) => s.promptPrefix);
   const [hasEverConnected, setHasEverConnected] = useState(false);
   const [isCreating, setIsCreating] = useState(false);
   const [showTerminal, setShowTerminal] = useState(true);
@@ -244,73 +234,61 @@ const MobileSurfaceView = ({
     return true;
   }, []);
 
-  const { terminalRef, write, clear, reset, fit, focus, isReady, getBufferText } = useTerminal({
-    enablePromptCopy: true,
-    promptPrefix,
-    theme: terminalTheme.colors,
-    fontSize: isAgentPanel ? undefined : MOBILE_FONT_SIZE,
-    lineHeight: resolveLineHeight(configLineHeight, configLineHeightCustom),
-    onInput: (data) => wsActionsRef.current.sendStdin(data),
-    onResize: (cols, rows) => {
-      wsActionsRef.current.sendResize(cols, rows);
-      if (waitingForResizeRef.current) {
-        if (showTimerRef.current) clearTimeout(showTimerRef.current);
-        showTimerRef.current = setTimeout(() => {
-          waitingForResizeRef.current = false;
-          setShowTerminal(true);
-        }, 200);
-      }
-    },
-    onTitleChange: (title) => {
-      const tabId = activeTabIdRef.current;
-      if (!tabId) return;
-      const activeTab = tabsRef.current.find((t) => t.id === tabId);
-      if (!activeTab) return;
-      if (activeTab.panelType === 'web-browser' || activeTab.panelType === 'agent-sessions') return;
-      if (title === lastTitleRef.current) return;
-      lastTitleRef.current = title;
-      const formatted = formatTabTitle(title, activeTab?.panelType);
-      useTabMetadataStore.getState().setTitle(tabId, formatted);
-      if (isShellProcess(title) && pendingRestartRef.current) {
-        const cmd = pendingRestartRef.current;
-        pendingRestartRef.current = null;
-        wsActionsRef.current.sendStdin(`${cmd}\r`);
-      }
-      const tab = tabsRef.current.find((t) => t.id === tabId);
-      if (tab) {
-        const prevCheckedAt = useTabStore.getState().tabs[tabId]?.agentProcessCheckedAt ?? 0;
-        fetch(`/api/check-agent?session=${tab.sessionName}`)
-          .then((res) => res.json())
-          .then((data: IAgentCheckResponse) => {
-            if (activeTab?.panelType === 'terminal') handleAgentCheckResult(tabId, data);
-            const running = data.running === true && isAgentPanelType(data.providerPanelType);
-            const current = useTabStore.getState().tabs[tabId];
-            if (current && current.agentProcessCheckedAt !== prevCheckedAt) {
-              if (current.agentProcess !== running) {
-                setTimeout(() => {
-                  fetch(`/api/check-agent?session=${tab.sessionName}`)
-                    .then((r) => r.json())
-                    .then((retryData: IAgentCheckResponse) => {
-                      if (activeTab?.panelType === 'terminal') handleAgentCheckResult(tabId, retryData);
-                      applyAgentCheckResult(tabId, retryData);
-                    })
-                    .catch(() => {});
-                }, 500);
-              }
-              return;
-            }
-            applyAgentCheckResult(tabId, data);
-          })
-          .catch(() => {});
-      }
-      fetchAndUpdateCwd();
-    },
-    customKeyEventHandler: handleCustomKeyEvent,
-  });
+  const handleTerminalResize = (cols: number, rows: number) => {
+    wsActionsRef.current.sendResize(cols, rows);
+    if (waitingForResizeRef.current) {
+      if (showTimerRef.current) clearTimeout(showTimerRef.current);
+      showTimerRef.current = setTimeout(() => {
+        waitingForResizeRef.current = false;
+        setShowTerminal(true);
+      }, 200);
+    }
+  };
 
-  useEffect(() => {
-    clearRef.current = clear;
-  });
+  const handleTerminalTitleChange = (title: string) => {
+    const tabId = activeTabIdRef.current;
+    if (!tabId) return;
+    const activeTab = tabsRef.current.find((t) => t.id === tabId);
+    if (!activeTab) return;
+    if (activeTab.panelType === 'web-browser' || activeTab.panelType === 'agent-sessions') return;
+    if (title === lastTitleRef.current) return;
+    lastTitleRef.current = title;
+    const formatted = formatTabTitle(title, activeTab?.panelType);
+    useTabMetadataStore.getState().setTitle(tabId, formatted);
+    if (isShellProcess(title) && pendingRestartRef.current) {
+      const cmd = pendingRestartRef.current;
+      pendingRestartRef.current = null;
+      wsActionsRef.current.sendStdin(`${cmd}\r`);
+    }
+    const tab = tabsRef.current.find((t) => t.id === tabId);
+    if (tab) {
+      const prevCheckedAt = useTabStore.getState().tabs[tabId]?.agentProcessCheckedAt ?? 0;
+      fetch(`/api/check-agent?session=${tab.sessionName}`)
+        .then((res) => res.json())
+        .then((data: IAgentCheckResponse) => {
+          if (activeTab?.panelType === 'terminal') handleAgentCheckResult(tabId, data);
+          const running = data.running === true && isAgentPanelType(data.providerPanelType);
+          const current = useTabStore.getState().tabs[tabId];
+          if (current && current.agentProcessCheckedAt !== prevCheckedAt) {
+            if (current.agentProcess !== running) {
+              setTimeout(() => {
+                fetch(`/api/check-agent?session=${tab.sessionName}`)
+                  .then((r) => r.json())
+                  .then((retryData: IAgentCheckResponse) => {
+                    if (activeTab?.panelType === 'terminal') handleAgentCheckResult(tabId, retryData);
+                    applyAgentCheckResult(tabId, retryData);
+                  })
+                  .catch(() => {});
+              }, 500);
+            }
+            return;
+          }
+          applyAgentCheckResult(tabId, data);
+        })
+        .catch(() => {});
+    }
+    fetchAndUpdateCwd();
+  };
 
   const handleSessionEnded = useCallback(async () => {
     if (closingTabIdRef.current) return;
@@ -337,6 +315,14 @@ const MobileSurfaceView = ({
   }, [paneId, onSwitchTab, onDeleteTab]);
 
   const {
+    terminalRef,
+    write,
+    clear,
+    reset,
+    fit,
+    focus,
+    isReady,
+    getBufferText,
     status,
     retryCount,
     disconnectReason,
@@ -345,9 +331,13 @@ const MobileSurfaceView = ({
     sendStdin,
     sendWebStdin,
     sendResize,
-  } = useTerminalWebSocket({
-    onData: (data) => {
-      termActionsRef.current.write(data);
+    theme: terminalTheme,
+  } = useTerminalSurface({
+    fontSizeMode: isAgentPanel ? 'default' : 'mobile',
+    onResize: handleTerminalResize,
+    onTitleChange: handleTerminalTitleChange,
+    customKeyEventHandler: handleCustomKeyEvent,
+    onData: () => {
       onTrustData();
       onCodexUpdateData();
     },
@@ -362,6 +352,10 @@ const MobileSurfaceView = ({
       fetchAndUpdateCwd();
     },
     onSessionEnded: handleSessionEnded,
+  });
+
+  useEffect(() => {
+    clearRef.current = clear;
   });
 
   useEffect(() => {
@@ -396,7 +390,7 @@ const MobileSurfaceView = ({
     });
 
     connectedSessionRef.current = tab.sessionName;
-    connect(tab.sessionName);
+    connect({ kind: 'managed', sessionName: tab.sessionName });
   }, [isReady, activeTabId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
@@ -821,19 +815,18 @@ const MobileSurfaceView = ({
       )}
 
       {!isWebBrowser && !isDiff && (
-        <TerminalContainer
-          ref={terminalRef}
-          className={cn(
+        <TerminalSurface
+          terminalRef={terminalRef}
+          containerClassName={cn(
             !usesHiddenTerminal && 'transition-opacity duration-150',
             usesHiddenTerminal ? 'absolute inset-0 pointer-events-none opacity-0' : 'min-h-0 flex-1',
             !usesHiddenTerminal && ready && showTerminal ? 'opacity-100' : '',
             !usesHiddenTerminal && (!ready || !showTerminal) ? 'opacity-0' : '',
           )}
+          mobileToolbar={!isAgentPanel && !isAgentSessionList && status === 'connected'
+            ? { sendStdin: sendWebStdin, terminalConnected: true }
+            : undefined}
         />
-      )}
-
-      {!isAgentPanel && !isWebBrowser && !isDiff && !isAgentSessionList && status === 'connected' && (
-        <MobileTerminalToolbar sendStdin={sendWebStdin} terminalConnected={status === 'connected'} />
       )}
 
       {agentModePrompt && agentModePrompt.tabId === activeTabId && panelType === 'terminal' && (

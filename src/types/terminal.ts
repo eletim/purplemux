@@ -9,6 +9,18 @@ export type TConnectionStatus =
 
 export type TDisconnectReason = 'max-connections' | 'pty-error' | 'session-not-found' | 'reconnect-exhausted' | null;
 
+/** Stable identities required to attach the shared terminal path to a discovered external window. */
+export interface IExternalTerminalTarget {
+  serverId: string;
+  sessionId: string;
+  windowId: string;
+}
+
+/** A terminal connection target. Rendering and controls are shared across both transports. */
+export type TTerminalTarget =
+  | { kind: 'managed'; sessionName: string }
+  | ({ kind: 'external' } & IExternalTerminalTarget);
+
 export type TPanelType = 'terminal' | 'claude-code' | 'codex-cli' | 'agent-sessions' | 'web-browser' | 'diff';
 export type TDiffViewMode = 'split' | 'unified';
 export type TDiffTab = 'changes' | 'history';

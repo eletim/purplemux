@@ -2,7 +2,7 @@
 
 All persistent state (settings, layouts, session history, caches) lives under `~/.purplemux/`. See [CLAUDE.md §15](../CLAUDE.md) — memory/variables and `localStorage` are not used.
 
-File permissions are `0600` for anything containing a secret (config, tokens, layouts, VAPID keys, lock file). Writes go through a `tmpFile → rename` pattern plus a `withLock` promise queue (in-process) to avoid interleaved writes.
+File permissions are `0600` for anything containing a secret (config, tokens, layouts, VAPID keys, lock file). Store-managed JSON writes generally use a `tmpFile → rename` pattern plus a `withLock` promise queue (in-process) to avoid interleaving.
 
 ---
 
@@ -12,6 +12,8 @@ File permissions are `0600` for anything containing a secret (config, tokens, la
 ~/.purplemux/
 ├── config.json              # app config (auth, theme, locale, …)
 ├── workspaces.json          # workspace list + sidebar state
+├── ext-reviews.json         # external review definitions
+├── external-servers.json    # external server registrations
 ├── workspaces/
 │   └── {wsId}/
 │       ├── layout.json           # pane/tab tree
@@ -83,6 +85,13 @@ Workspace index and sidebar state. Per-workspace tab/pane tree lives under `work
 ```
 
 Legacy migrations: `tabs.json` → `layout.json` → `workspaces/{wsId}/layout.json`. Parse failures copy the file to `.json.bak` and start fresh.
+
+### `ext-reviews.json`, `external-servers.json`
+
+- `ext-reviews.json` stores fixed external-review definitions. Deleting it removes the definitions only; it never changes the external tmux server, sessions, windows, or panes.
+- `external-servers.json` stores external-server registrations. Deleting it unregisters every server without stopping external tmux resources.
+
+Restored external reviews and registrations remain usable only if their frozen socket and tmux identities still match.
 
 ### `hooks.json` — `src/lib/hook-settings.ts`
 
@@ -219,6 +228,8 @@ All files here are regeneratable — deleting them just triggers a recompute on 
 | A single workspace's layout | `workspaces/{wsId}/layout.json` (it will be recreated as a default pane) |
 | Usage statistics | `stats/` |
 | Push subscriptions | `push-subscriptions.json` |
+| External review definitions | `ext-reviews.json` (external tmux resources are untouched) |
+| External server registrations | `external-servers.json` (external tmux resources are untouched) |
 | Stuck "already running" | `pmux.lock` (only if no purplemux process is alive) |
 
 `hooks.json`, `status-hook.sh`, `statusline.sh`, `port`, `cli-token`, `vapid-keys.json` are auto-regenerated on the next startup.

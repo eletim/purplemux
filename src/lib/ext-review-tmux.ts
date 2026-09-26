@@ -1,10 +1,9 @@
-import { execFile as execFileCallback } from 'child_process';
-import fs from 'fs/promises';
 import path from 'path';
-import { promisify } from 'util';
 import type { ICreateExtReview, IExtReview } from '@/types/ext-review';
+import { ExternalTmuxSocketError, externalTmuxSocketIdentity,
+  matchesExternalTmuxSocketIdentity } from '@/lib/external-tmux-socket';
+import { execTmux, externalTmuxTarget, type TmuxTarget } from '@/lib/tmux-target';
 
-const execFile = promisify(execFileCallback);
 export class ExtReviewError extends Error {}
 /** A valid frozen target changed its visible layout while the snapshot was read. */
 export class ExtReviewSnapshotRaceError extends Error {}
@@ -19,43 +18,30 @@ export const validateExtReviewInput = (input: ICreateExtReview): void => {
   }
 };
 
-const socketIdentity = async (socketPath: string, signal?: AbortSignal): Promise<string> => {
-  signal?.throwIfAborted();
-  const stat = await fs.lstat(socketPath, { bigint: true });
-  signal?.throwIfAborted();
-  if (!stat.isSocket()) throw new ExtReviewError('socketPath must be a socket, not a symlink');
-  // The app owns the -L purple server; it is not an external review target.
-  const managedSocket = path.join(process.env.TMUX_TMPDIR || '/tmp', `tmux-${process.getuid?.()}`, 'purple');
-  const managed = await fs.lstat(managedSocket, { bigint: true }).catch((error: NodeJS.ErrnoException) => {
-    if (error.code === 'ENOENT') return null;
-    throw error;
+const targetForSocketIdentity = (socketPath: string, identity: string): TmuxTarget =>
+  externalTmuxTarget(socketPath, async (signal) => {
+    if (!matchesExternalTmuxSocketIdentity(identity, await externalTmuxSocketIdentity(socketPath, signal))) {
+      throw new ExtReviewError('External review socket identity changed');
+    }
   });
-  signal?.throwIfAborted();
-  if (managed && stat.dev === managed.dev && stat.ino === managed.ino) {
-    throw new ExtReviewError('The purplemux-owned tmux socket is not external');
-  }
-  // tmux changes socket permissions as clients attach, which changes ctime.
-  // Device and inode remain stable for the lifetime of this socket.
-  return `${stat.dev}:${stat.ino}`;
-};
 
-const sameSocket = (stored: string, current: string): boolean =>
-  stored === current || stored.startsWith(`${current}:`); // Definitions saved before ctime was dropped.
+export const extReviewTmuxTarget = (review: IExtReview): TmuxTarget =>
+  targetForSocketIdentity(review.socketPath, review.socketIdentity);
 
 export const assertExtReviewSocketIdentity = async (review: IExtReview, signal?: AbortSignal): Promise<void> => {
-  if (!sameSocket(review.socketIdentity, await socketIdentity(review.socketPath, signal))) {
+  if (!matchesExternalTmuxSocketIdentity(review.socketIdentity, await externalTmuxSocketIdentity(review.socketPath, signal))) {
     throw new ExtReviewError('External review socket identity changed');
   }
 };
 
-const inspectTarget = async (socketPath: string, target: string, signal?: AbortSignal): Promise<string[]> => {
+const inspectTarget = async (backend: TmuxTarget, target: string, signal?: AbortSignal): Promise<string[]> => {
   signal?.throwIfAborted();
   // Check the explicit session first: older tmux servers can crash when
   // display-message targets a deleted session ID. This does not enumerate.
-  await execFile('tmux', ['-N', '-S', socketPath, 'has-session', '-t', target.split(':')[0]], { timeout: 5000, signal });
+  await execTmux(backend, ['has-session', '-t', target.split(':')[0]], { timeout: 5000, signal });
   signal?.throwIfAborted();
-  const { stdout } = await execFile('tmux', [
-    '-N', '-S', socketPath, 'display-message', '-p', '-t', target,
+  const { stdout } = await execTmux(backend, [
+    'display-message', '-p', '-t', target,
     '#{pid}\t#{session_id}\t#{session_created}\t#{window_id}',
   ], { timeout: 5000, signal });
   const fields = stdout.trim().split('\t');
@@ -70,21 +56,23 @@ export const freezeExtReviewTargets = async (input: ICreateExtReview, signal?: A
   signal?.throwIfAborted();
   validateExtReviewInput(input);
   try {
-    const identity = await socketIdentity(input.socketPath, signal);
-    const [serverPid, sessionId, sessionCreated] = await inspectTarget(input.socketPath,
+    const identity = await externalTmuxSocketIdentity(input.socketPath, signal);
+    const backend = targetForSocketIdentity(input.socketPath, identity);
+    const [serverPid, sessionId, sessionCreated] = await inspectTarget(backend,
       /^\$\d+$/.test(input.session) ? `${input.session}:` : `=${input.session}:`, signal);
     for (const windowId of input.windowTargets) {
-      const fields = await inspectTarget(input.socketPath, `${sessionId}:${windowId}`, signal);
+      const fields = await inspectTarget(backend, `${sessionId}:${windowId}`, signal);
       if (fields.join('\t') !== [serverPid, sessionId, sessionCreated, windowId].join('\t')) {
         throw new ExtReviewError('Window is not in the specified session');
       }
     }
-    if (await socketIdentity(input.socketPath, signal) !== identity) throw new ExtReviewError('Socket changed during validation');
+    if (await externalTmuxSocketIdentity(input.socketPath, signal) !== identity) throw new ExtReviewError('Socket changed during validation');
     return { socketPath: input.socketPath, socketIdentity: identity, serverPid, sessionId,
       sessionCreated, windowIds: [...input.windowTargets] };
   } catch (error) {
     signal?.throwIfAborted();
     if (error instanceof ExtReviewError) throw error;
+    if (error instanceof ExternalTmuxSocketError) throw new ExtReviewError(error.message);
     throw new ExtReviewError('External tmux targets are unavailable');
   }
 };
@@ -94,13 +82,13 @@ export const resolveExtReviewTargets = async (review: IExtReview, signal?: Abort
   signal?.throwIfAborted();
   try {
     await assertExtReviewSocketIdentity(review, signal);
-    const [pid, sessionId, created] = await inspectTarget(review.socketPath, `${review.sessionId}:`, signal);
+    const [pid, sessionId, created] = await inspectTarget(extReviewTmuxTarget(review), `${review.sessionId}:`, signal);
     if (pid !== review.serverPid || sessionId !== review.sessionId || created !== review.sessionCreated) {
       throw new ExtReviewError('External review resource identity changed');
     }
     const current = await freezeExtReviewTargets({ socketPath: review.socketPath,
       session: review.sessionId, windowTargets: review.windowIds }, signal);
-    if (!sameSocket(review.socketIdentity, current.socketIdentity) || current.serverPid !== review.serverPid
+    if (!matchesExternalTmuxSocketIdentity(review.socketIdentity, current.socketIdentity) || current.serverPid !== review.serverPid
       || current.sessionId !== review.sessionId || current.sessionCreated !== review.sessionCreated) {
       throw new ExtReviewError('External review resource identity changed');
     }
@@ -108,6 +96,7 @@ export const resolveExtReviewTargets = async (review: IExtReview, signal?: Abort
   } catch (error) {
     signal?.throwIfAborted();
     if (error instanceof ExtReviewError) throw error;
+    if (error instanceof ExternalTmuxSocketError) throw new ExtReviewError(error.message);
     throw new ExtReviewError('External review targets are unavailable');
   }
 };
@@ -118,9 +107,10 @@ export const captureExtReviewWindow = async (review: IExtReview, windowId: strin
   if (!review.windowIds.includes(windowId)) throw new ExtReviewError('Window is not approved');
   await resolveExtReviewTargets(review, signal);
   const target = `${review.sessionId}:${windowId}`;
+  const backend = extReviewTmuxTarget(review);
   const run = async (args: string[]) => {
     signal?.throwIfAborted();
-    return (await execFile('tmux', ['-N', '-S', review.socketPath, ...args],
+    return (await execTmux(backend, args,
       { timeout: 5000, maxBuffer: 4 * 1024 * 1024, signal })).stdout;
   };
   const list = () => run(['list-panes', '-t', target, '-F',

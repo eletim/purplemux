@@ -28,6 +28,9 @@ interface IWorkspaceItemProps {
   onSelect: (workspaceId: string) => void;
   onRename: (workspaceId: string, name: string) => void;
   onDelete: (workspaceId: string) => void;
+  managed?: boolean;
+  canRename?: boolean;
+  canDelete?: boolean;
 }
 
 const WorkspaceItem = ({
@@ -40,6 +43,9 @@ const WorkspaceItem = ({
   onSelect,
   onRename,
   onDelete,
+  managed = true,
+  canRename = true,
+  canDelete = true,
 }: IWorkspaceItemProps) => {
   const t = useTranslations('terminal');
   const tc = useTranslations('common');
@@ -83,7 +89,9 @@ const WorkspaceItem = ({
     }
   }, [workspace.id, ts]);
 
-  const displayDirs = workspace.directories.map((d) => d.replace(/^\/Users\/[^/]+/, '~'));
+  const displayDirs = managed
+    ? workspace.directories.map((d) => d.replace(/^\/Users\/[^/]+/, '~'))
+    : [];
   const portsLabel = useTabStore((state) => selectWorkspacePortsLabel(state.tabs, workspace.id));
 
   return (
@@ -100,7 +108,7 @@ const WorkspaceItem = ({
           transition: 'opacity 150ms, background-color 75ms',
         }}
         onClick={handleClick}
-        onDoubleClick={startEditing}
+        onDoubleClick={canRename ? startEditing : undefined}
         role="button"
         aria-current={isActive ? 'true' : undefined}
         data-ui-selection="rail"
@@ -136,19 +144,19 @@ const WorkspaceItem = ({
             {dir}
           </span>
         ))}
-        {portsLabel && (
+        {managed && portsLabel && (
           <span className="mt-1 truncate text-xs leading-tight text-ui-green/80">
             {portsLabel}
           </span>
         )}
-        <WorkspaceStatusIndicator workspaceId={workspace.id} tabs={tabs} />
+        {managed && <WorkspaceStatusIndicator workspaceId={workspace.id} tabs={tabs} />}
       </ContextMenuTrigger>
-      <ContextMenuContent>
-        <ContextMenuItem onClick={startEditing}>
+      {(canRename || canDelete || managed) && <ContextMenuContent>
+        {canRename && <ContextMenuItem onClick={startEditing}>
           <Pencil className="mr-2 h-3.5 w-3.5" />
           {t('rename')}
-        </ContextMenuItem>
-        <ContextMenuSub>
+        </ContextMenuItem>}
+        {managed && <ContextMenuSub>
           <ContextMenuSubTrigger>
             <Folder className="mr-2 h-3.5 w-3.5" />
             {ts('moveToGroup')}
@@ -179,16 +187,16 @@ const WorkspaceItem = ({
               </>
             )}
           </ContextMenuSubContent>
-        </ContextMenuSub>
-        <ContextMenuSeparator />
-        <ContextMenuItem
+        </ContextMenuSub>}
+        {canDelete && (canRename || managed) && <ContextMenuSeparator />}
+        {canDelete && <ContextMenuItem
           className="text-ui-red focus:text-ui-red"
           onClick={() => onDelete(workspace.id)}
         >
           <Trash2 className="mr-2 h-3.5 w-3.5" />
           {tc('delete')}
-        </ContextMenuItem>
-      </ContextMenuContent>
+        </ContextMenuItem>}
+      </ContextMenuContent>}
     </ContextMenu>
   );
 };

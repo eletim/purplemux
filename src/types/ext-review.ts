@@ -4,7 +4,6 @@ export interface ICreateExtReview {
   socketPath: string;
   session: string;
   windowTargets: string[];
-  interactive?: boolean;
 }
 
 export interface IExtReview {
@@ -16,5 +15,4 @@ export interface IExtReview {
   sessionId: string;
   sessionCreated: string;
   windowIds: string[];
-  interactive?: boolean;
 }

@@ -131,18 +131,19 @@ purplemux tab create -w WS -t agent-sessions
 purplemux workspace delete -w WS --if-empty
 ```
 
-### External targets (PurpleMux 0.5.2)
+### External tmux servers
 
-Register known tmux windows for an interactive browser terminal:
+Register a known tmux server once, independently of its current sessions and windows:
 
 ```bash
-purplemux external-target register --socket /absolute/known/tmux/socket --session '$2' --window @1 --window @3
-purplemux external-target list
-purplemux external-target open TARGET_ID
-purplemux external-target unregister TARGET_ID
+purplemux external-server register --socket /absolute/known/tmux/socket --name dev-server
+purplemux external-server list  # fresh sessions/windows/panes runtime inventory
+purplemux external-server unregister SERVER_ID
 ```
 
-Registration returns an ID and an absolute URL at `/external-target/<id>`. Open that URL for terminal input, scrollback, and resize in the registered windows. `open` rechecks the target before printing its URL; `unregister` removes only the registration. The tmux resources remain yours.
+Registration stores a stable ID, display name, absolute socket path, and frozen socket identity. Listing discovers current sessions, windows, and pane foreground metadata using stable tmux IDs; newly created resources appear immediately, while deleted resources disappear and unavailable servers are reported without being restarted. Every discovered resource remains unowned by PurpleMux. The PurpleMux-owned `purple` socket is rejected, and later operations fail closed if the socket path is replaced. Unregister removes only PurpleMux's registration; it never kills the external server or any session, window, or pane.
+
+Open the authenticated `/external-server` page to browse the same fresh inventory and select an exact discovered window for a full interactive terminal. Input, paste, resize, reconnect, and Terminal Copy use the normal terminal surface. Closing or detaching the UI never kills external tmux resources, and the connection fails closed if its exact session/window or frozen socket identity changes. There is no interactive `/external-target/<id>` URL; `/ext-review/<id>` remains the distinct read-only fixed-window contract below.
 
 ### External review (PurpleMux 0.5.0)
 
@@ -160,7 +161,7 @@ Observation is fixed and read-only: live current-screen snapshots, with no input
 
 Reviews are excluded from Workspace ownership, discovery, and cleanup. They do not discover targets, adopt external sessions, or start a tmux server. Delete removes only the definition, even if unavailable, and sends no tmux commands; external sessions, windows, and panes remain running. Socket symlinks and the PurpleMux-owned `purple` socket are rejected.
 
-See the [CLI reference](landing-src/docs/cli-reference.md), `purplemux api-guide`, and [external review technical notes](docs/ext-review-definitions.md) for the lifecycle API and observation details.
+See the [CLI reference](landing-src/docs/cli-reference.md) and `purplemux api-guide` for lifecycle APIs and observation details.
 
 ### Run from source
 
@@ -233,9 +234,13 @@ The default is HTTP. Always use HTTPS when exposing the app externally:
 |---|---|
 | `config.json` | Authentication (hashed) and app settings |
 | `workspaces.json` | Workspace layouts, tabs, directories |
+| `ext-reviews.json` | External review definitions; deleting it removes only the definitions, not external tmux resources |
+| `external-servers.json` | External server registrations; deleting it unregisters the servers without stopping tmux resources |
 | `vapid-keys.json` | Web Push VAPID keys (auto-generated) |
 | `push-subscriptions.json` | Push subscription data |
 | `hooks/` | User-defined hooks |
+
+Restored external reviews and server registrations are usable only when their frozen external tmux targets still match.
 
 ## Architecture
 
@@ -261,13 +266,12 @@ The default is HTTP. Always use HTTPS when exposing the app externally:
         ▼                ▼                     ▼
 ┌─────────────────────────────────────────────────────────────┐
 │  System                                                     │
-│  tmux (purple socket)         Agent CLIs                    │
-│  ┌────────┐ ┌────────┐       ┌────────────────────────────┐ │
-│  │Session1│ │Session2│  ...  │ Claude Code                │ │
-│  │ (shell)│ │ (shell)│       │   ~/.claude/projects/*.jsonl │ │
-│  └────────┘ └────────┘       │ Codex                      │ │
-│                              │   ~/.codex/sessions/*.jsonl │ │
-│                              └────────────────────────────┘ │
+│  tmux backends                 Agent CLIs                  │
+│  ┌────────────────────────┐   ┌────────────────────────────┐ │
+│  │ managed purple socket  │   │ Claude Code / Codex        │ │
+│  │ registered external    │   │ session JSONL files         │ │
+│  │ tmux sockets           │   │                            │ │
+│  └────────────────────────┘   └────────────────────────────┘ │
 └─────────────────────────────────────────────────────────────┘
 ```
 
@@ -277,7 +281,7 @@ The default is HTTP. Always use HTTPS when exposing the app externally:
 
 **Timeline** — Watches JSONL session logs under `~/.claude/projects/` and `~/.codex/sessions/`, parses new lines on change, and streams structured entries to the browser.
 
-**tmux isolation** — Uses a dedicated `purple` socket, completely separate from your existing tmux. No prefix key, no status bar.
+**tmux backends** — Managed workspaces use a dedicated `purple` socket with no prefix key or status bar. Explicitly registered external tmux sockets remain separate backends, but their discovered windows can be opened as guarded terminals.
 
 **Auto recovery** — On server start, restores previous Claude sessions via `claude --resume {sessionId}`. Codex sessions can be resumed from the session list or with `codex resume {sessionId}`.
 

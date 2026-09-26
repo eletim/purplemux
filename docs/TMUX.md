@@ -43,9 +43,12 @@ tmux socket (purple)
 
 ---
 
-## tmux Command Wrapper (`src/lib/tmux.ts`)
+## tmux Target and Command Wrappers
 
-All tmux invocations go through `tmux.ts`. Do not call tmux directly via `child_process`.
+`src/lib/tmux-target.ts` owns tmux process execution and the backend selector: managed
+targets use `-L purple`, while external targets use `-N -S <socket>` with an identity
+validator. `src/lib/tmux.ts` provides the managed session operations. Do not construct
+backend socket arguments outside the target layer.
 
 ### Session Management
 
@@ -200,7 +203,7 @@ When a change is detected, `detectActiveSession` is re-run and the result is del
 
 | Command | Caller | Purpose |
 | --- | --- | --- |
-| `tmux -L purple ...` | `tmux.ts` | Session management, info, key send |
+| `tmux -L purple ...` / `tmux -N -S ...` | `tmux-target.ts` | Select and operate on managed or validated external targets |
 | `pgrep -P {pid}` | `session-detection.ts` | List child PIDs |
 | `ps -p {pid}` | `session-detection.ts` | Check process existence/args |
 | `ps -p {pid} -o args=` | `session-detection.ts` | Inspect args (claude or not) |
@@ -241,7 +244,8 @@ All WebSocket connections are authenticated via NextAuth JWT in `server.ts` befo
 | File | Description |
 | --- | --- |
 | `src/config/tmux.conf` | tmux config (purple socket only) |
-| `src/lib/tmux.ts` | tmux command wrapper |
+| `src/lib/tmux-target.ts` | Shared managed/external tmux target operation layer |
+| `src/lib/tmux.ts` | Managed tmux session operations |
 | `src/lib/terminal-server.ts` | Terminal WebSocket handler (node-pty) |
 | `src/lib/terminal-protocol.ts` | Terminal binary protocol constants and encoders |
 | `src/lib/session-detection.ts` | Claude session detection (`detectActiveSession`, `watchSessionsDir`) |
