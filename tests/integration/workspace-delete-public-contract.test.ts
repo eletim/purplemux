@@ -147,6 +147,36 @@ exec ${quote(realTmux)} "$@"
       method, headers: { Cookie: cookie, 'Content-Type': 'application/json' },
       body: body === undefined ? undefined : JSON.stringify(body),
     });
+    const sessionCreated = tmux('display-message', '-p', '-t', '$0', '#{session_created}');
+    const createdTabResponse = await request(
+      `/api/cli/external-servers/${registration.id}/workspaces/%240/tabs`,
+      'POST',
+      { sessionCreated, requestId: 'public-contract-window' },
+    );
+    expect(createdTabResponse.status).toBe(201);
+    const createdTab = await createdTabResponse.json() as {
+      tabId: string;
+      workspaceId: string;
+      sessionCreated: string;
+      requestId: string;
+      externalTerminalTarget: { serverId: string; sessionId: string; windowId: string };
+    };
+    expect(createdTab).toEqual({
+      tabId: expect.stringMatching(/^@\d+$/),
+      workspaceId: '$0',
+      sessionCreated,
+      requestId: 'public-contract-window',
+      externalTerminalTarget: {
+        serverId: registration.id,
+        sessionId: '$0',
+        windowId: createdTab.tabId,
+      },
+    });
+    expect(tmux('list-sessions', '-F', '#{session_id}')).toBe('$0');
+    expect(tmux('display-message', '-p', '-t', `$0:${createdTab.tabId}`,
+      '#{session_id}:#{session_created}:#{window_id}'))
+      .toBe(`$0:${sessionCreated}:${createdTab.tabId}`);
+    initial = state();
     expect((await fetch(`${origin}/ext-review/${review.id}`, { redirect: 'manual' })).status).toBe(307);
     const page = await request(`/ext-review/${review.id}`);
     expect(page.status).toBe(200);
