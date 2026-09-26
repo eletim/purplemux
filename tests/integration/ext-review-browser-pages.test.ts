@@ -19,13 +19,13 @@ vi.mock('next/router', () => ({ useRouter: () => ({ pathname: '/external-server'
 vi.mock('next-intl', () => ({ useTranslations: () => (key: string) => key }));
 vi.mock('next/head', () => ({ default: () => null }));
 vi.mock('next/link', () => ({ default: ({ href, children }: { href: string; children: React.ReactNode }) => createElement('a', { href }, children) }));
-vi.mock('next/dynamic', () => ({ default: () => ({ reviewId, windowId, externalTerminalTarget }: {
+vi.mock('next/dynamic', () => ({ default: () => ({ reviewId, windowId, target }: {
   reviewId?: string;
   windowId?: string;
-  externalTerminalTarget?: { serverId: string; sessionId: string; windowId: string };
-}) => createElement('div', { 'data-testid': externalTerminalTarget ? 'external-terminal' : 'viewer' },
-  externalTerminalTarget
-    ? `${externalTerminalTarget.serverId}:${externalTerminalTarget.sessionId}:${externalTerminalTarget.windowId}`
+  target?: { kind: string; serverId: string; sessionId: string; windowId: string };
+}) => createElement('div', { 'data-testid': target ? 'external-terminal' : 'viewer' },
+  target
+    ? `${target.serverId}:${target.sessionId}:${target.windowId}`
     : `${reviewId}:${windowId}`) }));
 
 import ReviewTerminal from '@/components/features/ext-review/review-terminal';
@@ -311,7 +311,7 @@ describe('external server browser page', () => {
   it('keeps a confirmed registration cached and selected when its follow-up refresh fails', async () => {
     const registered = {
       id: 'server-new', name: 'new server', socketPath: '/tmp/new.sock',
-      socketIdentity: '2:3:4', terminalCreations: [],
+      socketIdentity: '2:3:4',
     };
     let registrationGets = 0;
     const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {

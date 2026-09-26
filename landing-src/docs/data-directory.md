@@ -15,8 +15,7 @@ Every persistent piece of state purplemux keeps — settings, layouts, session h
 ├── config.json              # app config (auth, theme, locale, …)
 ├── workspaces.json          # workspace list + sidebar state
 ├── ext-reviews.json         # external review definitions
-├── external-servers.json    # external server registrations + creation history
-├── external-terminal-marker-key # external-terminal marker authentication secret
+├── external-servers.json    # external server registrations
 ├── workspaces/
 │   └── {wsId}/
 │       ├── layout.json           # pane/tab tree
@@ -39,7 +38,7 @@ Every persistent piece of state purplemux keeps — settings, layouts, session h
 └── stats/                   # Claude usage statistics cache
 ```
 
-Files containing secrets (config, tokens, layouts, VAPID keys, lock) are written with mode `0600`. Store-managed JSON writes generally use a `tmpFile → rename` pattern; `external-terminal-marker-key` is instead created directly and exclusively with `O_EXCL`, then cached until restart.
+Files containing secrets (config, tokens, layouts, VAPID keys, lock) are written with mode `0600`. Store-managed JSON writes generally use a `tmpFile → rename` pattern.
 
 ## Top-level files
 
@@ -48,8 +47,7 @@ Files containing secrets (config, tokens, layouts, VAPID keys, lock) are written
 | `config.json` | scrypt-hashed login password, HMAC session secret, theme, locale, font size, notification toggle, editor URL, network access, custom CSS | Yes — re-runs onboarding |
 | `workspaces.json` | Workspace index, sidebar width / collapsed state, active workspace ID | Yes — wipes all workspaces and tabs |
 | `ext-reviews.json` | Fixed external-review definitions | Yes — removes only the definitions; external tmux resources are untouched |
-| `external-servers.json` | External-server registrations and terminal-creation idempotency/audit history | Yes — unregisters every server; external tmux resources are untouched |
-| `external-terminal-marker-key` | Generated secret that authenticates ownership markers on created external sessions; created directly with `O_EXCL` rather than `tmpFile → rename` / `withLock`, with a read-after-race fallback, and cached until restart | Not without accepting that existing marked sessions become unowned after restart; deleting it while PurpleMux runs does not replace the cached key, and a different key is generated when next needed after restart |
+| `external-servers.json` | External-server registrations | Yes — unregisters every server; external tmux resources are untouched |
 | `hooks.json` | Claude Code `--settings` mapping (event → script) + `statusLine.command` | Yes — regenerated on next start |
 | `status-hook.sh`, `statusline.sh` | POST to `/api/status/hook` and `/api/status/statusline` with `x-pmux-token` | Yes — regenerated on next start |
 | `rate-limits.json` | Latest Claude statusline JSON: `ts`, `model`, `five_hour`, `seven_day`, `context`, `cost` | Yes — repopulates as Claude runs |
@@ -138,7 +136,7 @@ The whole directory is plain JSON plus a few shell scripts. To back up:
 tar czf purplemux-backup.tgz -C ~ .purplemux
 ```
 
-To restore on a fresh machine, untar and start purplemux. Hook scripts will be rewritten with the new server's port; everything else (workspaces, history, settings) lifts over as-is. Keep `external-servers.json` and `external-terminal-marker-key` together to preserve external-terminal ownership. Restored external reviews and registrations are usable only when their frozen socket and tmux identities still match.
+To restore on a fresh machine, untar and start purplemux. Hook scripts will be rewritten with the new server's port; everything else (workspaces, history, settings) lifts over as-is. Restored external reviews and registrations are usable only when their frozen socket and tmux identities still match.
 
 {% call callout('warning') %}
 Don't restore `pmux.lock` — it's tied to a specific PID and will block startup. Exclude it: `--exclude pmux.lock`.

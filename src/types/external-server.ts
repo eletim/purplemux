@@ -8,32 +8,6 @@ export interface IExternalServer {
   name: string;
   socketPath: string;
   socketIdentity: string;
-  /** Idempotency/audit records only; live ownership comes exclusively from the tmux marker. */
-  terminalCreations?: IExternalTerminalProvenance[];
-}
-
-export interface IExternalTerminalProvenance {
-  id: string;
-  requestId?: string;
-  owner: 'purplemux';
-  resourceType: 'session';
-  sessionId: string;
-  sessionCreated: string;
-  createdAt: string;
-}
-
-export interface ICreateExternalTerminal {
-  requestId: string;
-  name?: string;
-}
-
-export interface ICreatedExternalTerminal {
-  serverId: string;
-  sessionId: string;
-  sessionCreated: string;
-  windowId: string;
-  name: string;
-  provenance: IExternalTerminalProvenance;
 }
 
 /** Exact identities returned after adding an unowned window to an existing external session. */
@@ -71,8 +45,6 @@ export interface IExternalTmuxSession {
   sessionCreated: string;
   exists: true;
   attached: boolean;
-  owned: boolean;
-  provenance?: IExternalTerminalProvenance;
   windows: IExternalTmuxWindow[];
 }
 

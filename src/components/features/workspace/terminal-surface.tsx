@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState, type ComponentProps, type RefCallback } from 'react';
 import useConfigStore from '@/hooks/use-config-store';
 import useIsMobileDevice from '@/hooks/use-is-mobile-device';
 import useTerminalSurface from '@/hooks/use-terminal-surface';
@@ -10,11 +10,37 @@ import TerminalContainer from '@/components/features/workspace/terminal-containe
 import TerminalKeyBar from '@/components/features/workspace/terminal-key-bar';
 import { cn } from '@/lib/utils';
 
-export default function ExternalTerminalSurface({
-  externalTerminalTarget,
+interface ITerminalSurfaceProps {
+  terminalRef: RefCallback<HTMLDivElement>;
+  containerClassName?: string;
+  minHeight?: number;
+  keyBar?: ComponentProps<typeof TerminalKeyBar>;
+  mobileToolbar?: ComponentProps<typeof MobileTerminalToolbar>;
+}
+
+/** Shared terminal viewport and input controls for managed and external targets. */
+export default function TerminalSurface({
+  terminalRef,
+  containerClassName,
+  minHeight,
+  keyBar,
+  mobileToolbar,
+}: ITerminalSurfaceProps) {
+  return (
+    <>
+      <TerminalContainer ref={terminalRef} minHeight={minHeight} className={containerClassName} />
+      {keyBar && <TerminalKeyBar {...keyBar} />}
+      {mobileToolbar && <MobileTerminalToolbar {...mobileToolbar} />}
+    </>
+  );
+}
+
+/** Connect the shared terminal surface to one exact external tmux window. */
+export function ExternalTerminalConnection({
+  target,
   className,
-}: { externalTerminalTarget: IExternalTerminalTarget; className?: string }) {
-  const { serverId: externalServerId, sessionId: externalSessionId, windowId } = externalTerminalTarget;
+}: { target: IExternalTerminalTarget; className?: string }) {
+  const { serverId, sessionId, windowId } = target;
   const keyBarMode = useConfigStore((state) => state.terminalKeyBar);
   const isMobileDevice = useIsMobileDevice();
   const [ctrlArmed, setCtrlArmed] = useState(false);
@@ -60,46 +86,32 @@ export default function ExternalTerminalSurface({
   useEffect(() => {
     if (!isReady) return;
     const { cols, rows } = fit();
-    connect({
-      kind: 'external',
-      serverId: externalServerId,
-      sessionId: externalSessionId,
-      windowId,
-    }, cols, rows);
+    connect({ kind: 'external', serverId, sessionId, windowId }, cols, rows);
     focus();
     return disconnect;
-  }, [
-    isReady,
-    windowId,
-    externalServerId,
-    externalSessionId,
-    fit,
-    focus,
-    connect,
-    disconnect,
-  ]);
+  }, [isReady, serverId, sessionId, windowId, fit, focus, connect, disconnect]);
 
   const showKeyBar = !isMobileDevice && keyBarMode === 'always';
-
   return (
     <section
       aria-label={`External terminal ${windowId}`}
       className={cn('relative flex h-[75vh] min-h-64 flex-col overflow-hidden rounded border', className)}
       style={{ backgroundColor: theme.colors.background }}
     >
-      <TerminalContainer ref={terminalRef} className="min-h-0 flex-1" />
-      {showKeyBar && (
-        <TerminalKeyBar
-          sendStdin={sendStdin}
-          ctrlActive={ctrlArmed}
-          shiftActive={shiftArmed}
-          setCtrlActive={setCtrlArmed}
-          setShiftActive={setShiftArmed}
-        />
-      )}
-      {isMobileDevice && status === 'connected' && (
-        <MobileTerminalToolbar sendStdin={sendWebStdin} terminalConnected />
-      )}
+      <TerminalSurface
+        terminalRef={terminalRef}
+        containerClassName="min-h-0 flex-1"
+        keyBar={showKeyBar ? {
+          sendStdin,
+          ctrlActive: ctrlArmed,
+          shiftActive: shiftArmed,
+          setCtrlActive: setCtrlArmed,
+          setShiftActive: setShiftArmed,
+        } : undefined}
+        mobileToolbar={isMobileDevice && status === 'connected'
+          ? { sendStdin: sendWebStdin, terminalConnected: true }
+          : undefined}
+      />
       {externalTargetFailure && (
         <p role="alert" className="absolute left-3 top-3 z-10 rounded-md bg-terminal-bg/90 px-3 py-2 text-sm text-muted-foreground">
           {externalTargetFailure}

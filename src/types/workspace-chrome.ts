@@ -14,7 +14,6 @@ export interface IWorkspaceChromeCapabilities {
   providerControls: boolean;
   gitControls: boolean;
   persistenceControls: boolean;
-  ownershipControls: boolean;
   lifecycleControls: boolean;
   terminalCopy: boolean;
 }
@@ -32,7 +31,6 @@ export const managedWorkspaceChromeCapabilities: IWorkspaceChromeCapabilities = 
   providerControls: true,
   gitControls: true,
   persistenceControls: true,
-  ownershipControls: true,
   lifecycleControls: true,
   terminalCopy: true,
 };
@@ -50,7 +48,6 @@ export const externalWorkspaceChromeCapabilities: IWorkspaceChromeCapabilities =
   providerControls: false,
   gitControls: false,
   persistenceControls: false,
-  ownershipControls: false,
   lifecycleControls: false,
   terminalCopy: true,
 };

@@ -60,10 +60,8 @@ GET /api/cli/external-servers
         "panes": [{ "id": "%0", "index", "exists": true, "active", "pid",
           "currentCommand", "currentPath", "dead" }] }] }] }
   An unavailable or replaced registered server has exists:false, sessions:[], and
-  unavailableReason. Sessions include owned:false for pre-existing resources.
-  Only an authenticated tmux provenance marker bound to the server, session ID, and
-  session creation identity confers owned:true. Persisted terminal creation records
-  are idempotency/audit data and never independently authorize lifecycle actions.
+  unavailableReason. Every discovered session, window, and pane remains an unowned
+  external resource; registration does not grant PurpleMux lifecycle ownership.
   CLI equivalent: purplemux external-server list
 
 GET /api/cli/external-servers/<serverId>/workspaces
@@ -75,33 +73,13 @@ GET /api/cli/external-servers/<serverId>/workspaces
   every request and never persists external Workspaces or Tabs.
 
 POST /api/cli/external-servers/<serverId>/workspaces/<$sessionId>/tabs
-  Body: { "sessionCreated": "exact-tmux-session-creation-identity" }
+  Body: { "sessionCreated": "exact-tmux-session-creation-identity",
+          "requestId": "client-stable-id" }
   Adds one unowned window to the exact live session represented by the Workspace.
   Response: { "tabId": "@7", "workspaceId": "$4", "sessionCreated": "...",
               "externalTerminalTarget": { "serverId": "...", "sessionId": "$4", "windowId": "@7" } }
   The returned stable IDs select the new Tab immediately. HTTP 409 reports session or
   socket identity drift; the operation never creates a session or writes Workspace state.
-
-POST /api/cli/external-servers/<serverId>/terminals
-  Body: { "requestId": "client-stable-id", "name"?: "terminal-name" }
-  Creates a new tmux session (never an implicit window in an existing session) and
-  sets its authoritative PurpleMux ownership marker directly on that new session,
-  without resolving the supplied name as a target. The same provenance is recorded
-  separately as idempotency/audit history.
-  Returns { "serverId", "sessionId", "sessionCreated", "windowId", "name",
-            "provenance": { "id", "requestId", "owner":"purplemux", "resourceType":"session",
-              "sessionId", "sessionCreated", "createdAt" } }.
-  Repeating the same requestId returns the original session instead of creating another.
-  HTTP 503 with { "outcomeUnknown":true, "requestId" } means the request may have
-  committed; retry with that same requestId to reconcile it safely.
-  CLI equivalent: purplemux external-server create-terminal SERVER_ID [--name NAME]
-                  [--request-id ID]
-  Registration alone never owns pre-existing sessions. Default lifecycle actions may
-  manage only sessions with matching markers; unowned destruction requires explicit policy.
-  If creation-history persistence fails, the exact newly created session is rolled back
-  so a retry cannot accumulate an unrecorded terminal. The tmux session marker is the
-  sole live ownership authority, so creation can be reconciled after a lost/invalid
-  response and remains identifiable across unregister/re-register.
 
 DELETE /api/cli/external-servers/<serverId>
   Removes only the registration, including when the server is unavailable.
@@ -113,8 +91,9 @@ The stable id identifies the registration. Every tmux operation rechecks the fro
 socket identity and fails closed if the path is missing or has been replaced.
 Open /external-server in an authenticated browser to browse this same fresh inventory
 and attach the normal interactive terminal to one exact discovered session/window.
-Input, paste, resize, reconnect, and Terminal Copy are supported. Kill is rejected;
-target drift closes the connection rather than following another window. There is no
+Input, paste, resize, reconnect, and Terminal Copy are supported. Closing or detaching
+the UI never kills the external session, window, or pane; target drift closes the
+connection rather than following another window. There is no
 interactive /external-target/<id> URL or ext-review-based interactive registration.
 
 ## External review (PurpleMux 0.5.0)

@@ -138,13 +138,12 @@ Register a known tmux server once, independently of its current sessions and win
 ```bash
 purplemux external-server register --socket /absolute/known/tmux/socket --name dev-server
 purplemux external-server list  # fresh sessions/windows/panes runtime inventory
-purplemux external-server create-terminal SERVER_ID  # creates a new owned tmux session
 purplemux external-server unregister SERVER_ID
 ```
 
-Registration stores a stable ID, display name, absolute socket path, and frozen socket identity. Listing discovers current sessions, windows, and pane foreground metadata using stable tmux IDs; newly created resources appear immediately, while deleted resources disappear and unavailable servers are reported without being restarted. New terminals always start as new sessions, carry exact PurpleMux ownership provenance across unregister/re-register, and use idempotent request IDs for safe reconciliation. The PurpleMux-owned `purple` socket is rejected, and later operations fail closed if the socket path is replaced. Unregister removes only PurpleMux's registration; it never kills the external server or any session, window, or pane.
+Registration stores a stable ID, display name, absolute socket path, and frozen socket identity. Listing discovers current sessions, windows, and pane foreground metadata using stable tmux IDs; newly created resources appear immediately, while deleted resources disappear and unavailable servers are reported without being restarted. Every discovered resource remains unowned by PurpleMux. The PurpleMux-owned `purple` socket is rejected, and later operations fail closed if the socket path is replaced. Unregister removes only PurpleMux's registration; it never kills the external server or any session, window, or pane.
 
-Open the authenticated `/external-server` page to browse the same fresh inventory and select an exact discovered window for a full interactive terminal. Input, paste, resize, reconnect, and Terminal Copy use the normal terminal surface, while kill requests are rejected and the connection fails closed if its exact session/window or frozen socket identity changes. There is no interactive `/external-target/<id>` URL; `/ext-review/<id>` remains the distinct read-only fixed-window contract below.
+Open the authenticated `/external-server` page to browse the same fresh inventory and select an exact discovered window for a full interactive terminal. Input, paste, resize, reconnect, and Terminal Copy use the normal terminal surface. Closing or detaching the UI never kills external tmux resources, and the connection fails closed if its exact session/window or frozen socket identity changes. There is no interactive `/external-target/<id>` URL; `/ext-review/<id>` remains the distinct read-only fixed-window contract below.
 
 ### External review (PurpleMux 0.5.0)
 
@@ -236,13 +235,12 @@ The default is HTTP. Always use HTTPS when exposing the app externally:
 | `config.json` | Authentication (hashed) and app settings |
 | `workspaces.json` | Workspace layouts, tabs, directories |
 | `ext-reviews.json` | External review definitions; deleting it removes only the definitions, not external tmux resources |
-| `external-servers.json` | External server registrations and terminal creation history; deleting it unregisters the servers without stopping tmux resources |
-| `external-terminal-marker-key` | Secret used to authenticate owned external-terminal markers; deleting it takes effect after restart and then makes existing marked sessions unowned |
+| `external-servers.json` | External server registrations; deleting it unregisters the servers without stopping tmux resources |
 | `vapid-keys.json` | Web Push VAPID keys (auto-generated) |
 | `push-subscriptions.json` | Push subscription data |
 | `hooks/` | User-defined hooks |
 
-Back up `external-servers.json` and `external-terminal-marker-key` together to preserve external-terminal ownership across a restore. `ext-reviews.json` is included in a full data-directory backup, but restored definitions are usable only when their frozen external tmux targets still match.
+Restored external reviews and server registrations are usable only when their frozen external tmux targets still match.
 
 ## Architecture
 

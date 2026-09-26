@@ -9,12 +9,11 @@ import WebBrowserPanel from '@/components/features/workspace/web-browser-panel';
 import DiffPanel from '@/components/features/workspace/diff-panel';
 import useTerminalSurface from '@/hooks/use-terminal-surface';
 import useTabMetadataStore from '@/hooks/use-tab-metadata-store';
-import TerminalContainer from '@/components/features/workspace/terminal-container';
+import TerminalSurface from '@/components/features/workspace/terminal-surface';
 import ConnectionStatus from '@/components/features/workspace/connection-status';
 import MobileClaudeCodePanel from '@/components/features/mobile/mobile-claude-code-panel';
 import MobileCodexPanel from '@/components/features/mobile/mobile-codex-panel';
 import AgentSessionsPanel from '@/components/features/workspace/agent-sessions-panel';
-import MobileTerminalToolbar from '@/components/features/mobile/mobile-terminal-toolbar';
 import PaneAgentModePrompt from '@/components/features/workspace/pane-agent-mode-prompt';
 import { formatTabTitle, isShellProcess } from '@/lib/tab-title';
 import { isAppShortcut, isClearShortcut, isFocusInputShortcut, isShiftEnter } from '@/lib/keyboard-shortcuts';
@@ -816,19 +815,18 @@ const MobileSurfaceView = ({
       )}
 
       {!isWebBrowser && !isDiff && (
-        <TerminalContainer
-          ref={terminalRef}
-          className={cn(
+        <TerminalSurface
+          terminalRef={terminalRef}
+          containerClassName={cn(
             !usesHiddenTerminal && 'transition-opacity duration-150',
             usesHiddenTerminal ? 'absolute inset-0 pointer-events-none opacity-0' : 'min-h-0 flex-1',
             !usesHiddenTerminal && ready && showTerminal ? 'opacity-100' : '',
             !usesHiddenTerminal && (!ready || !showTerminal) ? 'opacity-0' : '',
           )}
+          mobileToolbar={!isAgentPanel && !isAgentSessionList && status === 'connected'
+            ? { sendStdin: sendWebStdin, terminalConnected: true }
+            : undefined}
         />
-      )}
-
-      {!isAgentPanel && !isWebBrowser && !isDiff && !isAgentSessionList && status === 'connected' && (
-        <MobileTerminalToolbar sendStdin={sendWebStdin} terminalConnected={status === 'connected'} />
       )}
 
       {agentModePrompt && agentModePrompt.tabId === activeTabId && panelType === 'terminal' && (

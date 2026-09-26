@@ -136,14 +136,7 @@ exec ${quote(realTmux)} "$@"
     tmux('kill-window', '-t', '$0:@2');
     expect((await cli('external-server', 'list')).servers[0].sessions[0].windows)
       .not.toEqual(expect.arrayContaining([expect.objectContaining({ id: '@2' })]));
-    const owned = await cli('external-server', 'create-terminal', registration.id,
-      '--name', 'owned terminal', '--request-id', 'public-contract-owned');
-    expect(owned).toMatchObject({ serverId: registration.id, sessionId: '$1', name: 'owned terminal',
-      provenance: { requestId: 'public-contract-owned', owner: 'purplemux', resourceType: 'session' } });
     initial = state();
-    pids.push(Number(tmux('display-message', '-p', '-t', owned.sessionId, '#{pane_pid}')));
-    expect((await cli('external-server', 'list')).servers[0].sessions)
-      .toEqual(expect.arrayContaining([expect.objectContaining({ id: owned.sessionId, owned: true })]));
     expect(await cli('ext-review', 'get', review.id)).toMatchObject({ id: review.id, windowIds: ['@0'] });
     const login = await fetch(`${origin}/api/auth/login`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ password: 'review-test-password' }),
@@ -310,7 +303,7 @@ exec ${quote(realTmux)} "$@"
     expect(await cli('external-server', 'unregister', registration.id)).toEqual({ deleted: true });
     await waitFor(() => expect([revocable.code(), revocable.reason()]).toEqual([1000, 'External target unregistered']));
     expect((await cli('external-server', 'list')).servers).toEqual([]);
-    expect(tmux('display-message', '-p', '-t', owned.sessionId, '#{session_id}')).toBe(owned.sessionId);
+    expect(tmux('display-message', '-p', '-t', '$0', '#{session_id}')).toBe('$0');
     const unregistered = await connect(externalQuery, true);
     await waitFor(() => expect(unregistered.code()).toBe(1008));
 
