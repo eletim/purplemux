@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { encodeStdout, MSG_HEARTBEAT } from '@/lib/terminal-protocol';
 
 const terminal = vi.hoisted(() => ({ write: vi.fn(), options: vi.fn() }));
+const viewport = vi.hoisted(() => ({ mobile: false }));
 vi.mock('@/hooks/use-terminal', () => ({ default: (options: unknown) => {
   terminal.options(options);
   return { terminalRef: () => {}, write: terminal.write, isReady: true };
@@ -13,6 +14,9 @@ vi.mock('@/hooks/use-terminal', () => ({ default: (options: unknown) => {
 vi.mock('@/hooks/use-terminal-theme', () => ({ default: () => ({ theme: { colors: {} } }) }));
 vi.mock('@/lib/require-auth', () => ({ requireAuth: vi.fn() }));
 vi.mock('@/lib/load-messages', () => ({ loadMessagesServer: vi.fn() }));
+vi.mock('@/hooks/use-is-mobile', () => ({ default: () => viewport.mobile }));
+vi.mock('next/router', () => ({ useRouter: () => ({ pathname: '/external-server', push: vi.fn() }) }));
+vi.mock('next-intl', () => ({ useTranslations: () => (key: string) => key }));
 vi.mock('next/head', () => ({ default: () => null }));
 vi.mock('next/link', () => ({ default: ({ href, children }: { href: string; children: React.ReactNode }) => createElement('a', { href }, children) }));
 vi.mock('next/dynamic', () => ({ default: () => ({ reviewId, windowId, externalTerminalTarget }: {
@@ -27,7 +31,7 @@ vi.mock('next/dynamic', () => ({ default: () => ({ reviewId, windowId, externalT
 import ReviewTerminal from '@/components/features/ext-review/review-terminal';
 import ExtReviewsPage from '@/pages/ext-review';
 import ExtReviewPage from '@/pages/ext-review/[id]';
-import ExternalServersPage from '@/pages/external-server';
+import { ExternalWorkspaceChromePage } from '@/pages/external-server';
 
 class ObservationSocket {
   static OPEN = 1;
@@ -48,9 +52,15 @@ const mount = (component: React.ReactNode) => render(createElement(SWRConfig, { 
 
 beforeEach(() => {
   vi.clearAllMocks();
+  viewport.mobile = false;
   ObservationSocket.instances = [];
   window.sessionStorage.clear();
   vi.stubGlobal('WebSocket', ObservationSocket);
+  vi.stubGlobal('ResizeObserver', class {
+    observe() {}
+    disconnect() {}
+  });
+  Element.prototype.scrollIntoView = vi.fn();
 });
 afterEach(() => { cleanup(); vi.useRealTimers(); vi.unstubAllGlobals(); });
 
@@ -133,118 +143,201 @@ describe('external Review browser pages', () => {
 });
 
 describe('external server browser page', () => {
-  it('groups servers, sessions, and windows while showing availability and ownership', async () => {
-    vi.stubGlobal('fetch', vi.fn(async () => response({ servers: [{
-      id: 'server-1', name: 'dev', socketPath: '/known/socket', socketIdentity: '1:2:3', exists: true,
-      sessions: [{ id: '$1', name: 'shells', exists: true, attached: false, owned: false, windows: [
-        { id: '@2', name: 'first', index: 0, exists: true, active: true, panes: [] },
-        { id: '@4', name: 'second', index: 1, exists: true, active: false, panes: [] },
-      ] }],
-    }, {
-      id: 'server-2', name: 'offline', socketPath: '/missing/socket', socketIdentity: '4:5:6', exists: false,
-      sessions: [], unavailableReason: 'Socket disappeared',
-    }] })));
-    mount(createElement(ExternalServersPage));
+  const tab = (id: string, name: string, order: number, active = false, workspaceId = '$1') => ({
+    id, workspaceId, name, order, active, panes: [],
+    externalTerminalTarget: { serverId: 'server-1', sessionId: workspaceId, windowId: id },
+  });
+  const workspace = (id: string, name: string, tabs: ReturnType<typeof tab>[]) => ({
+    id, name, sessionCreated: id === '$1' ? '1750000000' : '1750000001', attached: false, tabs,
+  });
+  const externalSource = (tabs = [tab('@2', 'first', 0, true)]) => ({
+    serverId: 'server-1', name: 'dev', exists: true,
+    workspaces: [workspace('$1', 'shells', tabs)],
+  });
+  const mixedExternalSource = (populatedTabs = [tab('@2', 'first', 0, true)]) => ({
+    ...externalSource(populatedTabs),
+    workspaces: [
+      workspace('$1', 'populated', populatedTabs),
+      workspace('$2', 'empty', []),
+    ],
+  });
+  const fetchFor = (getSource: () => ReturnType<typeof externalSource>) => vi.fn(async (url: string, init?: RequestInit) => {
+    if (init?.method === 'POST') {
+      const input = JSON.parse(String(init.body)) as { requestId: string };
+      const workspaceId = decodeURIComponent(url.match(/\/workspaces\/([^/]+)\/tabs$/)?.[1] ?? '');
+      const selectedWorkspace = getSource().workspaces.find((candidate) => candidate.id === workspaceId)!;
+      return response({
+        tabId: '@9', workspaceId, sessionCreated: selectedWorkspace.sessionCreated,
+        requestId: input.requestId,
+        externalTerminalTarget: { serverId: 'server-1', sessionId: workspaceId, windowId: '@9' },
+      }, 201);
+    }
+    if (url.startsWith('/api/tmux/capture?')) return response({ content: 'captured external pane' });
+    if (url.endsWith('/workspaces')) return response(getSource());
+    return response({ servers: [{ id: 'server-1', name: 'dev' }] });
+  });
+
+  it('reuses the Workspace sidebar and Tab bar without managed-only controls', async () => {
+    vi.stubGlobal('fetch', fetchFor(() => externalSource([
+      tab('@2', 'first', 0, true), tab('@4', 'second', 1),
+    ])));
+    mount(createElement(ExternalWorkspaceChromePage));
 
     expect((await screen.findByTestId('external-terminal')).textContent).toBe('server-1:$1:@2');
-    expect(screen.getByRole('region', { name: 'dev server' })).toBeTruthy();
-    expect(screen.getByRole('region', { name: 'dev / shells session' }).textContent)
-      .toContain('Not owned by PurpleMux');
-    expect(screen.getByRole('navigation', { name: 'dev / shells windows' }).textContent).toBe('firstsecond');
-    expect(screen.getByRole('region', { name: 'offline server' }).textContent)
-      .toContain('Unavailable: Socket disappeared');
-    expect((screen.getByRole('button', { name: 'New Terminal on offline' }) as HTMLButtonElement).disabled).toBe(true);
-    fireEvent.click(screen.getByRole('button', { name: 'dev / shells / second' }));
+    expect(screen.getByRole('navigation', { name: 'workspaceList' }).getAttribute('data-workspace-source')).toBe('external');
+    expect(screen.getByRole('navigation', { name: 'workspaceList' }).textContent).toContain('shells');
+    expect(screen.getByRole('tablist').textContent).toContain('first');
+    expect(screen.queryByText(/owned by purplemux/i)).toBeNull();
+    expect(screen.queryByText('SESSIONS')).toBeNull();
+    expect(screen.queryByLabelText('closeTabLabel')).toBeNull();
+    fireEvent.click(screen.getByRole('tab', { name: 'second' }));
     expect(screen.getByTestId('external-terminal').textContent).toBe('server-1:$1:@4');
   });
 
-  it('refreshes live additions and deletions and validates selection against the latest inventory', async () => {
+  it('refreshes live stable-ID additions and falls back when the selected window disappears', async () => {
     vi.useFakeTimers();
-    const first = { id: 'server-1', name: 'dev', socketPath: '/known/socket', socketIdentity: '1:2:3',
-      exists: true, sessions: [{ id: '$1', name: 'shells', exists: true, attached: false, owned: false,
-        windows: [{ id: '@2', name: 'first', index: 0, exists: true, active: true, panes: [] }] }] };
-    const added = { ...first, sessions: [{ ...first.sessions[0], windows: [
-      ...first.sessions[0].windows,
-      { id: '@4', name: 'second', index: 1, exists: true, active: false, panes: [] },
-    ] }] };
-    let inventory = first;
-    vi.stubGlobal('fetch', vi.fn(async () => response({ servers: [inventory] })));
-    mount(createElement(ExternalServersPage));
-
+    let source = externalSource();
+    vi.stubGlobal('fetch', fetchFor(() => source));
+    mount(createElement(ExternalWorkspaceChromePage));
     await act(async () => { await Promise.resolve(); });
-    expect(screen.getByTestId('external-terminal').textContent).toBe('server-1:$1:@2');
-    inventory = added;
+
+    source = externalSource([tab('@2', 'first', 0, true), tab('@4', 'second', 1)]);
     await act(async () => { await vi.advanceTimersByTimeAsync(5000); });
-    fireEvent.click(screen.getByRole('button', { name: 'dev / shells / second' }));
+    fireEvent.click(screen.getByRole('tab', { name: 'second' }));
     expect(screen.getByTestId('external-terminal').textContent).toBe('server-1:$1:@4');
 
-    inventory = first;
+    source = externalSource();
     await act(async () => { await vi.advanceTimersByTimeAsync(5000); });
-    expect(screen.queryByRole('button', { name: 'dev / shells / second' })).toBeNull();
+    expect(screen.queryByRole('tab', { name: 'second' })).toBeNull();
     expect(screen.getByTestId('external-terminal').textContent).toBe('server-1:$1:@2');
   });
 
-  it('creates a new owned session and opens its returned terminal target', async () => {
-    const before = { id: 'server-1', name: 'dev', socketPath: '/known/socket',
-      socketIdentity: '1:2:3', exists: true, sessions: [] };
-    const after = { ...before, sessions: [{ id: '$2', name: 'purplemux-new', sessionCreated: '1750000000',
-      exists: true, attached: false, owned: true, windows: [
-        { id: '@3', name: 'shell', index: 0, exists: true, active: true, panes: [] },
-      ] }] };
-    let resolveRefresh!: (value: ReturnType<typeof response>) => void;
-    const refresh = new Promise<ReturnType<typeof response>>((resolve) => { resolveRefresh = resolve; });
-    let created = false;
-    const fetchMock = vi.fn(async (_url: string, init?: RequestInit) => {
-      if (init?.method === 'POST') {
-        created = true;
-        return response({ serverId: 'server-1', sessionId: '$2', windowId: '@3',
-          provenance: { requestId: JSON.parse(String(init.body)).requestId } }, 201);
-      }
-      return created ? refresh : response({ servers: [before] });
-    });
+  it('uses the shared + affordance to create in the exact Workspace and selects the returned stable ID', async () => {
+    const fetchMock = fetchFor(() => externalSource());
     vi.stubGlobal('fetch', fetchMock);
-    mount(createElement(ExternalServersPage));
+    mount(createElement(ExternalWorkspaceChromePage));
 
-    fireEvent.click(await screen.findByRole('button', { name: 'New Terminal on dev' }));
-    await waitFor(() => expect(screen.getByTestId('external-terminal').textContent).toBe('server-1:$2:@3'));
-    resolveRefresh(response({ servers: [after] }));
-    expect((await screen.findByRole('region', { name: 'dev / purplemux-new session' })).textContent)
-      .toContain('Owned by PurpleMux');
+    fireEvent.click(await screen.findByRole('button', { name: 'openNewTab' }));
+    await waitFor(() => expect(screen.getByTestId('external-terminal').textContent).toBe('server-1:$1:@9'));
     const creation = fetchMock.mock.calls.find(([, init]) => init?.method === 'POST')!;
-    expect(creation[0]).toBe('/api/cli/external-servers/server-1/terminals');
-    expect(JSON.parse(String(creation[1]?.body))).toEqual({ requestId: expect.any(String) });
+    expect(creation[0]).toBe('/api/cli/external-servers/server-1/workspaces/%241/tabs');
+    expect(JSON.parse(String(creation[1]?.body))).toEqual({
+      sessionCreated: '1750000000', requestId: expect.any(String),
+    });
   });
 
-  it('reuses an unknown request and does not report a committed creation as failed on refresh', async () => {
-    const server = { id: 'server-1', name: 'dev', socketPath: '/known/socket',
-      socketIdentity: '1:2:3', exists: true, sessions: [] };
+  it('reuses the persisted request ID after an ambiguous tab-creation response', async () => {
+    const successfulFetch = fetchFor(() => externalSource());
     let postCount = 0;
-    const requestBodies: Array<{ requestId: string }> = [];
-    const fetchMock = vi.fn(async (_url: string, init?: RequestInit) => {
-      if (init?.method === 'POST') {
-        const request = JSON.parse(String(init.body));
-        requestBodies.push(request);
-        postCount += 1;
-        if (postCount === 1) return response({ error: 'creation outcome is unknown',
-          outcomeUnknown: true, requestId: request.requestId }, 503);
-        return response({ serverId: 'server-1', sessionId: '$2', windowId: '@3',
-          provenance: { requestId: request.requestId } }, 201);
+    const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
+      if (init?.method === 'POST' && postCount++ === 0) {
+        const { requestId } = JSON.parse(String(init.body)) as { requestId: string };
+        return response({ error: 'outcome unknown', outcomeUnknown: true, requestId }, 503);
       }
-      if (postCount > 1) return response({ error: 'refresh failed' }, 500);
-      return response({ servers: [server] });
+      return successfulFetch(url, init);
     });
     vi.stubGlobal('fetch', fetchMock);
-    mount(createElement(ExternalServersPage));
+    mount(createElement(ExternalWorkspaceChromePage));
 
-    fireEvent.click(await screen.findByRole('button', { name: 'New Terminal on dev' }));
-    await screen.findByText('creation outcome is unknown');
-    cleanup();
-    mount(createElement(ExternalServersPage));
-    fireEvent.click(await screen.findByRole('button', { name: 'New Terminal on dev' }));
-    await waitFor(() => expect(requestBodies).toHaveLength(2));
-    expect(requestBodies[1]).toEqual(requestBodies[0]);
-    await waitFor(() => expect(screen.queryByText('creation outcome is unknown')).toBeNull());
-    expect(screen.queryByText('Unable to create external terminal.')).toBeNull();
-    expect(screen.getByTestId('external-terminal').textContent).toBe('server-1:$2:@3');
+    const create = await screen.findByRole('button', { name: 'openNewTab' });
+    fireEvent.click(create);
+    expect(await screen.findAllByText('outcome unknown')).not.toHaveLength(0);
+    fireEvent.click(create);
+    await waitFor(() => expect(screen.getByTestId('external-terminal').textContent)
+      .toBe('server-1:$1:@9'));
+
+    const creations = fetchMock.mock.calls.filter(([, init]) => init?.method === 'POST');
+    expect(creations).toHaveLength(2);
+    const requestIds = creations.map(([, init]) =>
+      JSON.parse(String(init?.body)).requestId as string);
+    expect(requestIds[0]).toBeTruthy();
+    expect(requestIds[1]).toBe(requestIds[0]);
+  });
+
+  it('retires a confirmed optimistic tab so external deletion cannot resurrect it', async () => {
+    let source = externalSource();
+    const fetchMock = fetchFor(() => source);
+    vi.stubGlobal('fetch', fetchMock);
+    mount(createElement(ExternalWorkspaceChromePage));
+
+    fireEvent.click(await screen.findByRole('button', { name: 'openNewTab' }));
+    await waitFor(() => expect(screen.getByTestId('external-terminal').textContent)
+      .toBe('server-1:$1:@9'));
+    source = externalSource([tab('@2', 'first', 0, true), tab('@9', 'created', 1)]);
+    fireEvent.click(screen.getByRole('button', { name: 'Refresh external workspaces' }));
+    await waitFor(() => expect(screen.getByRole('tab', { name: 'created' })).toBeTruthy());
+
+    source = externalSource();
+    fireEvent.click(screen.getByRole('button', { name: 'Refresh external workspaces' }));
+    await waitFor(() => expect(screen.queryByRole('tab', { name: 'created' })).toBeNull());
+    expect(screen.getByTestId('external-terminal').textContent).toBe('server-1:$1:@2');
+  });
+
+  it('keeps an empty desktop Workspace selected by stable ID while populated sessions refresh', async () => {
+    vi.useFakeTimers();
+    let source = mixedExternalSource();
+    const fetchMock = fetchFor(() => source);
+    vi.stubGlobal('fetch', fetchMock);
+    mount(createElement(ExternalWorkspaceChromePage));
+    await act(async () => { await Promise.resolve(); });
+
+    fireEvent.click(screen.getByRole('button', { name: 'empty' }));
+    expect(screen.getByRole('button', { name: 'empty' }).getAttribute('aria-current')).toBe('true');
+    expect(screen.queryByTestId('external-terminal')).toBeNull();
+
+    source = mixedExternalSource([tab('@2', 'first', 0, true), tab('@4', 'second', 1)]);
+    await act(async () => { await vi.advanceTimersByTimeAsync(5000); });
+    expect(screen.getByRole('button', { name: 'empty' }).getAttribute('aria-current')).toBe('true');
+    vi.useRealTimers();
+    fireEvent.click(screen.getByRole('button', { name: 'openNewTab' }));
+    await waitFor(() => expect(screen.getByTestId('external-terminal').textContent).toBe('server-1:$2:@9'));
+    const creation = fetchMock.mock.calls.find(([, init]) => init?.method === 'POST')!;
+    expect(creation[0]).toBe('/api/cli/external-servers/server-1/workspaces/%242/tabs');
+  });
+
+  it('reuses mobile Workspace/Tab chrome while withholding managed Git, agent, and lifecycle controls', async () => {
+    viewport.mobile = true;
+    vi.stubGlobal('fetch', fetchFor(() => externalSource()));
+    mount(createElement(ExternalWorkspaceChromePage));
+
+    expect((await screen.findByTestId('external-terminal')).textContent).toBe('server-1:$1:@2');
+    expect(document.querySelector('[data-ui-chrome="header"]')).toBeTruthy();
+    expect(document.querySelector('[data-ui-chrome="tab-bar"]')).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'newTab' })).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'copyPaneLabel' }));
+    await waitFor(() => expect(fetch).toHaveBeenCalledWith(
+      '/api/tmux/capture?externalServerId=server-1&sessionId=%241&windowId=%402',
+    ));
+    expect(screen.queryByRole('button', { name: 'Open Git' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'closeTab' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Select tab mode' })).toBeNull();
+  });
+
+  it('keeps the mobile + affordance available for an empty external Workspace', async () => {
+    viewport.mobile = true;
+    const fetchMock = fetchFor(() => externalSource([]));
+    vi.stubGlobal('fetch', fetchMock);
+    mount(createElement(ExternalWorkspaceChromePage));
+
+    fireEvent.click(await screen.findByRole('button', { name: 'newTabLabel' }));
+    await waitFor(() => expect(screen.getByTestId('external-terminal').textContent).toBe('server-1:$1:@9'));
+    const creation = fetchMock.mock.calls.find(([, init]) => init?.method === 'POST')!;
+    expect(creation[0]).toBe('/api/cli/external-servers/server-1/workspaces/%241/tabs');
+  });
+
+  it('selects an empty mobile Workspace independently and creates its first tab there', async () => {
+    viewport.mobile = true;
+    const fetchMock = fetchFor(() => mixedExternalSource());
+    vi.stubGlobal('fetch', fetchMock);
+    mount(createElement(ExternalWorkspaceChromePage));
+    await screen.findByTestId('external-terminal');
+
+    fireEvent.click(screen.getByRole('button', { name: 'openMenu' }));
+    fireEvent.click(screen.getByRole('button', { name: 'empty' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'newTabLabel' }));
+
+    await waitFor(() => expect(screen.getByTestId('external-terminal').textContent).toBe('server-1:$2:@9'));
+    const creation = fetchMock.mock.calls.find(([, init]) => init?.method === 'POST')!;
+    expect(creation[0]).toBe('/api/cli/external-servers/server-1/workspaces/%242/tabs');
   });
 });

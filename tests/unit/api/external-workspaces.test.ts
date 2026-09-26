@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { NextApiRequest, NextApiResponse } from 'next';
 import workspaces from '@/pages/api/cli/external-servers/[serverId]/workspaces';
 import tabs from '@/pages/api/cli/external-servers/[serverId]/workspaces/[workspaceId]/tabs';
-import { ExternalServerError } from '@/lib/external-server-tmux';
+import { ExternalServerError, ExternalWindowOutcomeUnknownError } from '@/lib/external-server-tmux';
 
 const mocks = vi.hoisted(() => ({
   cliAuth: vi.fn(), browserAuth: vi.fn(), getSource: vi.fn(), createTab: vi.fn(),
@@ -48,14 +48,15 @@ describe('external Workspace/Tab API', () => {
 
   it('adds a Tab to an exact Workspace and returns its stable selection target', async () => {
     const created = { tabId: '@7', workspaceId: '$4', sessionCreated: '1750000001',
+      requestId: 'request-1',
       externalTerminalTarget: { serverId: 'server-1', sessionId: '$4', windowId: '@7' } };
     mocks.createTab.mockResolvedValue(created);
     const res = response();
 
-    await tabs(request('POST', { sessionCreated: '1750000001' }), res);
+    await tabs(request('POST', { sessionCreated: '1750000001', requestId: 'request-1' }), res);
 
     expect(mocks.createTab).toHaveBeenCalledWith('server-1',
-      { id: '$4', sessionCreated: '1750000001' });
+      { id: '$4', sessionCreated: '1750000001', requestId: 'request-1' });
     expect(res.status).toHaveBeenCalledWith(201);
     expect(res.json).toHaveBeenCalledWith(created);
   });
@@ -83,10 +84,36 @@ describe('external Workspace/Tab API', () => {
 
     mocks.createTab.mockRejectedValue(new ExternalServerError('External tmux session identity changed'));
     res = response();
-    await tabs(request('POST', { sessionCreated: '1750000001' }), res);
+    await tabs(request('POST', { sessionCreated: '1750000001', requestId: 'request-drift' }), res);
     expect(res.status).toHaveBeenCalledWith(409);
     expect(res.json).toHaveBeenCalledWith({ error: 'External tmux session identity changed' });
     expect(mocks.createTab).toHaveBeenCalledOnce();
+  });
+
+  it('preserves a request ID across an ambiguous outcome and its reconciled retry', async () => {
+    const created = { tabId: '@7', workspaceId: '$4', sessionCreated: '1750000001',
+      requestId: 'retry-window',
+      externalTerminalTarget: { serverId: 'server-1', sessionId: '$4', windowId: '@7' } };
+    mocks.createTab
+      .mockRejectedValueOnce(new ExternalWindowOutcomeUnknownError('retry-window'))
+      .mockResolvedValueOnce(created);
+    const input = { sessionCreated: '1750000001', requestId: 'retry-window' };
+
+    let res = response();
+    await tabs(request('POST', input), res);
+    expect(res.status).toHaveBeenCalledWith(503);
+    expect(res.json).toHaveBeenCalledWith(expect.objectContaining({
+      outcomeUnknown: true, requestId: 'retry-window',
+    }));
+
+    res = response();
+    await tabs(request('POST', input), res);
+    expect(res.status).toHaveBeenCalledWith(201);
+    expect(res.json).toHaveBeenCalledWith(created);
+    expect(mocks.createTab).toHaveBeenNthCalledWith(1, 'server-1',
+      { id: '$4', sessionCreated: '1750000001', requestId: 'retry-window' });
+    expect(mocks.createTab).toHaveBeenNthCalledWith(2, 'server-1',
+      { id: '$4', sessionCreated: '1750000001', requestId: 'retry-window' });
   });
 
   it('advertises only the supported methods', async () => {

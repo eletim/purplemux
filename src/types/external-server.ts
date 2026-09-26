@@ -42,6 +42,7 @@ export interface ICreatedExternalWindow {
   sessionId: string;
   sessionCreated: string;
   windowId: string;
+  requestId: string;
 }
 
 export interface IExternalTmuxPane {

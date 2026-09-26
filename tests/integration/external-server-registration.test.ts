@@ -3,7 +3,7 @@ import fs from 'fs/promises';
 import os from 'os';
 import path from 'path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { assertExternalServerSocketIdentity, discoverExternalServer,
+import { assertExternalServerSocketIdentity, captureExternalServerWindow, discoverExternalServer,
   externalServerTmuxTarget, resolveExternalServerWindow } from '@/lib/external-server-tmux';
 import { execTmux } from '@/lib/tmux-target';
 
@@ -151,22 +151,28 @@ describe('external tmux server registrations', () => {
     const server = await store.registerExternalServer({ name: 'external', socketPath: socket });
     const sessionCreated = tmux('display-message', '-p', '-t', '$0', '#{session_created}');
 
-    const created = await store.createExternalSessionWindow(server.id, { id: '$0', sessionCreated });
+    const created = await store.createExternalSessionWindow(server.id,
+      { id: '$0', sessionCreated, requestId: 'window-create-1' });
 
     expect(created).toEqual({
       serverId: server.id, sessionId: '$0', sessionCreated, windowId: '@1',
+      requestId: 'window-create-1',
     });
     expect(tmux('list-sessions', '-F', '#{session_id}')).toBe('$0');
     expect(tmux('display-message', '-p', '-t', '$0:@1',
       '#{session_id}:#{session_created}:#{window_id}')).toBe(`$0:${sessionCreated}:@1`);
+    await expect(store.createExternalSessionWindow(server.id,
+      { id: '$0', sessionCreated, requestId: 'window-create-1' })).resolves.toEqual(created);
+    expect(tmux('list-windows', '-t', '$0', '-F', '#{window_id}').split('\n')).toEqual(['@0', '@1']);
     expect(tmux('show-options', '-v', '-t', '$0', '@purplemux_provenance')).toBe('');
     expect((await store.listExternalServers())[0].terminalCreations).toEqual([]);
 
     await expect(store.createExternalSessionWindow(server.id,
-      { id: '$0', sessionCreated: String(Number(sessionCreated) - 1) }))
+      { id: '$0', sessionCreated: String(Number(sessionCreated) - 1), requestId: 'window-drift' }))
       .rejects.toThrow('session identity changed');
     expect(tmux('list-windows', '-t', '$0', '-F', '#{window_id}').split('\n')).toEqual(['@0', '@1']);
-    await expect(store.createExternalSessionWindow('missing', { id: '$0', sessionCreated }))
+    await expect(store.createExternalSessionWindow('missing',
+      { id: '$0', sessionCreated, requestId: 'window-missing' }))
       .resolves.toBeUndefined();
   });
 
@@ -192,7 +198,7 @@ describe('external tmux server registrations', () => {
     });
 
     const created = await adapter.createExternalWorkspaceTab(server.id,
-      { id: addedSessionId, sessionCreated: addedCreated });
+      { id: addedSessionId, sessionCreated: addedCreated, requestId: 'adapter-window-1' });
     expect(created).toMatchObject({ workspaceId: addedSessionId,
       externalTerminalTarget: { serverId: server.id, sessionId: addedSessionId } });
     source = await adapter.getExternalWorkspaceSource(server.id);
@@ -248,7 +254,8 @@ describe('external tmux server registrations', () => {
       .rejects.toThrow('identity changed');
     await expect(store.createExternalTerminal(server.id, { requestId: 'replaced-socket' }))
       .rejects.toThrow('identity changed');
-    await expect(store.createExternalSessionWindow(server.id, { id: '$0', sessionCreated }))
+    await expect(store.createExternalSessionWindow(server.id,
+      { id: '$0', sessionCreated, requestId: 'replaced-window' }))
       .rejects.toThrow('identity changed');
     expect(tmux('list-windows', '-t', '$0', '-F', '#{window_id}')).toBe('@0');
   });
@@ -322,5 +329,18 @@ describe('external tmux server registrations', () => {
       .rejects.toThrow('window is unavailable');
     await expect(resolveExternalServerWindow(server, 'external', '@0'))
       .rejects.toThrow('Invalid external tmux window target');
+  });
+
+  it('captures only an exact external stable target', async () => {
+    vi.spyOn(os, 'homedir').mockReturnValue(directory);
+    vi.resetModules();
+    const store = await import('@/lib/external-server-store');
+    const server = await store.registerExternalServer({ name: 'external', socketPath: socket });
+    tmux('respawn-pane', '-k', '-t', '$0:@0', 'printf EXTERNAL_COPY_TARGET; sleep 300');
+
+    await vi.waitFor(async () => expect(await captureExternalServerWindow(server, '$0', '@0'))
+      .toContain('EXTERNAL_COPY_TARGET'));
+    await expect(captureExternalServerWindow(server, '$0', '@999'))
+      .rejects.toThrow('window is unavailable');
   });
 });

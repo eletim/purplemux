@@ -83,32 +83,138 @@ describe('external tmux runtime decoding', () => {
   });
 
   it('adds an unowned window to one exact stable external session', async () => {
-    mocks.exec.mockResolvedValueOnce({ stdout: '$4:1750000001:@7\n', stderr: '' });
+    mocks.exec.mockReset()
+      .mockResolvedValueOnce({ stdout: inventoryLine('$4', '1750000001', '@2'), stderr: '' })
+      .mockResolvedValueOnce({ stdout: '$4\t1750000001\t@7\n', stderr: '' })
+      .mockResolvedValueOnce({ stdout: '', stderr: '' });
 
     await expect(createExternalSessionWindow(server,
-      { id: '$4', sessionCreated: '1750000001' })).resolves.toEqual({
+      { id: '$4', sessionCreated: '1750000001', requestId: 'window-request' })).resolves.toEqual({
       serverId: 'server', sessionId: '$4', sessionCreated: '1750000001', windowId: '@7',
+      requestId: 'window-request',
     });
 
-    expect(mocks.exec).toHaveBeenCalledOnce();
+    expect(mocks.exec).toHaveBeenCalledTimes(3);
     expect(mocks.exec).toHaveBeenCalledWith(expect.anything(), [
       'if-shell', '-F', '-t', '$4',
       '#{&&:#{==:#{session_id},$4},#{==:#{session_created},1750000001}}',
-      "new-window -d -P -F '#{session_id}:#{session_created}:#{window_id}' -t $4",
+      "new-window -d -P -F '#{session_id}\t#{session_created}\t#{window_id}' "
+        + '-n purplemux-pending-window-request -t $4',
       'display-message -p purplemux-session-identity-mismatch',
     ], expect.objectContaining({ timeout: 5000 }));
-    expect(mocks.exec.mock.calls[0][1].join(' ')).not.toContain('new-session');
-    expect(mocks.exec.mock.calls[0][1].join(' ')).not.toContain('@purplemux_provenance');
+    expect(mocks.exec).toHaveBeenCalledWith(expect.anything(), [
+      'set-option', '-w', '-t', '$4:@7', '@purplemux_tab_request_id', 'window-request',
+      ';', 'set-option', '-wu', '-t', '$4:@7', 'automatic-rename',
+      ';', 'rename-window', '-t', '$4:@7', '#{pane_current_command}',
+    ], expect.objectContaining({ timeout: 5000 }));
+    expect(mocks.exec.mock.calls[1][1].join(' ')).not.toContain('new-session');
+    expect(mocks.exec.mock.calls[1][1].join(' ')).not.toContain('@purplemux_provenance');
+  });
+
+  it('does not overwrite a user active-window change after discovery', async () => {
+    let activeWindow = '@2';
+    mocks.exec.mockReset().mockImplementation(async (_target, args: string[]) => {
+      if (args[0] === 'list-panes') {
+        return { stdout: inventoryLine('$4', '1750000001', activeWindow), stderr: '' };
+      }
+      if (args[0] === 'if-shell') {
+        // Another client selects a different window after discovery and before creation.
+        activeWindow = '@3';
+        return { stdout: '$4\t1750000001\t@7\n', stderr: '' };
+      }
+      if (args[0] === 'select-window') activeWindow = String(args.at(-1)).split(':').at(-1)!;
+      return { stdout: '', stderr: '' };
+    });
+
+    await createExternalSessionWindow(server,
+      { id: '$4', sessionCreated: '1750000001', requestId: 'window-race' });
+
+    expect(activeWindow).toBe('@3');
+    expect(mocks.exec.mock.calls.flatMap(([, args]) => args)).not.toContain('select-window');
+    expect(mocks.exec).toHaveBeenCalledWith(expect.anything(), [
+      'set-option', '-w', '-t', '$4:@7', '@purplemux_tab_request_id', 'window-race',
+      ';', 'set-option', '-wu', '-t', '$4:@7', 'automatic-rename',
+      ';', 'rename-window', '-t', '$4:@7', '#{pane_current_command}',
+    ], expect.anything());
   });
 
   it('fails closed when the external session identity drifts or output names another target', async () => {
-    mocks.exec.mockResolvedValueOnce({ stdout: 'purplemux-session-identity-mismatch\n', stderr: '' });
+    mocks.exec.mockReset()
+      .mockResolvedValueOnce({ stdout: inventoryLine('$4', '1750000001', '@2'), stderr: '' })
+      .mockResolvedValueOnce({ stdout: 'purplemux-session-identity-mismatch\n', stderr: '' });
     await expect(createExternalSessionWindow(server,
-      { id: '$4', sessionCreated: '1750000001' })).rejects.toThrow('session identity changed');
+      { id: '$4', sessionCreated: '1750000001', requestId: 'window-drift' }))
+      .rejects.toThrow('session identity changed');
 
-    mocks.exec.mockResolvedValueOnce({ stdout: '$5:1750000001:@7\n', stderr: '' });
+    mocks.exec.mockReset()
+      .mockResolvedValueOnce({ stdout: inventoryLine('$4', '1750000001', '@2'), stderr: '' })
+      .mockResolvedValueOnce({ stdout: '$5\t1750000001\t@7\n', stderr: '' })
+      .mockResolvedValueOnce({ stdout: inventoryLine('$4', '1750000001', '@2'), stderr: '' });
     await expect(createExternalSessionWindow(server,
-      { id: '$4', sessionCreated: '1750000001' })).rejects.toThrow('Invalid external tmux window creation result');
+      { id: '$4', sessionCreated: '1750000001', requestId: 'window-invalid' }))
+      .rejects.toThrow('outcome is unknown');
+  });
+
+  it('reconciles a repeated window request after the successful response is lost', async () => {
+    mocks.exec.mockReset()
+      .mockResolvedValueOnce({ stdout: inventoryLine('$4', '1750000001', '@2'), stderr: '' })
+      .mockResolvedValueOnce({ stdout: '$4\t1750000001\t@7\n', stderr: '' })
+      .mockResolvedValueOnce({ stdout: '', stderr: '' })
+      .mockResolvedValueOnce({ stdout: inventoryLine('$4', '1750000001', '@7'), stderr: '' });
+    let markerReads = 0;
+    mocks.execBuffer.mockImplementation(async (_target, args: string[]) => {
+      const field = args.at(-1) ?? '';
+      const values: Record<string, string> = {
+        '#{session_name}': 'work', '#{window_name}': 'shell',
+        '#{pane_current_command}': 'bash', '#{pane_current_path}': '/tmp',
+      };
+      const value = field === '#{@purplemux_tab_request_id}'
+        ? (++markerReads === 1 ? '' : 'retry-window')
+        : values[field] ?? '';
+      return { stdout: Buffer.from(`${value}\n`), stderr: Buffer.alloc(0) };
+    });
+    const request = { id: '$4', sessionCreated: '1750000001', requestId: 'retry-window' };
+
+    const first = await createExternalSessionWindow(server, request);
+    const retried = await createExternalSessionWindow(server, request);
+
+    expect(retried).toEqual(first);
+    expect(first.windowId).toBe('@7');
+    expect(mocks.exec.mock.calls.filter(([, args]) => args[0] === 'if-shell')).toHaveLength(1);
+  });
+
+  it('retries marking a pending window without dispatching another new-window', async () => {
+    let created = false;
+    let markerFailures = 2;
+    mocks.exec.mockReset().mockImplementation(async (_target, args: string[]) => {
+      if (args[0] === 'list-panes') {
+        return { stdout: inventoryLine('$4', '1750000001', created ? '@7' : '@2'), stderr: '' };
+      }
+      if (args[0] === 'if-shell') {
+        created = true;
+        return { stdout: '$4\t1750000001\t@7\n', stderr: '' };
+      }
+      if (args[0] === 'set-option' && markerFailures-- > 0) {
+        throw new Error('marker dispatch failed');
+      }
+      return { stdout: '', stderr: '' };
+    });
+    mocks.execBuffer.mockImplementation(async (_target, args: string[]) => {
+      const field = args.at(-1) ?? '';
+      const values: Record<string, string> = {
+        '#{session_name}': 'work',
+        '#{window_name}': created ? 'purplemux-pending-retry-pending' : 'shell',
+        '#{pane_current_command}': 'bash', '#{pane_current_path}': '/tmp',
+      };
+      return { stdout: Buffer.from(`${values[field] ?? ''}\n`), stderr: Buffer.alloc(0) };
+    });
+    const request = { id: '$4', sessionCreated: '1750000001', requestId: 'retry-pending' };
+
+    await expect(createExternalSessionWindow(server, request)).rejects.toThrow('outcome is unknown');
+    await expect(createExternalSessionWindow(server, request)).resolves.toMatchObject({ windowId: '@7' });
+
+    expect(mocks.exec.mock.calls.filter(([, args]) => args[0] === 'if-shell')).toHaveLength(1);
+    expect(mocks.exec.mock.calls.filter(([, args]) => args[0] === 'set-option')).toHaveLength(3);
   });
 
   it.each([

@@ -8,10 +8,12 @@ import MobileTerminalToolbar from '@/components/features/mobile/mobile-terminal-
 import ConnectionStatus from '@/components/features/workspace/connection-status';
 import TerminalContainer from '@/components/features/workspace/terminal-container';
 import TerminalKeyBar from '@/components/features/workspace/terminal-key-bar';
+import { cn } from '@/lib/utils';
 
 export default function ExternalTerminalSurface({
   externalTerminalTarget,
-}: { externalTerminalTarget: IExternalTerminalTarget }) {
+  className,
+}: { externalTerminalTarget: IExternalTerminalTarget; className?: string }) {
   const { serverId: externalServerId, sessionId: externalSessionId, windowId } = externalTerminalTarget;
   const keyBarMode = useConfigStore((state) => state.terminalKeyBar);
   const isMobileDevice = useIsMobileDevice();
@@ -82,7 +84,7 @@ export default function ExternalTerminalSurface({
   return (
     <section
       aria-label={`External terminal ${windowId}`}
-      className="relative flex h-[75vh] min-h-64 flex-col overflow-hidden rounded border"
+      className={cn('relative flex h-[75vh] min-h-64 flex-col overflow-hidden rounded border', className)}
       style={{ backgroundColor: theme.colors.background }}
     >
       <TerminalContainer ref={terminalRef} className="min-h-0 flex-1" />

@@ -8,7 +8,7 @@ export interface IExternalWorkspaceAdapterDependencies {
   discover: (server: IExternalServer) => Promise<IExternalServerInventory>;
   createWindow: (
     serverId: string,
-    session: { id: string; sessionCreated: string },
+    session: { id: string; sessionCreated: string; requestId: string },
   ) => Promise<ICreatedExternalWindow | undefined>;
 }
 
@@ -59,7 +59,7 @@ export const getExternalWorkspaceSource = async (
 /** Add a Tab to one exact live Workspace and return stable IDs for immediate selection. */
 export const createExternalWorkspaceTab = async (
   serverId: string,
-  workspace: { id: string; sessionCreated: string },
+  workspace: { id: string; sessionCreated: string; requestId: string },
   dependencies: IExternalWorkspaceAdapterDependencies = defaultDependencies,
 ): Promise<ICreatedExternalWorkspaceTab | undefined> => {
   const created = await dependencies.createWindow(serverId, workspace);
@@ -67,6 +67,7 @@ export const createExternalWorkspaceTab = async (
     tabId: created.windowId,
     workspaceId: created.sessionId,
     sessionCreated: created.sessionCreated,
+    requestId: created.requestId,
     externalTerminalTarget: {
       serverId: created.serverId,
       sessionId: created.sessionId,

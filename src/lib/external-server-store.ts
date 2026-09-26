@@ -64,7 +64,7 @@ export const registerExternalServer = (input: IRegisterExternalServer): Promise<
 
 export const createExternalSessionWindow = (
   serverId: string,
-  session: Pick<IExternalTmuxSession, 'id' | 'sessionCreated'>,
+  session: Pick<IExternalTmuxSession, 'id' | 'sessionCreated'> & { requestId: string },
 ): Promise<ICreatedExternalWindow | undefined> => withLock(async () => {
   const server = (await read()).find((candidate) => candidate.id === serverId);
   return server ? createTmuxExternalSessionWindow(server, session) : undefined;
