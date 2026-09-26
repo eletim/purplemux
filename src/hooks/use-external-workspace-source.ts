@@ -36,6 +36,7 @@ export default function useExternalWorkspaceSource(): IExternalWorkspaceChromeSt
     readSources,
     { refreshInterval },
   );
+  const [selectedWorkspaceId, setSelectedWorkspaceId] = useState<string | null>(null);
   const [selectedTabId, setSelectedTabId] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
   const [mutationError, setMutationError] = useState<string | null>(null);
@@ -83,28 +84,34 @@ export default function useExternalWorkspaceSource(): IExternalWorkspaceChromeSt
     return { workspaces, workspaceLayouts, targets, rawWorkspaces };
   }, [data, optimistic, selectedTabId]);
 
-  const firstTab = model.workspaces
-    .flatMap((workspace) => model.workspaceLayouts[workspace.id] ?? [])
-    .flatMap((pane) => pane.tabs)[0];
-  const effectiveTabId = selectedTabId && model.targets.has(selectedTabId)
-    ? selectedTabId
-    : firstTab?.id ?? null;
-  const activeWorkspaceId = effectiveTabId
+  const workspaceForSelectedTab = selectedTabId
     ? model.workspaces.find((workspace) =>
-      model.workspaceLayouts[workspace.id]?.some((pane) => pane.tabs.some((tab) => tab.id === effectiveTabId)))?.id ?? null
-    : model.workspaces[0]?.id ?? null;
+      model.workspaceLayouts[workspace.id]?.some((pane) =>
+        pane.tabs.some((tab) => tab.id === selectedTabId)))?.id ?? null
+    : null;
+  const activeWorkspaceId = selectedWorkspaceId && model.rawWorkspaces.has(selectedWorkspaceId)
+    ? selectedWorkspaceId
+    : workspaceForSelectedTab ?? model.workspaces[0]?.id ?? null;
   const activePaneId = activeWorkspaceId
     ? model.workspaceLayouts[activeWorkspaceId]?.[0]?.id ?? null
     : null;
+  const activePane = activeWorkspaceId && activePaneId
+    ? model.workspaceLayouts[activeWorkspaceId]?.find((pane) => pane.id === activePaneId) ?? null
+    : null;
+  const effectiveTabId = selectedTabId && activePane?.tabs.some((tab) => tab.id === selectedTabId)
+    ? selectedTabId
+    : activePane?.activeTabId ?? activePane?.tabs[0]?.id ?? null;
 
   const selectWorkspace = useCallback((workspaceId: string) => {
     const pane = model.workspaceLayouts[workspaceId]?.[0];
     setOptimistic(null);
+    setSelectedWorkspaceId(workspaceId);
     setSelectedTabId(pane?.activeTabId ?? pane?.tabs[0]?.id ?? null);
   }, [model.workspaceLayouts]);
 
-  const selectTab = useCallback((_workspaceId: string, _paneId: string, tabId: string) => {
+  const selectTab = useCallback((workspaceId: string, _paneId: string, tabId: string) => {
     setOptimistic(null);
+    setSelectedWorkspaceId(workspaceId);
     setSelectedTabId(tabId);
   }, []);
 
@@ -127,6 +134,7 @@ export default function useExternalWorkspaceSource(): IExternalWorkspaceChromeSt
       const created = body as ICreatedExternalWorkspaceTab;
       const id = chromeId(raw.serverId, created.tabId);
       setOptimistic(created);
+      setSelectedWorkspaceId(workspaceId);
       setSelectedTabId(id);
       void mutate().catch(() => {});
       return { id, sessionName: created.workspaceId, name: created.tabId, order: Number.MAX_SAFE_INTEGER };

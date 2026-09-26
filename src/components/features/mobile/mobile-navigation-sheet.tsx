@@ -105,9 +105,16 @@ const MobileNavigationSheet = ({
 
   const handleToggleWorkspace = useCallback(
     (workspaceId: string) => {
+      const hasTabs = (workspaceLayouts[workspaceId] ?? [])
+        .some((pane) => pane.tabs.length > 0);
+      if (!hasTabs) {
+        source.selectWorkspace(workspaceId);
+        onOpenChange(false);
+        return;
+      }
       setExpandedWsId((prev) => (prev === workspaceId ? null : workspaceId));
     },
-    [],
+    [onOpenChange, source, workspaceLayouts],
   );
 
   const handleLongPressStart = useCallback((tabId: string) => {

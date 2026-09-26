@@ -143,19 +143,33 @@ describe('external Review browser pages', () => {
 });
 
 describe('external server browser page', () => {
-  const tab = (id: string, name: string, order: number, active = false) => ({
-    id, workspaceId: '$1', name, order, active, panes: [],
-    externalTerminalTarget: { serverId: 'server-1', sessionId: '$1', windowId: id },
+  const tab = (id: string, name: string, order: number, active = false, workspaceId = '$1') => ({
+    id, workspaceId, name, order, active, panes: [],
+    externalTerminalTarget: { serverId: 'server-1', sessionId: workspaceId, windowId: id },
+  });
+  const workspace = (id: string, name: string, tabs: ReturnType<typeof tab>[]) => ({
+    id, name, sessionCreated: id === '$1' ? '1750000000' : '1750000001', attached: false, tabs,
   });
   const externalSource = (tabs = [tab('@2', 'first', 0, true)]) => ({
     serverId: 'server-1', name: 'dev', exists: true,
-    workspaces: [{ id: '$1', name: 'shells', sessionCreated: '1750000000', attached: false, tabs }],
+    workspaces: [workspace('$1', 'shells', tabs)],
+  });
+  const mixedExternalSource = (populatedTabs = [tab('@2', 'first', 0, true)]) => ({
+    ...externalSource(populatedTabs),
+    workspaces: [
+      workspace('$1', 'populated', populatedTabs),
+      workspace('$2', 'empty', []),
+    ],
   });
   const fetchFor = (getSource: () => ReturnType<typeof externalSource>) => vi.fn(async (url: string, init?: RequestInit) => {
-    if (init?.method === 'POST') return response({
-      tabId: '@9', workspaceId: '$1', sessionCreated: '1750000000',
-      externalTerminalTarget: { serverId: 'server-1', sessionId: '$1', windowId: '@9' },
-    }, 201);
+    if (init?.method === 'POST') {
+      const workspaceId = decodeURIComponent(url.match(/\/workspaces\/([^/]+)\/tabs$/)?.[1] ?? '');
+      const selectedWorkspace = getSource().workspaces.find((candidate) => candidate.id === workspaceId)!;
+      return response({
+        tabId: '@9', workspaceId, sessionCreated: selectedWorkspace.sessionCreated,
+        externalTerminalTarget: { serverId: 'server-1', sessionId: workspaceId, windowId: '@9' },
+      }, 201);
+    }
     if (url.startsWith('/api/tmux/capture?')) return response({ content: 'captured external pane' });
     if (url.endsWith('/workspaces')) return response(getSource());
     return response({ servers: [{ id: 'server-1', name: 'dev' }] });
@@ -208,6 +222,28 @@ describe('external server browser page', () => {
     expect(JSON.parse(String(creation[1]?.body))).toEqual({ sessionCreated: '1750000000' });
   });
 
+  it('keeps an empty desktop Workspace selected by stable ID while populated sessions refresh', async () => {
+    vi.useFakeTimers();
+    let source = mixedExternalSource();
+    const fetchMock = fetchFor(() => source);
+    vi.stubGlobal('fetch', fetchMock);
+    mount(createElement(ExternalWorkspaceChromePage));
+    await act(async () => { await Promise.resolve(); });
+
+    fireEvent.click(screen.getByRole('button', { name: 'empty' }));
+    expect(screen.getByRole('button', { name: 'empty' }).getAttribute('aria-current')).toBe('true');
+    expect(screen.queryByTestId('external-terminal')).toBeNull();
+
+    source = mixedExternalSource([tab('@2', 'first', 0, true), tab('@4', 'second', 1)]);
+    await act(async () => { await vi.advanceTimersByTimeAsync(5000); });
+    expect(screen.getByRole('button', { name: 'empty' }).getAttribute('aria-current')).toBe('true');
+    vi.useRealTimers();
+    fireEvent.click(screen.getByRole('button', { name: 'openNewTab' }));
+    await waitFor(() => expect(screen.getByTestId('external-terminal').textContent).toBe('server-1:$2:@9'));
+    const creation = fetchMock.mock.calls.find(([, init]) => init?.method === 'POST')!;
+    expect(creation[0]).toBe('/api/cli/external-servers/server-1/workspaces/%242/tabs');
+  });
+
   it('reuses mobile Workspace/Tab chrome while withholding managed Git, agent, and lifecycle controls', async () => {
     viewport.mobile = true;
     vi.stubGlobal('fetch', fetchFor(() => externalSource()));
@@ -236,5 +272,21 @@ describe('external server browser page', () => {
     await waitFor(() => expect(screen.getByTestId('external-terminal').textContent).toBe('server-1:$1:@9'));
     const creation = fetchMock.mock.calls.find(([, init]) => init?.method === 'POST')!;
     expect(creation[0]).toBe('/api/cli/external-servers/server-1/workspaces/%241/tabs');
+  });
+
+  it('selects an empty mobile Workspace independently and creates its first tab there', async () => {
+    viewport.mobile = true;
+    const fetchMock = fetchFor(() => mixedExternalSource());
+    vi.stubGlobal('fetch', fetchMock);
+    mount(createElement(ExternalWorkspaceChromePage));
+    await screen.findByTestId('external-terminal');
+
+    fireEvent.click(screen.getByRole('button', { name: 'openMenu' }));
+    fireEvent.click(screen.getByRole('button', { name: 'empty' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'newTabLabel' }));
+
+    await waitFor(() => expect(screen.getByTestId('external-terminal').textContent).toBe('server-1:$2:@9'));
+    const creation = fetchMock.mock.calls.find(([, init]) => init?.method === 'POST')!;
+    expect(creation[0]).toBe('/api/cli/external-servers/server-1/workspaces/%242/tabs');
   });
 });
