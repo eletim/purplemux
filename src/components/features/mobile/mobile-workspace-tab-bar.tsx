@@ -7,6 +7,8 @@ import { cn } from '@/lib/utils';
 import ProcessIcon from '@/components/icons/process-icon';
 import AgentStatusGlyph from '@/components/features/workspace/agent-status-glyph';
 import type { IWorkspace, IPaneNode, TPanelType } from '@/types/terminal';
+import type { IWorkspaceChromeCapabilities } from '@/types/workspace-chrome';
+import { managedWorkspaceChromeCapabilities } from '@/types/workspace-chrome';
 
 interface IMobileWorkspaceTabBarProps {
   workspaces: IWorkspace[];
@@ -15,6 +17,7 @@ interface IMobileWorkspaceTabBarProps {
   selectedPaneId: string | null;
   selectedTabId: string | null;
   onSelect: (workspaceId: string, paneId: string, tabId: string) => void;
+  capabilities?: IWorkspaceChromeCapabilities;
 }
 
 interface ITabDot {
@@ -33,6 +36,7 @@ const MobileWorkspaceTabBar = ({
   selectedPaneId,
   selectedTabId,
   onSelect,
+  capabilities = managedWorkspaceChromeCapabilities,
 }: IMobileWorkspaceTabBarProps) => {
   const t = useTranslations('terminal');
   const activeRef = useRef<HTMLButtonElement>(null);
@@ -96,7 +100,9 @@ const MobileWorkspaceTabBar = ({
             item.paneId === selectedPaneId &&
             item.tabId === selectedTabId;
           const isAgent = item.panelType === 'claude-code' || item.panelType === 'codex-cli';
-          const status = selectTabDisplayStatus(statusTabs, item.tabId, showDismissedCompletion);
+          const status = capabilities.agentControls
+            ? selectTabDisplayStatus(statusTabs, item.tabId, showDismissedCompletion)
+            : 'idle';
           const termStatus = statusTabs[item.tabId]?.terminalStatus;
           const currentProcess = statusTabs[item.tabId]?.currentProcess;
           const statusLabel = status === 'busy'
@@ -133,7 +139,7 @@ const MobileWorkspaceTabBar = ({
                   isActive && 'bg-foreground/15',
                 )}
               >
-                {isAgent ? (
+                {capabilities.agentControls && isAgent ? (
                   <AgentStatusGlyph status={status} compact showIdle />
                 ) : item.panelType === 'web-browser' ? (
                   <Globe className="h-2.5 w-2.5 text-muted-foreground/50" />

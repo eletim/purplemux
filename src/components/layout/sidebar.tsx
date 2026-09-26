@@ -8,6 +8,7 @@ import {
   Trash2,
   Settings,
   LogOut,
+  RefreshCw,
 } from 'lucide-react';
 import useTabStore from '@/hooks/use-tab-store';
 import { useNotificationCount, NotificationPanel } from '@/components/features/workspace/notification-sheet';
@@ -50,6 +51,7 @@ import IconRenderer from '@/components/features/settings/icon-renderer';
 import SidebarRateLimits from '@/components/layout/sidebar-rate-limits';
 import isElectron from '@/hooks/use-is-electron';
 import { getEmptyWorkspaceIds } from '@/lib/workspace-cleanup';
+import type { IWorkspaceChromeSourceAdapter } from '@/types/workspace-chrome';
 
 const MIN_WIDTH = 160;
 const MAX_WIDTH = 480;
@@ -59,7 +61,7 @@ const handleLogout = async () => {
   window.location.href = '/login';
 };
 
-const Sidebar = () => {
+const ManagedSidebar = () => {
   const t = useTranslations('sidebar');
   const tc = useTranslations('common');
   const router = useRouter();
@@ -891,5 +893,67 @@ const Sidebar = () => {
     </div>
   );
 };
+
+const SourceSidebar = ({ source }: { source: IWorkspaceChromeSourceAdapter }) => (
+  <div className="relative flex w-60 shrink-0">
+    <div
+      className="flex w-full shrink-0 flex-col overflow-hidden border-r border-sidebar-border bg-sidebar"
+      role="navigation"
+      aria-label="Workspace list"
+      data-ui-chrome="sidebar"
+      data-workspace-source={source.kind}
+    >
+      <div className="flex h-12 shrink-0 items-center justify-between border-b border-sidebar-border px-3">
+        <div className="min-w-0">
+          <AppLogo className="pointer-events-none" />
+          {source.label && (
+            <span className="block truncate text-[11px] text-muted-foreground">
+              {source.label}
+            </span>
+          )}
+        </div>
+        <button
+          className="flex h-7 w-7 shrink-0 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-sidebar-accent"
+          onClick={source.refresh}
+          aria-label="Refresh external workspaces"
+        >
+          <RefreshCw className={cn('h-3.5 w-3.5', source.isLoading && 'animate-spin')} />
+        </button>
+      </div>
+
+      <div className="shrink-0 border-b border-sidebar-border px-3 py-2 text-[11px] tracking-wide text-muted-foreground">
+        WORKSPACE
+      </div>
+
+      <div className="flex-1 overflow-y-auto" style={{ scrollbarWidth: 'none' }}>
+        {source.workspaces.map((workspace) => (
+          <WorkspaceItem
+            key={workspace.id}
+            workspace={workspace}
+            isActive={workspace.id === source.activeWorkspaceId}
+            isDeleting={false}
+            showShortcut={false}
+            tabs={source.workspaceLayouts[workspace.id]?.flatMap((pane) => pane.tabs)}
+            onSelect={source.selectWorkspace}
+            onRename={() => {}}
+            onDelete={() => {}}
+            managed={false}
+            canRename={source.capabilities.renameWorkspace}
+            canDelete={source.capabilities.deleteWorkspace}
+          />
+        ))}
+        {!source.isLoading && source.workspaces.length === 0 && (
+          <p className="p-4 text-xs text-muted-foreground" role="status">
+            No external workspaces are available.
+          </p>
+        )}
+        {source.error && <p className="p-4 text-xs text-ui-red" role="alert">{source.error}</p>}
+      </div>
+    </div>
+  </div>
+);
+
+const Sidebar = ({ source }: { source?: IWorkspaceChromeSourceAdapter }) =>
+  source ? <SourceSidebar source={source} /> : <ManagedSidebar />;
 
 export default Sidebar;

@@ -56,8 +56,8 @@ const applyOrder = <T extends { id: string }>(items: T[], order: string[]): T[] 
   return ordered;
 };
 
-const useSidebarItems = (): IUseSidebarItemsReturn => {
-  const { data, isLoading, mutate } = useSWR('/api/sidebar-items', fetcher, {
+const useSidebarItems = (enabled = true): IUseSidebarItemsReturn => {
+  const { data, isLoading, mutate } = useSWR(enabled ? '/api/sidebar-items' : null, fetcher, {
     revalidateOnFocus: false,
   });
 

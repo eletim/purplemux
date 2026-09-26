@@ -1,11 +1,15 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { nanoid } from 'nanoid';
+import { useState } from 'react';
 import Head from 'next/head';
 import dynamic from 'next/dynamic';
 import type { GetServerSideProps } from 'next';
-import useSWR from 'swr';
-import type { IExternalServerInventory } from '@/types/external-server';
-import type { IExternalTerminalTarget } from '@/types/terminal';
+import { AlertTriangle, Menu } from 'lucide-react';
+import Sidebar from '@/components/layout/sidebar';
+import PaneTabBar from '@/components/features/workspace/pane-tab-bar';
+import MobileTabHeader from '@/components/features/mobile/mobile-tab-header';
+import MobileWorkspaceTabBar from '@/components/features/mobile/mobile-workspace-tab-bar';
+import MobileNavigationSheet from '@/components/features/mobile/mobile-navigation-sheet';
+import useExternalWorkspaceSource from '@/hooks/use-external-workspace-source';
+import useIsMobile from '@/hooks/use-is-mobile';
 import { requireAuth } from '@/lib/require-auth';
 import { loadMessagesServer } from '@/lib/load-messages';
 
@@ -13,166 +17,141 @@ const ExternalTerminalSurface = dynamic(
   () => import('@/components/features/workspace/external-terminal-surface'),
   { ssr: false },
 );
-const endpoint = '/api/cli/external-servers';
-const inventoryRefreshInterval = 5000;
-const fetchServers = async (): Promise<{ servers: IExternalServerInventory[] }> => {
-  const response = await fetch(endpoint);
-  if (!response.ok) throw new Error('Unable to load external tmux servers.');
-  return response.json();
-};
-const requestStorageKey = (serverId: string) => `purplemux-external-terminal-request:${serverId}`;
 
-export default function ExternalServersPage() {
-  const refreshSequence = useRef({ started: 0, completed: 0 });
-  const fetchInventory = useCallback(async () => {
-    const sequence = ++refreshSequence.current.started;
-    const inventory = await fetchServers();
-    refreshSequence.current.completed = Math.max(refreshSequence.current.completed, sequence);
-    return inventory;
-  }, []);
-  const { data, error, isValidating, mutate } = useSWR(endpoint, fetchInventory, {
-    refreshInterval: inventoryRefreshInterval,
-  });
-  const [selected, setSelected] = useState<IExternalTerminalTarget | null>(null);
-  const [createdTarget, setCreatedTarget] = useState<{
-    target: IExternalTerminalTarget;
-    afterRefresh: number;
-  } | null>(null);
-  const [creatingServerId, setCreatingServerId] = useState<string | null>(null);
-  const [creationError, setCreationError] = useState<string | null>(null);
-  const requestIds = useRef(new Map<string, string>());
-  const availableTargets = useMemo(() => {
-    const targets: Array<{
-      target: IExternalTerminalTarget;
-      serverName: string;
-      sessionName: string;
-      windowName: string;
-    }> = [];
-    const seen = new Set<string>();
-    for (const server of data?.servers ?? []) {
-      for (const session of server.sessions) {
-        for (const window of session.windows) {
-          const key = `${server.id}\0${session.id}\0${window.id}`;
-          if (seen.has(key)) continue;
-          seen.add(key);
-          targets.push({
-            target: { serverId: server.id, sessionId: session.id, windowId: window.id },
-            serverName: server.name,
-            sessionName: session.name,
-            windowName: window.name,
-          });
-        }
-      }
-    }
-    return targets;
-  }, [data]);
-  const active = createdTarget?.target ?? (selected && availableTargets.some(({ target }) => target.serverId === selected.serverId
-    && target.sessionId === selected.sessionId && target.windowId === selected.windowId)
-    ? selected : availableTargets[0]?.target);
-  useEffect(() => {
-    if (createdTarget && refreshSequence.current.completed > createdTarget.afterRefresh) {
-      setCreatedTarget(null);
-    }
-  }, [createdTarget, data, isValidating]);
+const EmptySurface = ({ message }: { message: string }) => (
+  <div className="flex min-h-0 flex-1 items-center justify-center px-6 text-center text-sm text-muted-foreground" role="status">
+    {message}
+  </div>
+);
 
-  const createTerminal = async (serverId: string) => {
-    setCreatingServerId(serverId);
-    setCreationError(null);
-    let storedRequestId: string | null = null;
-    try { storedRequestId = sessionStorage.getItem(requestStorageKey(serverId)); } catch {}
-    const requestId = requestIds.current.get(serverId) ?? storedRequestId ?? nanoid();
-    requestIds.current.set(serverId, requestId);
-    try { sessionStorage.setItem(requestStorageKey(serverId), requestId); } catch {}
-    let body;
-    try {
-      const response = await fetch(`${endpoint}/${encodeURIComponent(serverId)}/terminals`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ requestId }),
-      });
-      body = await response.json();
-      if (!response.ok) {
-        if (response.status < 500 && !body.outcomeUnknown) {
-          requestIds.current.delete(serverId);
-          try { sessionStorage.removeItem(requestStorageKey(serverId)); } catch {}
-        }
-        throw new Error(body.error || 'Unable to create external terminal.');
-      }
-      if (body.provenance?.requestId !== requestId) {
-        throw new Error('External terminal creation outcome is unknown; retry to reconcile it.');
-      }
-      requestIds.current.delete(serverId);
-      try { sessionStorage.removeItem(requestStorageKey(serverId)); } catch {}
-    } catch (createError) {
-      setCreationError(createError instanceof Error ? createError.message : 'Unable to create external terminal.');
-      setCreatingServerId(null);
-      return;
-    }
-    const target = { serverId, sessionId: body.sessionId, windowId: body.windowId };
-    setSelected(target);
-    setCreatedTarget({ target, afterRefresh: refreshSequence.current.started });
-    setCreatingServerId(null);
-    // Creation already committed. A refresh failure must not be presented as a failed mutation.
-    void mutate().catch(() => {});
+const ExternalWorkspaceChrome = () => {
+  const { source, activeTarget, creating } = useExternalWorkspaceSource();
+  const isMobile = useIsMobile();
+  const [menuOpen, setMenuOpen] = useState(false);
+  const activePane = source.activeWorkspaceId && source.activePaneId
+    ? source.workspaceLayouts[source.activeWorkspaceId]?.find((pane) => pane.id === source.activePaneId) ?? null
+    : null;
+  const activeTabs = activePane?.tabs ?? [];
+  const activeTab = activeTabs.find((tab) => tab.id === source.activeTabId) ?? null;
+  const terminal = activeTarget
+    ? <ExternalTerminalSurface
+        key={`${activeTarget.serverId}:${activeTarget.sessionId}:${activeTarget.windowId}`}
+        externalTerminalTarget={activeTarget}
+        className="h-full min-h-0 flex-1 rounded-none border-0"
+      />
+    : <EmptySurface message={source.isLoading ? 'Loading external workspaces…' : 'No external windows are available.'} />;
+  const createActiveTab = () => {
+    if (source.activeWorkspaceId) void source.createTab?.(source.activeWorkspaceId);
   };
 
-  return (
-    <main className="mx-auto max-w-6xl p-6 space-y-5">
-      <Head><title>External tmux · purplemux</title></Head>
-      <div className="flex items-center justify-between gap-4">
-        <div>
-          <h1 className="text-2xl font-semibold">External tmux</h1>
-          <p>Open a discovered window through the standard PurpleMux terminal.</p>
-        </div>
-        <button className="border rounded px-3 py-2" onClick={() => void mutate()}>Refresh</button>
+  if (!isMobile) {
+    return (
+      <div className="flex h-dvh w-full overflow-hidden bg-background">
+        <Sidebar source={source} />
+        <main className="flex min-w-0 flex-1 flex-col" data-workspace-source="external">
+          <PaneTabBar
+            paneId={source.activePaneId ?? 'external-pane'}
+            tabs={activeTabs}
+            activeTabId={source.activeTabId}
+            isLoading={source.isLoading && activeTabs.length === 0}
+            error={null}
+            isCreating={creating}
+            onSwitchTab={(tabId) => {
+              if (source.activeWorkspaceId && source.activePaneId) {
+                source.selectTab(source.activeWorkspaceId, source.activePaneId, tabId);
+              }
+            }}
+            paneCount={1}
+            isSplitting={false}
+            onCreateTab={createActiveTab}
+            onDeleteTab={() => {}}
+            onRenameTab={() => {}}
+            onSwitchPanelType={() => {}}
+            onReorderTabs={() => {}}
+            onClosePane={() => {}}
+            onMoveTab={() => {}}
+            onFocusPane={() => {}}
+            onRetry={source.refresh}
+            capabilities={source.capabilities}
+          />
+          {source.error && (
+            <p className="flex items-center gap-2 border-b border-border px-3 py-2 text-xs text-ui-red" role="alert">
+              <AlertTriangle className="h-3.5 w-3.5" />
+              {source.error}
+            </p>
+          )}
+          {terminal}
+        </main>
       </div>
-      {creationError && <p role="alert">{creationError}</p>}
-      {error && <p role="alert">{error.message}</p>}
-      {!data ? !error && <p role="status">Loading external servers…</p>
-        : <>
-          {data.servers.length === 0 ? <p role="status">No external servers are registered.</p>
-            : <div aria-label="External tmux servers" className="space-y-4">
-              {data.servers.map((server) => <section key={server.id} aria-label={`${server.name} server`}
-                className="border rounded p-4 space-y-3">
-                <div className="flex items-center justify-between gap-4">
-                  <div>
-                    <h2 className="text-lg font-semibold">{server.name}</h2>
-                    <p className="text-sm break-all">{server.socketPath}</p>
-                  </div>
-                  <button className="border rounded px-3 py-2"
-                    disabled={!server.exists || creatingServerId !== null}
-                    onClick={() => void createTerminal(server.id)}>
-                    {creatingServerId === server.id ? 'Creating…' : `New Terminal on ${server.name}`}
-                  </button>
-                </div>
-                {!server.exists
-                  ? <p role="status">Unavailable: {server.unavailableReason ?? 'External tmux server is unavailable'}</p>
-                  : server.sessions.length === 0 ? <p role="status">No sessions are running.</p>
-                    : <div className="space-y-3">{server.sessions.map((session) => (
-                      <section key={session.id} aria-label={`${server.name} / ${session.name} session`}
-                        className="border rounded p-3 space-y-2">
-                        <div className="flex flex-wrap items-center justify-between gap-2">
-                          <h3 className="font-medium">{session.name}</h3>
-                          <span className="text-sm">{session.owned ? 'Owned by PurpleMux' : 'Not owned by PurpleMux'}</span>
-                        </div>
-                        <nav aria-label={`${server.name} / ${session.name} windows`} className="flex flex-wrap gap-2">
-                          {session.windows.map((window) => {
-                            const target = { serverId: server.id, sessionId: session.id, windowId: window.id };
-                            const isActive = active?.serverId === target.serverId
-                              && active.sessionId === target.sessionId && active.windowId === target.windowId;
-                            return <button key={window.id} aria-label={`${server.name} / ${session.name} / ${window.name}`}
-                              aria-pressed={isActive} className="border rounded px-3 py-2"
-                              onClick={() => { setCreatedTarget(null); setSelected(target); }}>{window.name}</button>;
-                          })}
-                        </nav>
-                      </section>
-                    ))}</div>}
-              </section>)}
-            </div>}
-          {!active ? <p role="status">No external windows are available.</p>
-            : <ExternalTerminalSurface key={`${active.serverId}:${active.sessionId}:${active.windowId}`}
-              externalTerminalTarget={active} />}
-        </>}
-    </main>
+    );
+  }
+
+  return (
+    <div className="flex h-dvh w-full flex-col overflow-hidden bg-background" data-workspace-source="external">
+      <div style={{ paddingTop: 'env(safe-area-inset-top)' }}>
+        <div className="flex h-12 items-center gap-2 border-b border-border px-2">
+          <button
+            className="flex h-10 w-10 items-center justify-center text-muted-foreground"
+            onClick={() => setMenuOpen(true)}
+            aria-label="Open workspace navigation"
+          >
+            <Menu className="h-5 w-5" />
+          </button>
+          <span className="min-w-0 flex-1 truncate text-sm font-medium">{source.label}</span>
+        </div>
+      </div>
+      {activeTab && (
+        <MobileTabHeader
+          tabId={activeTab.id}
+          tabName={activeTab.name}
+          sessionName={null}
+          cwdKey={null}
+          panelType="terminal"
+          onSwitchPanelType={() => {}}
+          onCreateTab={createActiveTab}
+          onOpenGit={() => {}}
+          onClose={() => {}}
+          capabilities={source.capabilities}
+        />
+      )}
+      {source.error && <p className="px-3 py-2 text-xs text-ui-red" role="alert">{source.error}</p>}
+      {terminal}
+      <MobileWorkspaceTabBar
+        workspaces={source.workspaces}
+        activeWorkspaceId={source.activeWorkspaceId}
+        workspaceLayouts={source.workspaceLayouts}
+        selectedPaneId={source.activePaneId}
+        selectedTabId={source.activeTabId}
+        onSelect={source.selectTab}
+        capabilities={source.capabilities}
+      />
+      <MobileNavigationSheet
+        open={menuOpen}
+        onOpenChange={setMenuOpen}
+        workspaces={source.workspaces}
+        activeWorkspaceId={source.activeWorkspaceId}
+        workspaceLayouts={source.workspaceLayouts}
+        activePaneId={source.activePaneId}
+        activeTabId={source.activeTabId}
+        onSelectSurface={(workspaceId, paneId, tabId) => {
+          setMenuOpen(false);
+          source.selectTab(workspaceId, paneId, tabId);
+        }}
+        onCreateWorkspace={async () => {}}
+        onOpenSettings={() => {}}
+        capabilities={source.capabilities}
+        sourceLabel={source.label}
+      />
+    </div>
+  );
+};
+
+export default function ExternalServersPage() {
+  return (
+    <>
+      <Head><title>External tmux · purplemux</title></Head>
+      <ExternalWorkspaceChrome />
+    </>
   );
 }
 
