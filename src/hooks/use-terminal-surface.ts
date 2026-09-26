@@ -4,12 +4,10 @@ import useTerminal from '@/hooks/use-terminal';
 import useTerminalTheme from '@/hooks/use-terminal-theme';
 import useTerminalWebSocket from '@/hooks/use-terminal-websocket';
 import { resolveLineHeight } from '@/lib/terminal-line-height';
-import type { IExternalTerminalTarget } from '@/types/terminal';
 
 type TFontSizeMode = 'configured' | 'agent' | 'mobile' | 'default';
 
 interface IUseTerminalSurfaceOptions {
-  externalTerminalTarget?: IExternalTerminalTarget;
   fontSizeMode?: TFontSizeMode;
   onInput?: (data: string, sendStdin: (data: string) => void) => void;
   onResize?: (cols: number, rows: number) => void;
@@ -28,7 +26,6 @@ const FONT_SIZES: Record<string, { configured: number; agent: number }> = {
 
 /** Shared xterm and WebSocket orchestration for every interactive terminal surface. */
 const useTerminalSurface = ({
-  externalTerminalTarget,
   fontSizeMode = 'configured',
   onInput,
   onResize,
@@ -52,7 +49,6 @@ const useTerminalSurface = ({
       : configuredSizes[fontSizeMode];
 
   const websocket = useTerminalWebSocket({
-    externalTerminalTarget,
     onData: (data) => {
       writeRef.current(data);
       onData?.(data);

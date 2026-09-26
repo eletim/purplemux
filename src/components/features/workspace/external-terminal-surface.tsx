@@ -52,15 +52,18 @@ export default function ExternalTerminalSurface({
     isReady,
     theme,
   } = useTerminalSurface({
-    externalTerminalTarget,
     onInput: (data, send) => send(applyArmedModifier(data)),
   });
 
   useEffect(() => {
     if (!isReady) return;
     const { cols, rows } = fit();
-    const connectionKey = `${externalServerId}:${externalSessionId}:${windowId}`;
-    connect(connectionKey, cols, rows);
+    connect({
+      kind: 'external',
+      serverId: externalServerId,
+      sessionId: externalSessionId,
+      windowId,
+    }, cols, rows);
     focus();
     return disconnect;
   }, [

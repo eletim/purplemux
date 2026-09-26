@@ -16,6 +16,11 @@ export interface IExternalTerminalTarget {
   windowId: string;
 }
 
+/** A terminal connection target. Rendering and controls are shared across both transports. */
+export type TTerminalTarget =
+  | { kind: 'managed'; sessionName: string }
+  | ({ kind: 'external' } & IExternalTerminalTarget);
+
 export type TPanelType = 'terminal' | 'claude-code' | 'codex-cli' | 'agent-sessions' | 'web-browser' | 'diff';
 export type TDiffViewMode = 'split' | 'unified';
 export type TDiffTab = 'changes' | 'history';

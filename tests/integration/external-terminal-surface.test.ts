@@ -75,14 +75,14 @@ describe('shared external terminal surface', () => {
     render(createElement(ExternalTerminalSurface, { externalTerminalTarget: target }));
 
     expect(screen.getByTestId('terminal-container')).toBeTruthy();
-    expect(mocks.websocketOptions).toHaveBeenCalledWith(expect.objectContaining({ externalTerminalTarget: target }));
+    expect(mocks.websocketOptions).toHaveBeenCalledWith(expect.not.objectContaining({ externalTerminalTarget: expect.anything() }));
     expect(mocks.terminalOptions).toHaveBeenCalledWith(expect.objectContaining({
       enablePromptCopy: true,
       promptPrefix: '$ ',
       fontSize: 14,
       lineHeight: 1.25,
     }));
-    expect(mocks.connect).toHaveBeenCalledWith('server-1:$1:@2', 100, 30);
+    expect(mocks.connect).toHaveBeenCalledWith({ kind: 'external', ...target }, 100, 30);
     expect(mocks.focus).toHaveBeenCalledOnce();
 
     const terminalOptions = mocks.terminalOptions.mock.calls[0][0] as {

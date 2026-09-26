@@ -391,7 +391,7 @@ const MobileSurfaceView = ({
     });
 
     connectedSessionRef.current = tab.sessionName;
-    connect(tab.sessionName);
+    connect({ kind: 'managed', sessionName: tab.sessionName });
   }, [isReady, activeTabId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
