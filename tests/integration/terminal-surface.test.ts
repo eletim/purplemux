@@ -72,7 +72,7 @@ afterEach(cleanup);
 describe('shared terminal surface', () => {
   it('connects the shared composition to a discovered external window', () => {
     const target = { serverId: 'server-1', sessionId: '$1', windowId: '@2' };
-    render(createElement(ExternalTerminalConnection, { target }));
+    const view = render(createElement(ExternalTerminalConnection, { target }));
 
     expect(screen.getByTestId('terminal-container')).toBeTruthy();
     expect(mocks.websocketOptions).toHaveBeenCalledWith(expect.not.objectContaining({ externalTerminalTarget: expect.anything() }));
@@ -84,6 +84,10 @@ describe('shared terminal surface', () => {
     }));
     expect(mocks.connect).toHaveBeenCalledWith({ kind: 'external', ...target }, 100, 30);
     expect(mocks.focus).toHaveBeenCalledOnce();
+
+    view.rerender(createElement(ExternalTerminalConnection, { target: { ...target } }));
+    expect(mocks.connect).toHaveBeenCalledOnce();
+    expect(mocks.disconnect).not.toHaveBeenCalled();
 
     const terminalOptions = mocks.terminalOptions.mock.calls[0][0] as {
       onInput: (data: string) => void;

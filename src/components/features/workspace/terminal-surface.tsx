@@ -40,6 +40,7 @@ export function ExternalTerminalConnection({
   target,
   className,
 }: { target: IExternalTerminalTarget; className?: string }) {
+  const { serverId, sessionId, windowId } = target;
   const keyBarMode = useConfigStore((state) => state.terminalKeyBar);
   const isMobileDevice = useIsMobileDevice();
   const [ctrlArmed, setCtrlArmed] = useState(false);
@@ -85,15 +86,15 @@ export function ExternalTerminalConnection({
   useEffect(() => {
     if (!isReady) return;
     const { cols, rows } = fit();
-    connect({ kind: 'external', ...target }, cols, rows);
+    connect({ kind: 'external', serverId, sessionId, windowId }, cols, rows);
     focus();
     return disconnect;
-  }, [isReady, target, fit, focus, connect, disconnect]);
+  }, [isReady, serverId, sessionId, windowId, fit, focus, connect, disconnect]);
 
   const showKeyBar = !isMobileDevice && keyBarMode === 'always';
   return (
     <section
-      aria-label={`External terminal ${target.windowId}`}
+      aria-label={`External terminal ${windowId}`}
       className={cn('relative flex h-[75vh] min-h-64 flex-col overflow-hidden rounded border', className)}
       style={{ backgroundColor: theme.colors.background }}
     >

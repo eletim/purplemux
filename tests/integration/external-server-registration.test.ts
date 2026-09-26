@@ -27,19 +27,29 @@ afterEach(async () => {
 
 describe('external tmux server registrations', () => {
   it('drops legacy ownership and creation-history fields from registrations', async () => {
-    await fs.mkdir(path.join(directory, '.purplemux'));
-    await fs.writeFile(path.join(directory, '.purplemux', 'external-servers.json'), JSON.stringify([{
+    const dataDirectory = path.join(directory, '.purplemux');
+    const registrationFile = path.join(dataDirectory, 'external-servers.json');
+    const markerKeyFile = path.join(dataDirectory, 'external-terminal-marker-key');
+    await fs.mkdir(dataDirectory);
+    await fs.writeFile(registrationFile, JSON.stringify([{
       id: 'legacy-server', name: 'legacy', socketPath: socket, socketIdentity: '1:2:3',
       ownedTerminals: [{ id: 'legacy-owned' }],
       terminalCreations: [{ id: 'legacy-creation' }],
     }]));
+    await fs.writeFile(markerKeyFile, 'obsolete-secret');
+    const tmuxState = tmux('list-panes', '-a', '-F', '#{session_id}:#{window_id}:#{pane_id}:#{pane_pid}');
     vi.spyOn(os, 'homedir').mockReturnValue(directory);
     vi.resetModules();
     const store = await import('@/lib/external-server-store');
 
-    expect(await store.listExternalServers()).toEqual([{
+    const sanitized = [{
       id: 'legacy-server', name: 'legacy', socketPath: socket, socketIdentity: '1:2:3',
-    }]);
+    }];
+    expect(await store.listExternalServers()).toEqual(sanitized);
+    expect(JSON.parse(await fs.readFile(registrationFile, 'utf8'))).toEqual(sanitized);
+    await expect(fs.access(markerKeyFile)).rejects.toMatchObject({ code: 'ENOENT' });
+    expect(tmux('list-panes', '-a', '-F', '#{session_id}:#{window_id}:#{pane_id}:#{pane_pid}'))
+      .toBe(tmuxState);
   });
 
   it('persists a stable server identity and unregisters without touching tmux', async () => {
