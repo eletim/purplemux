@@ -7,6 +7,7 @@ import { execTmux, execTmuxBuffer, externalTmuxTarget, type TmuxTarget } from '@
 import type {
   IExternalServer,
   IExternalServerInventory,
+  ICreatedExternalWindow,
   ICreatedExternalTerminal,
   ICreateExternalTerminal,
   IExternalTmuxPane,
@@ -59,6 +60,37 @@ export const externalServerTmuxTarget = (
   server: Pick<IExternalServer, 'socketPath' | 'socketIdentity'>,
 ): TmuxTarget => externalTmuxTarget(server.socketPath, (signal) =>
   assertExternalServerSocketIdentity(server, signal));
+
+/** Add an unowned window to one exact live session without creating or adopting a session. */
+export const createExternalSessionWindow = async (
+  server: IExternalServer,
+  session: Pick<IExternalTmuxSession, 'id' | 'sessionCreated'>,
+  signal?: AbortSignal,
+): Promise<ICreatedExternalWindow> => {
+  if (!/^\$\d+$/.test(session.id) || !/^\d+$/.test(session.sessionCreated)) {
+    throw new ExternalServerError('Invalid external tmux session target');
+  }
+  const mismatch = 'purplemux-session-identity-mismatch';
+  const identityMatches = `#{&&:#{==:#{session_id},${session.id}},`
+    + `#{==:#{session_created},${session.sessionCreated}}}`;
+  const format = '#{session_id}:#{session_created}:#{window_id}';
+  const { stdout } = await execTmux(externalServerTmuxTarget(server), [
+    'if-shell', '-F', '-t', session.id, identityMatches,
+    `new-window -d -P -F '${format}' -t ${session.id}`,
+    `display-message -p ${mismatch}`,
+  ], { timeout: 5000, signal });
+  const result = stdout.trimEnd();
+  if (result === mismatch) {
+    throw new ExternalServerError('External tmux session identity changed');
+  }
+  const fields = result.split(':');
+  if (fields.length !== 3 || fields[0] !== session.id || fields[1] !== session.sessionCreated
+    || !/^@\d+$/.test(fields[2])) {
+    throw new ExternalServerError('Invalid external tmux window creation result');
+  }
+  await assertExternalServerSocketIdentity(server, signal);
+  return { serverId: server.id, sessionId: fields[0], sessionCreated: fields[1], windowId: fields[2] };
+};
 
 export const freezeExternalServer = async (
   input: IRegisterExternalServer,
