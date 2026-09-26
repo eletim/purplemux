@@ -21,13 +21,8 @@ const workspaceEndpoint = (serverId: string) =>
   `${endpoint}/${encodeURIComponent(serverId)}/workspaces`;
 const chromeId = (serverId: string, resourceId: string) =>
   `${encodeURIComponent(serverId)}:${resourceId}`;
-const tabChromeId = (
-  serverId: string,
-  workspaceId: string,
-  tabId: string,
-  duplicateLinkIndex?: number,
-) => `${chromeId(serverId, workspaceId)}:${tabId}`
-  + (duplicateLinkIndex === undefined ? '' : `:${duplicateLinkIndex}`);
+const tabChromeId = (serverId: string, workspaceId: string, tabId: string) =>
+  `${chromeId(serverId, workspaceId)}:${tabId}`;
 const requestStorageKey = (serverId: string, workspaceId: string, sessionCreated: string) =>
   `purplemux-external-tab-request:${serverId}:${workspaceId}:${sessionCreated}`;
 
@@ -117,17 +112,17 @@ export default function useExternalWorkspaceSource(): IExternalWorkspaceChromeSt
         const workspaceId = chromeId(externalSource.serverId, workspace.id);
         workspaces.push({ id: workspaceId, name: workspace.name, directories: [] });
         rawWorkspaces.set(workspaceId, { serverId: externalSource.serverId, workspace });
-        const windowLinkCounts = workspace.tabs.reduce((counts, tab) => {
-          counts.set(tab.id, (counts.get(tab.id) ?? 0) + 1);
-          return counts;
-        }, new Map<string, number>());
-        const tabs = workspace.tabs.map<ITab>((tab) => {
-          const id = tabChromeId(
-            externalSource.serverId,
-            workspace.id,
-            tab.id,
-            windowLinkCounts.get(tab.id)! > 1 ? tab.order : undefined,
-          );
+        const uniqueTabs = new Map<string, IExternalWorkspace['tabs'][number]>();
+        for (const tab of workspace.tabs) {
+          const existing = uniqueTabs.get(tab.id);
+          if (!existing) uniqueTabs.set(tab.id, tab);
+          else if (tab.active && !existing.active) {
+            uniqueTabs.set(tab.id, { ...existing, active: true });
+          }
+        }
+        const workspaceTabs = [...uniqueTabs.values()];
+        const tabs = workspaceTabs.map<ITab>((tab) => {
+          const id = tabChromeId(externalSource.serverId, workspace.id, tab.id);
           targets.set(id, tab.externalTerminalTarget);
           return { id, sessionName: workspace.id, name: tab.name, order: tab.order };
         });
@@ -143,7 +138,7 @@ export default function useExternalWorkspaceSource(): IExternalWorkspaceChromeSt
           id: `${workspaceId}:pane`,
           tabs,
           activeTabId: tabs.find((tab) => tab.id === selectedTabId)?.id
-            ?? tabs.find((_tab, index) => workspace.tabs[index]?.active)?.id
+            ?? tabs.find((_tab, index) => workspaceTabs[index]?.active)?.id
             ?? tabs[0]?.id
             ?? null,
         }];

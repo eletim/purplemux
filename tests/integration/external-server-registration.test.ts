@@ -178,7 +178,10 @@ describe('external tmux server registrations', () => {
     const server = await store.registerExternalServer({ name: 'external', socketPath: socket });
     const sessionCreated = tmux('display-message', '-p', '-t', '$0', '#{session_created}');
     tmux('kill-server');
-    tmux('new-session', '-d', '-s', 'replacement', 'sleep 300');
+    await vi.waitFor(() => {
+      try { tmux('has-session', '-t', 'replacement'); }
+      catch { tmux('new-session', '-d', '-s', 'replacement', 'sleep 300'); }
+    }, { timeout: 5000 });
     await expect(assertExternalServerSocketIdentity(server)).rejects.toThrow('identity changed');
     await expect(execTmux(externalServerTmuxTarget(server), ['list-sessions']))
       .rejects.toThrow('identity changed');

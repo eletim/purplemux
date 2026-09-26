@@ -224,17 +224,46 @@ describe('external server browser page', () => {
     mount(createElement(ExternalWorkspaceChromePage));
 
     const linkedTabs = await screen.findAllByRole('tab', { name: 'linked' });
-    expect(linkedTabs).toHaveLength(2);
-    expect(linkedTabs.map((element) => element.getAttribute('data-tab-id'))).toEqual([
-      'server-1:$1:@2:0', 'server-1:$1:@2:4',
-    ]);
-    fireEvent.click(linkedTabs[1]);
+    expect(linkedTabs).toHaveLength(1);
+    expect(linkedTabs[0].getAttribute('data-tab-id')).toBe('server-1:$1:@2');
+    fireEvent.click(linkedTabs[0]);
     expect(screen.getByTestId('external-terminal').textContent).toBe('server-1:$1:@2');
 
     fireEvent.click(screen.getByRole('button', { name: 'other session' }));
     expect(screen.getByRole('tab', { name: 'linked' }).getAttribute('data-tab-id'))
       .toBe('server-1:$2:@2');
     expect(screen.getByTestId('external-terminal').textContent).toBe('server-1:$2:@2');
+  });
+
+  it('keeps a selected stable window through same-session link refreshes', async () => {
+    let source = externalSource([
+      tab('@2', 'first', 0, true), tab('@4', 'selected', 1),
+    ]);
+    vi.stubGlobal('fetch', fetchFor(() => source));
+    mount(createElement(ExternalWorkspaceChromePage));
+
+    fireEvent.click(await screen.findByRole('tab', { name: 'selected' }));
+    expect(screen.getByTestId('external-terminal').textContent).toBe('server-1:$1:@4');
+
+    source = externalSource([
+      tab('@2', 'first', 0, true),
+      tab('@4', 'selected linked', 1),
+      tab('@4', 'selected linked', 4),
+    ]);
+    fireEvent.click(screen.getByRole('button', { name: 'Refresh external workspaces' }));
+    const linkedTab = await screen.findByRole('tab', { name: 'selected linked' });
+    expect(screen.getAllByRole('tab', { name: 'selected linked' })).toHaveLength(1);
+    expect(linkedTab.getAttribute('data-tab-id'))
+      .toBe('server-1:$1:@4');
+    expect(screen.getByTestId('external-terminal').textContent).toBe('server-1:$1:@4');
+
+    source = externalSource([
+      tab('@2', 'first', 0, true), tab('@4', 'selected renumbered', 7),
+    ]);
+    fireEvent.click(screen.getByRole('button', { name: 'Refresh external workspaces' }));
+    expect((await screen.findByRole('tab', { name: 'selected renumbered' }))
+      .getAttribute('data-tab-id')).toBe('server-1:$1:@4');
+    expect(screen.getByTestId('external-terminal').textContent).toBe('server-1:$1:@4');
   });
 
   it('selects one registered server explicitly without flattening server workspaces together', async () => {

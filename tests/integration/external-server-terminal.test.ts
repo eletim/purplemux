@@ -226,7 +226,10 @@ describe('shared terminal path for discovered external windows', () => {
     expect(wrongWindow.output()).toBe('');
 
     tmux('kill-server');
-    tmux('new-session', '-d', '-s', 'replacement', 'sleep 300');
+    await vi.waitFor(() => {
+      try { tmux('has-session', '-t', 'replacement'); }
+      catch { tmux('new-session', '-d', '-s', 'replacement', 'sleep 300'); }
+    }, { timeout: 5000 });
     const replaced = await connect('$0', '@0');
     await vi.waitFor(() => expect(replaced.closed()?.code).toBe(1011));
     expect(replaced.output()).toBe('');

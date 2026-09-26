@@ -76,7 +76,10 @@ describe('external review identities with a real tmux server', () => {
     tmux('new-session', '-d', '-s', 'external', 'sleep 300');
     await expect(resolveExtReviewTargets(frozen)).rejects.toThrow();
     tmux('kill-server');
-    tmux('new-session', '-d', '-s', 'external', 'sleep 300');
+    await vi.waitFor(() => {
+      try { tmux('has-session', '-t', 'external'); }
+      catch { tmux('new-session', '-d', '-s', 'external', 'sleep 300'); }
+    }, { timeout: 5000 });
     await expect(resolveExtReviewTargets(frozen)).rejects.toThrow();
   });
 });
