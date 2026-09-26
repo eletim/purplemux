@@ -3,18 +3,18 @@ import useConfigStore from '@/hooks/use-config-store';
 import useIsMobileDevice from '@/hooks/use-is-mobile-device';
 import useTerminalSurface from '@/hooks/use-terminal-surface';
 import { toCtrlChar } from '@/lib/terminal-keys';
-import type { IExternalTerminalTarget } from '@/types/terminal';
+import type { TTerminalTarget } from '@/types/terminal';
 import MobileTerminalToolbar from '@/components/features/mobile/mobile-terminal-toolbar';
 import ConnectionStatus from '@/components/features/workspace/connection-status';
 import TerminalContainer from '@/components/features/workspace/terminal-container';
 import TerminalKeyBar from '@/components/features/workspace/terminal-key-bar';
 import { cn } from '@/lib/utils';
 
-export default function ExternalTerminalSurface({
-  externalTerminalTarget,
+/** The standard interactive terminal composition for an explicit transport target. */
+export default function TerminalSurface({
+  target,
   className,
-}: { externalTerminalTarget: IExternalTerminalTarget; className?: string }) {
-  const { serverId: externalServerId, sessionId: externalSessionId, windowId } = externalTerminalTarget;
+}: { target: TTerminalTarget; className?: string }) {
   const keyBarMode = useConfigStore((state) => state.terminalKeyBar);
   const isMobileDevice = useIsMobileDevice();
   const [ctrlArmed, setCtrlArmed] = useState(false);
@@ -60,30 +60,19 @@ export default function ExternalTerminalSurface({
   useEffect(() => {
     if (!isReady) return;
     const { cols, rows } = fit();
-    connect({
-      kind: 'external',
-      serverId: externalServerId,
-      sessionId: externalSessionId,
-      windowId,
-    }, cols, rows);
+    connect(target, cols, rows);
     focus();
     return disconnect;
-  }, [
-    isReady,
-    windowId,
-    externalServerId,
-    externalSessionId,
-    fit,
-    focus,
-    connect,
-    disconnect,
-  ]);
+  }, [isReady, target, fit, focus, connect, disconnect]);
 
   const showKeyBar = !isMobileDevice && keyBarMode === 'always';
+  const label = target.kind === 'external'
+    ? `External terminal ${target.windowId}`
+    : `Terminal ${target.sessionName}`;
 
   return (
     <section
-      aria-label={`External terminal ${windowId}`}
+      aria-label={label}
       className={cn('relative flex h-[75vh] min-h-64 flex-col overflow-hidden rounded border', className)}
       style={{ backgroundColor: theme.colors.background }}
     >

@@ -2,12 +2,10 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { NextApiRequest, NextApiResponse } from 'next';
 import collection from '@/pages/api/cli/external-servers';
 import registration from '@/pages/api/cli/external-servers/[serverId]';
-import terminals from '@/pages/api/cli/external-servers/[serverId]/terminals';
-import { ExternalServerError, ExternalTerminalOutcomeUnknownError } from '@/lib/external-server-tmux';
+import { ExternalServerError } from '@/lib/external-server-tmux';
 
 const mocks = vi.hoisted(() => ({
   auth: vi.fn(), session: vi.fn(), register: vi.fn(), list: vi.fn(), discover: vi.fn(), unregister: vi.fn(),
-  createTerminal: vi.fn(),
 }));
 vi.mock('@/lib/cli-token', () => ({ verifyCliToken: mocks.auth }));
 vi.mock('@/lib/auth', () => ({ verifyRequestSession: mocks.session }));
@@ -15,7 +13,6 @@ vi.mock('@/lib/external-server-store', () => ({
   registerExternalServer: mocks.register,
   listExternalServers: mocks.list,
   unregisterExternalServer: mocks.unregister,
-  createExternalTerminal: mocks.createTerminal,
 }));
 vi.mock('@/lib/external-server-tmux', async (importOriginal) => ({
   ...await importOriginal<typeof import('@/lib/external-server-tmux')>(),
@@ -70,59 +67,19 @@ describe('external server API', () => {
   it('rejects unauthenticated access and unsupported methods', async () => {
     mocks.auth.mockReturnValue(false);
     mocks.session.mockResolvedValue(false);
-    for (const [handler, method] of [[collection, 'GET'], [collection, 'POST'], [registration, 'DELETE'],
-      [terminals, 'POST']] as const) {
+    for (const [handler, method] of [[collection, 'GET'], [collection, 'POST'],
+      [registration, 'DELETE']] as const) {
       const res = response();
       await handler(request(method), res as unknown as NextApiResponse);
       expect(res.status).toHaveBeenCalledWith(403);
     }
-    for (const [handler, method, allow] of [[collection, 'PATCH', 'GET, POST'], [registration, 'GET', 'DELETE'],
-      [terminals, 'DELETE', 'POST']] as const) {
+    for (const [handler, method, allow] of [[collection, 'PATCH', 'GET, POST'],
+      [registration, 'GET', 'DELETE']] as const) {
       const res = response();
       await handler(request(method), res as unknown as NextApiResponse);
       expect(res.status).toHaveBeenCalledWith(405);
       expect(res.setHeader).toHaveBeenCalledWith('Allow', allow);
     }
-  });
-
-  it('creates an owned terminal on the exact registration', async () => {
-    const created = { serverId: 'server-1', sessionId: '$2', sessionCreated: '1750000000',
-      windowId: '@3', name: 'work', provenance: { id: 'terminal-1', owner: 'purplemux',
-        requestId: 'request-1', resourceType: 'session', sessionId: '$2',
-        sessionCreated: '1750000000', createdAt: 'now' } };
-    mocks.createTerminal.mockResolvedValue(created);
-    const res = response();
-    await terminals(request('POST', { requestId: 'request-1', name: 'work', ignored: true }),
-      res as unknown as NextApiResponse);
-    expect(mocks.createTerminal).toHaveBeenCalledWith('server-1',
-      { requestId: 'request-1', name: 'work' });
-    expect(res.status).toHaveBeenCalledWith(201);
-    expect(res.json).toHaveBeenCalledWith(created);
-  });
-
-  it('reports post-dispatch failures as a retryable unknown outcome', async () => {
-    mocks.createTerminal.mockRejectedValue(new ExternalTerminalOutcomeUnknownError('request-1'));
-    const res = response();
-
-    await terminals(request('POST', { requestId: 'request-1' }), res as unknown as NextApiResponse);
-
-    expect(res.status).toHaveBeenCalledWith(503);
-    expect(res.json).toHaveBeenCalledWith({
-      error: 'External terminal creation outcome is unknown; retry with the same requestId',
-      outcomeUnknown: true,
-      requestId: 'request-1',
-    });
-  });
-
-  it('reports a reconciled duplicate terminal name as a known client error', async () => {
-    mocks.createTerminal.mockRejectedValue(new ExternalServerError('duplicate session: work'));
-    const res = response();
-
-    await terminals(request('POST', { requestId: 'request-1', name: 'work' }),
-      res as unknown as NextApiResponse);
-
-    expect(res.status).toHaveBeenCalledWith(400);
-    expect(res.json).toHaveBeenCalledWith({ error: 'duplicate session: work' });
   });
 
   it('maps validation, missing registration, and storage failures', async () => {

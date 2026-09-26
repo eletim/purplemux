@@ -12,8 +12,8 @@ import useIsMobile from '@/hooks/use-is-mobile';
 import { requireAuth } from '@/lib/require-auth';
 import { loadMessagesServer } from '@/lib/load-messages';
 
-const ExternalTerminalSurface = dynamic(
-  () => import('@/components/features/workspace/external-terminal-surface'),
+const TerminalSurface = dynamic(
+  () => import('@/components/features/workspace/terminal-surface'),
   { ssr: false },
 );
 
@@ -89,9 +89,9 @@ const ExternalWorkspaceContent = ({ emptyMessage }: { emptyMessage: string }) =>
         </p>
       )}
       {activeTarget ? (
-        <ExternalTerminalSurface
+        <TerminalSurface
           key={`${activeTarget.serverId}:${activeTarget.sessionId}:${activeTarget.windowId}`}
-          externalTerminalTarget={activeTarget}
+          target={activeTarget}
           className="h-full min-h-0 flex-1 rounded-none border-0"
         />
       ) : (

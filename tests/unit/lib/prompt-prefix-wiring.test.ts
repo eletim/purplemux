@@ -16,7 +16,7 @@ describe('prompt-prefix terminal wiring', () => {
   it.each([
     'src/components/features/workspace/pane-container.tsx',
     'src/components/features/mobile/mobile-surface-view.tsx',
-    'src/components/features/workspace/external-terminal-surface.tsx',
+    'src/components/features/workspace/terminal-surface.tsx',
   ])('uses the shared interactive terminal surface in %s', (relativePath) => {
     const source = readSource(relativePath);
 

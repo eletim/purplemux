@@ -12,7 +12,7 @@ const inventory = (windowIds: string[]) => ({
   exists: true,
   sessions: [{
     id: '$4', name: 'work', sessionCreated: '1750000001', exists: true as const,
-    attached: false, owned: false,
+    attached: false,
     windows: windowIds.map((id, index) => ({
       id, name: `window-${index}`, index, exists: true as const, active: index === 0, panes: [pane],
     })),

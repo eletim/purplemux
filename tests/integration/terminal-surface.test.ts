@@ -2,7 +2,7 @@
 import { createElement } from 'react';
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import ExternalTerminalSurface from '@/components/features/workspace/external-terminal-surface';
+import TerminalSurface from '@/components/features/workspace/terminal-surface';
 
 const mocks = vi.hoisted(() => ({
   connect: vi.fn(),
@@ -69,10 +69,10 @@ vi.mock('@/components/features/workspace/terminal-key-bar', () => ({ default: ()
 beforeEach(() => vi.clearAllMocks());
 afterEach(cleanup);
 
-describe('shared external terminal surface', () => {
+describe('shared terminal surface', () => {
   it('uses the standard terminal interactions for a discovered external window', () => {
     const target = { serverId: 'server-1', sessionId: '$1', windowId: '@2' };
-    render(createElement(ExternalTerminalSurface, { externalTerminalTarget: target }));
+    render(createElement(TerminalSurface, { target: { kind: 'external', ...target } }));
 
     expect(screen.getByTestId('terminal-container')).toBeTruthy();
     expect(mocks.websocketOptions).toHaveBeenCalledWith(expect.not.objectContaining({ externalTerminalTarget: expect.anything() }));
