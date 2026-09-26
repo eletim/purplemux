@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { nanoid } from 'nanoid';
-import type { IExternalTerminalTarget, TConnectionStatus, TDisconnectReason } from '@/types/terminal';
+import type { TConnectionStatus, TDisconnectReason, TTerminalTarget } from '@/types/terminal';
 import {
   MSG_STDOUT,
   MSG_HEARTBEAT,
@@ -31,21 +31,16 @@ const getOrCreateClientId = (sessionName: string): string => {
 };
 
 interface IUseTerminalWebSocketOptions {
-  externalTerminalTarget?: IExternalTerminalTarget;
   onData?: (data: Uint8Array) => void;
   onConnected?: () => void;
   onSessionEnded?: () => void;
 }
 
 const useTerminalWebSocket = ({
-  externalTerminalTarget,
   onData,
   onConnected,
   onSessionEnded,
 }: IUseTerminalWebSocketOptions = {}) => {
-  const externalServerId = externalTerminalTarget?.serverId;
-  const externalSessionId = externalTerminalTarget?.sessionId;
-  const externalServerWindowId = externalTerminalTarget?.windowId;
   const [status, setStatus] = useState<TConnectionStatus>('disconnected');
   const [retryCount, setRetryCount] = useState(0);
   const [disconnectReason, setDisconnectReason] =
@@ -56,12 +51,12 @@ const useTerminalWebSocket = ({
   const heartbeatRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const retryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const retryCountRef = useRef(0);
-  const sessionNameRef = useRef('');
+  const targetRef = useRef<TTerminalTarget | null>(null);
   const connectIdRef = useRef(0);
   const initialSizeRef = useRef<{ cols: number; rows: number } | null>(null);
   const policyRejectedRef = useRef(false);
   const callbacksRef = useRef({ onData, onConnected, onSessionEnded });
-  const doConnectRef = useRef<(sessionName: string, connectId: number) => void>(() => {});
+  const doConnectRef = useRef<(target: TTerminalTarget, connectId: number) => void>(() => {});
 
   useEffect(() => {
     callbacksRef.current = { onData, onConnected, onSessionEnded };
@@ -79,7 +74,7 @@ const useTerminalWebSocket = ({
   }, []);
 
   const doConnect = useCallback(
-    (sessionName: string, connectId: number) => {
+    (target: TTerminalTarget, connectId: number) => {
       clearTimers();
       policyRejectedRef.current = false;
       if (wsRef.current) {
@@ -92,15 +87,15 @@ const useTerminalWebSocket = ({
       setStatus(retryCountRef.current > 0 ? 'reconnecting' : 'connecting');
 
       const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
-      const connectionKey = externalServerId && externalSessionId && externalServerWindowId
-        ? `external-server:${externalServerId}:${externalSessionId}:${externalServerWindowId}`
-        : sessionName;
+      const connectionKey = target.kind === 'external'
+        ? `external-server:${target.serverId}:${target.sessionId}:${target.windowId}`
+        : target.sessionName;
       const clientId = getOrCreateClientId(connectionKey);
       const size = initialSizeRef.current;
       const sizeParams = size ? `&cols=${size.cols}&rows=${size.rows}` : '';
-      const targetParams = externalServerId && externalSessionId && externalServerWindowId
-        ? `externalServerId=${encodeURIComponent(externalServerId)}&sessionId=${encodeURIComponent(externalSessionId)}&windowId=${encodeURIComponent(externalServerWindowId)}`
-        : `session=${encodeURIComponent(sessionName)}`;
+      const targetParams = target.kind === 'external'
+        ? `externalServerId=${encodeURIComponent(target.serverId)}&sessionId=${encodeURIComponent(target.sessionId)}&windowId=${encodeURIComponent(target.windowId)}`
+        : `session=${encodeURIComponent(target.sessionName)}`;
       const ws = new WebSocket(
         `${protocol}//${location.host}/api/terminal?clientId=${clientId}&${targetParams}${sizeParams}`,
       );
@@ -145,7 +140,7 @@ const useTerminalWebSocket = ({
           return;
         }
 
-        if (externalServerId && event.code === 1008) {
+        if (target.kind === 'external' && event.code === 1008) {
           policyRejectedRef.current = true;
           setExternalTargetFailure(event.reason || 'External target rejected');
           setStatus('disconnected');
@@ -170,7 +165,8 @@ const useTerminalWebSocket = ({
           setRetryCount(retryCountRef.current);
           setStatus('reconnecting');
           retryTimerRef.current = setTimeout(() => {
-            doConnectRef.current(sessionNameRef.current, connectId);
+            const currentTarget = targetRef.current;
+            if (currentTarget) doConnectRef.current(currentTarget, connectId);
           }, delay);
         } else {
           if (shouldPromptMobileReloadRecovery()) {
@@ -184,7 +180,7 @@ const useTerminalWebSocket = ({
         console.log('[terminal-ws] connection error');
       };
     },
-    [clearTimers, externalServerId, externalSessionId, externalServerWindowId],
+    [clearTimers],
   );
 
   useEffect(() => {
@@ -192,13 +188,13 @@ const useTerminalWebSocket = ({
   }, [doConnect]);
 
   const connect = useCallback(
-    (sessionName: string, cols?: number, rows?: number) => {
-      sessionNameRef.current = sessionName;
+    (target: TTerminalTarget, cols?: number, rows?: number) => {
+      targetRef.current = target;
       initialSizeRef.current = cols && rows ? { cols, rows } : null;
       retryCountRef.current = 0;
       setRetryCount(0);
       connectIdRef.current++;
-      doConnect(sessionName, connectIdRef.current);
+      doConnect(target, connectIdRef.current);
     },
     [doConnect],
   );
@@ -210,16 +206,17 @@ const useTerminalWebSocket = ({
       wsRef.current.close();
       wsRef.current = null;
     }
-    sessionNameRef.current = '';
+    targetRef.current = null;
     setStatus('disconnected');
   }, [clearTimers]);
 
   const reconnect = useCallback(() => {
-    if (!sessionNameRef.current) return;
+    const target = targetRef.current;
+    if (!target) return;
     retryCountRef.current = 0;
     setRetryCount(0);
     connectIdRef.current++;
-    doConnect(sessionNameRef.current, connectIdRef.current);
+    doConnect(target, connectIdRef.current);
   }, [doConnect]);
 
   const sendStdin = useCallback((data: string) => {
@@ -257,14 +254,15 @@ const useTerminalWebSocket = ({
   useEffect(() => {
     const handleVisibilityChange = () => {
       if (document.visibilityState !== 'visible') return;
-      if (!sessionNameRef.current) return;
+      const target = targetRef.current;
+      if (!target) return;
       if (policyRejectedRef.current) return;
       const ws = wsRef.current;
       if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) return;
       retryCountRef.current = 0;
       setRetryCount(0);
       connectIdRef.current++;
-      doConnectRef.current(sessionNameRef.current, connectIdRef.current);
+      doConnectRef.current(target, connectIdRef.current);
     };
     document.addEventListener('visibilitychange', handleVisibilityChange);
     return () => document.removeEventListener('visibilitychange', handleVisibilityChange);

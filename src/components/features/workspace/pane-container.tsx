@@ -608,7 +608,7 @@ const PaneContainer = memo(({ paneId, paneNumber }: IPaneContainerProps) => {
       rows,
       isAgentTab ? (tab.terminalCollapsed ?? !claudeShowTerminal) : false,
     );
-    connect(tab.sessionName, initialSize.cols, initialSize.rows);
+    connect({ kind: 'managed', sessionName: tab.sessionName }, initialSize.cols, initialSize.rows);
   }, [isReady, activeTabId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
