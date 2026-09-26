@@ -2,7 +2,7 @@
 
 All persistent state (settings, layouts, session history, caches) lives under `~/.purplemux/`. See [CLAUDE.md §15](../CLAUDE.md) — memory/variables and `localStorage` are not used.
 
-File permissions are `0600` for anything containing a secret (config, tokens, layouts, VAPID keys, lock file). Store-managed JSON writes generally use a `tmpFile → rename` pattern plus a `withLock` promise queue (in-process) to avoid interleaving. The external-terminal marker key is the exception described below.
+File permissions are `0600` for anything containing a secret (config, tokens, layouts, VAPID keys, lock file). Store-managed JSON writes generally use a `tmpFile → rename` pattern plus a `withLock` promise queue (in-process) to avoid interleaving.
 
 ---
 

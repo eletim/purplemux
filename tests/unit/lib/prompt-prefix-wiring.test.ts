@@ -24,6 +24,23 @@ describe('prompt-prefix terminal wiring', () => {
     expect(source).toContain('useTerminalSurface({');
   });
 
+  it.each([
+    'src/components/features/workspace/pane-container.tsx',
+    'src/components/features/mobile/mobile-surface-view.tsx',
+  ])('renders managed terminals through the shared composition in %s', (relativePath) => {
+    const source = readSource(relativePath);
+
+    expect(source).toContain("import TerminalSurface from '@/components/features/workspace/terminal-surface'");
+    expect(source).toContain('<TerminalSurface');
+  });
+
+  it('renders the external connection through the same shared composition', () => {
+    const source = readSource('src/components/features/workspace/terminal-surface.tsx');
+
+    expect(source).toContain('export function ExternalTerminalConnection');
+    expect(source).toContain('<TerminalSurface');
+  });
+
   it('uses the live prefix for prompt markers and copied blocks', () => {
     const source = readSource('src/hooks/use-terminal.ts');
 

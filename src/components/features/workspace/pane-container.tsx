@@ -14,12 +14,11 @@ import { useLayoutStore } from '@/hooks/use-layout';
 import useConfigStore, { type TGitAskProvider } from '@/hooks/use-config-store';
 import useIsMobileDevice from '@/hooks/use-is-mobile-device';
 import { toCtrlChar } from '@/lib/terminal-keys';
-import TerminalKeyBar from '@/components/features/workspace/terminal-key-bar';
+import TerminalSurface from '@/components/features/workspace/terminal-surface';
 import { useShallow } from 'zustand/react/shallow';
 import { buildClaudeLaunchCommand } from '@/lib/providers/claude/client';
 import { fetchCodexLaunchCommand } from '@/lib/providers/codex/client';
 import { sendCodexQuitCommand } from '@/lib/agent-terminal-commands';
-import TerminalContainer from '@/components/features/workspace/terminal-container';
 import ClaudeCodePanel from '@/components/features/workspace/claude-code-panel';
 import CodexPanel from '@/components/features/workspace/codex-panel';
 import AgentSessionsPanel from '@/components/features/workspace/agent-sessions-panel';
@@ -1331,24 +1330,22 @@ const PaneContainer = memo(({ paneId, paneNumber }: IPaneContainerProps) => {
 
           <Panel id="terminal-area" minSize={0} collapsible collapsedSize={0}>
             <div className="flex h-full flex-col" onMouseDown={() => { clickedTerminalRef.current = true; }}>
-              <TerminalContainer
-                ref={terminalRef}
+              <TerminalSurface
+                terminalRef={terminalRef}
                 minHeight={isAgentPanel ? 256 : undefined}
-                className={cn(
+                containerClassName={cn(
                   'min-h-0 flex-1',
                   ready ? 'opacity-100' : 'opacity-0',
                   isAgentPanel && 'py-0 pl-2 pr-0.5',
                 )}
+                keyBar={showKeyBar ? {
+                  sendStdin,
+                  ctrlActive: ctrlArmed,
+                  shiftActive: shiftArmed,
+                  setCtrlActive: setCtrlArmed,
+                  setShiftActive: setShiftArmed,
+                } : undefined}
               />
-              {showKeyBar && (
-                <TerminalKeyBar
-                  sendStdin={sendStdin}
-                  ctrlActive={ctrlArmed}
-                  shiftActive={shiftArmed}
-                  setCtrlActive={setCtrlArmed}
-                  setShiftActive={setShiftArmed}
-                />
-              )}
             </div>
           </Panel>
         </Group>

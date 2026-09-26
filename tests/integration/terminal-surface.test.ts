@@ -2,7 +2,7 @@
 import { createElement } from 'react';
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import TerminalSurface from '@/components/features/workspace/terminal-surface';
+import { ExternalTerminalConnection } from '@/components/features/workspace/terminal-surface';
 
 const mocks = vi.hoisted(() => ({
   connect: vi.fn(),
@@ -70,9 +70,9 @@ beforeEach(() => vi.clearAllMocks());
 afterEach(cleanup);
 
 describe('shared terminal surface', () => {
-  it('uses the standard terminal interactions for a discovered external window', () => {
+  it('connects the shared composition to a discovered external window', () => {
     const target = { serverId: 'server-1', sessionId: '$1', windowId: '@2' };
-    render(createElement(TerminalSurface, { target: { kind: 'external', ...target } }));
+    render(createElement(ExternalTerminalConnection, { target }));
 
     expect(screen.getByTestId('terminal-container')).toBeTruthy();
     expect(mocks.websocketOptions).toHaveBeenCalledWith(expect.not.objectContaining({ externalTerminalTarget: expect.anything() }));
