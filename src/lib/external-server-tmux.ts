@@ -96,9 +96,6 @@ export const createExternalSessionWindow = async (
   const initial = await discoverExternalServer(server, signal);
   const prior = findCreatedWindow(initial);
   if (prior) return prior;
-  const activeWindowId = initial.sessions.find((candidate) => candidate.id === session.id)
-    ?.windows.find((window) => window.active)?.id;
-  if (!activeWindowId) throw new ExternalServerError('External tmux session has no active window');
   const reconcileCreatedWindow = async (): Promise<ICreatedExternalWindow> => {
     try {
       const recovered = findCreatedWindow(await discoverExternalServer(server, signal));
@@ -115,9 +112,7 @@ export const createExternalSessionWindow = async (
   try {
     ({ stdout } = await execTmux(externalServerTmuxTarget(server), [
       'if-shell', '-F', '-t', session.id, identityMatches,
-      `new-window -P -F '${format}' -t ${session.id} ; `
-        + `set-option -w @purplemux_tab_request_id ${session.requestId} ; `
-        + `select-window -t ${session.id}:${activeWindowId}`,
+      `new-window -d -P -F '${format}' -t ${session.id}`,
       `display-message -p ${mismatch}`,
     ], { timeout: 5000, signal }));
   } catch {
@@ -134,6 +129,10 @@ export const createExternalSessionWindow = async (
     return reconcileCreatedWindow();
   }
   try {
+    await execTmux(externalServerTmuxTarget(server), [
+      'set-option', '-w', '-t', `${fields[0]}:${fields[2]}`,
+      '@purplemux_tab_request_id', session.requestId,
+    ], { timeout: 5000, signal });
     await assertExternalServerSocketIdentity(server, signal);
   } catch {
     signal?.throwIfAborted();
