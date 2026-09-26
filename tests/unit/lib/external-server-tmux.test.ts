@@ -98,11 +98,14 @@ describe('external tmux runtime decoding', () => {
     expect(mocks.exec).toHaveBeenCalledWith(expect.anything(), [
       'if-shell', '-F', '-t', '$4',
       '#{&&:#{==:#{session_id},$4},#{==:#{session_created},1750000001}}',
-      "new-window -d -P -F '#{session_id}\t#{session_created}\t#{window_id}' -t $4",
+      "new-window -d -P -F '#{session_id}\t#{session_created}\t#{window_id}' "
+        + '-n purplemux-pending-window-request -t $4',
       'display-message -p purplemux-session-identity-mismatch',
     ], expect.objectContaining({ timeout: 5000 }));
     expect(mocks.exec).toHaveBeenCalledWith(expect.anything(), [
       'set-option', '-w', '-t', '$4:@7', '@purplemux_tab_request_id', 'window-request',
+      ';', 'set-option', '-wu', '-t', '$4:@7', 'automatic-rename',
+      ';', 'rename-window', '-t', '$4:@7', '#{pane_current_command}',
     ], expect.objectContaining({ timeout: 5000 }));
     expect(mocks.exec.mock.calls[1][1].join(' ')).not.toContain('new-session');
     expect(mocks.exec.mock.calls[1][1].join(' ')).not.toContain('@purplemux_provenance');
@@ -130,6 +133,8 @@ describe('external tmux runtime decoding', () => {
     expect(mocks.exec.mock.calls.flatMap(([, args]) => args)).not.toContain('select-window');
     expect(mocks.exec).toHaveBeenCalledWith(expect.anything(), [
       'set-option', '-w', '-t', '$4:@7', '@purplemux_tab_request_id', 'window-race',
+      ';', 'set-option', '-wu', '-t', '$4:@7', 'automatic-rename',
+      ';', 'rename-window', '-t', '$4:@7', '#{pane_current_command}',
     ], expect.anything());
   });
 
@@ -176,6 +181,40 @@ describe('external tmux runtime decoding', () => {
     expect(retried).toEqual(first);
     expect(first.windowId).toBe('@7');
     expect(mocks.exec.mock.calls.filter(([, args]) => args[0] === 'if-shell')).toHaveLength(1);
+  });
+
+  it('retries marking a pending window without dispatching another new-window', async () => {
+    let created = false;
+    let markerFailures = 2;
+    mocks.exec.mockReset().mockImplementation(async (_target, args: string[]) => {
+      if (args[0] === 'list-panes') {
+        return { stdout: inventoryLine('$4', '1750000001', created ? '@7' : '@2'), stderr: '' };
+      }
+      if (args[0] === 'if-shell') {
+        created = true;
+        return { stdout: '$4\t1750000001\t@7\n', stderr: '' };
+      }
+      if (args[0] === 'set-option' && markerFailures-- > 0) {
+        throw new Error('marker dispatch failed');
+      }
+      return { stdout: '', stderr: '' };
+    });
+    mocks.execBuffer.mockImplementation(async (_target, args: string[]) => {
+      const field = args.at(-1) ?? '';
+      const values: Record<string, string> = {
+        '#{session_name}': 'work',
+        '#{window_name}': created ? 'purplemux-pending-retry-pending' : 'shell',
+        '#{pane_current_command}': 'bash', '#{pane_current_path}': '/tmp',
+      };
+      return { stdout: Buffer.from(`${values[field] ?? ''}\n`), stderr: Buffer.alloc(0) };
+    });
+    const request = { id: '$4', sessionCreated: '1750000001', requestId: 'retry-pending' };
+
+    await expect(createExternalSessionWindow(server, request)).rejects.toThrow('outcome is unknown');
+    await expect(createExternalSessionWindow(server, request)).resolves.toMatchObject({ windowId: '@7' });
+
+    expect(mocks.exec.mock.calls.filter(([, args]) => args[0] === 'if-shell')).toHaveLength(1);
+    expect(mocks.exec.mock.calls.filter(([, args]) => args[0] === 'set-option')).toHaveLength(3);
   });
 
   it.each([

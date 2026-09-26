@@ -79,7 +79,9 @@ export const createExternalSessionWindow = async (
     || !/^[-_A-Za-z0-9]{1,128}$/.test(session.requestId)) {
     throw new ExternalServerError('Invalid external tmux session target');
   }
-  const findCreatedWindow = (inventory: IExternalServerInventory): ICreatedExternalWindow | null => {
+  const pendingWindowName = `purplemux-pending-${session.requestId}`;
+  type FoundWindow = { created: ICreatedExternalWindow; marked: boolean; pending: boolean };
+  const findCreatedWindow = (inventory: IExternalServerInventory): FoundWindow | null => {
     if (!inventory.exists) {
       throw new ExternalServerError(inventory.unavailableReason ?? 'External tmux server is unavailable');
     }
@@ -87,19 +89,43 @@ export const createExternalSessionWindow = async (
     if (!liveSession || liveSession.sessionCreated !== session.sessionCreated) {
       throw new ExternalServerError('External tmux session identity changed');
     }
-    const window = liveSession.windows.find((candidate) =>
+    const marked = liveSession.windows.find((candidate) =>
       (candidate as RuntimeWindow)[windowCreationMarker] === session.requestId);
-    return window ? { serverId: server.id, sessionId: liveSession.id,
+    const pending = liveSession.windows.find((candidate) => candidate.name === pendingWindowName);
+    const window = marked ?? pending;
+    return window ? { marked: !!marked, pending: window.name === pendingWindowName,
+      created: { serverId: server.id, sessionId: liveSession.id,
       sessionCreated: liveSession.sessionCreated, windowId: window.id,
-      requestId: session.requestId } : null;
+      requestId: session.requestId } } : null;
   };
+  const markCreatedWindow = async (created: ICreatedExternalWindow): Promise<ICreatedExternalWindow> => {
+    await execTmux(externalServerTmuxTarget(server), [
+      'set-option', '-w', '-t', `${created.sessionId}:${created.windowId}`,
+      '@purplemux_tab_request_id', session.requestId,
+      ';', 'set-option', '-wu', '-t', `${created.sessionId}:${created.windowId}`,
+      'automatic-rename',
+      ';', 'rename-window', '-t', `${created.sessionId}:${created.windowId}`,
+      '#{pane_current_command}',
+    ], { timeout: 5000, signal });
+    await assertExternalServerSocketIdentity(server, signal);
+    return created;
+  };
+  const finishCreatedWindow = (found: FoundWindow): Promise<ICreatedExternalWindow> =>
+    found.marked && !found.pending ? Promise.resolve(found.created) : markCreatedWindow(found.created);
   const initial = await discoverExternalServer(server, signal);
   const prior = findCreatedWindow(initial);
-  if (prior) return prior;
+  if (prior) {
+    try {
+      return await finishCreatedWindow(prior);
+    } catch {
+      signal?.throwIfAborted();
+      throw new ExternalWindowOutcomeUnknownError(session.requestId);
+    }
+  }
   const reconcileCreatedWindow = async (): Promise<ICreatedExternalWindow> => {
     try {
       const recovered = findCreatedWindow(await discoverExternalServer(server, signal));
-      if (recovered) return recovered;
+      if (recovered) return await finishCreatedWindow(recovered);
     } catch { /* The post-dispatch state is still ambiguous. */ }
     throw new ExternalWindowOutcomeUnknownError(session.requestId);
   };
@@ -112,7 +138,7 @@ export const createExternalSessionWindow = async (
   try {
     ({ stdout } = await execTmux(externalServerTmuxTarget(server), [
       'if-shell', '-F', '-t', session.id, identityMatches,
-      `new-window -d -P -F '${format}' -t ${session.id}`,
+      `new-window -d -P -F '${format}' -n ${pendingWindowName} -t ${session.id}`,
       `display-message -p ${mismatch}`,
     ], { timeout: 5000, signal }));
   } catch {
@@ -128,18 +154,14 @@ export const createExternalSessionWindow = async (
     || !/^@\d+$/.test(fields[2])) {
     return reconcileCreatedWindow();
   }
+  const created = { serverId: server.id, sessionId: fields[0], sessionCreated: fields[1],
+    windowId: fields[2], requestId: session.requestId };
   try {
-    await execTmux(externalServerTmuxTarget(server), [
-      'set-option', '-w', '-t', `${fields[0]}:${fields[2]}`,
-      '@purplemux_tab_request_id', session.requestId,
-    ], { timeout: 5000, signal });
-    await assertExternalServerSocketIdentity(server, signal);
+    return await markCreatedWindow(created);
   } catch {
     signal?.throwIfAborted();
     return reconcileCreatedWindow();
   }
-  return { serverId: server.id, sessionId: fields[0], sessionCreated: fields[1],
-    windowId: fields[2], requestId: session.requestId };
 };
 
 export const freezeExternalServer = async (
