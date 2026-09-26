@@ -66,6 +66,22 @@ GET /api/cli/external-servers
   are idempotency/audit data and never independently authorize lifecycle actions.
   CLI equivalent: purplemux external-server list
 
+GET /api/cli/external-servers/<serverId>/workspaces
+  Returns a fresh Workspace/Tab adapter view of one registered server. Each live tmux
+  session is a Workspace whose id is its stable $sessionId; each live window is a Tab
+  whose id is its stable @windowId. Tabs include their pane metadata and the exact
+  { "serverId", "sessionId", "windowId" } externalTerminalTarget. Unavailable registrations
+  remain visible with exists:false and workspaces:[]. This view is rebuilt from tmux on
+  every request and never persists external Workspaces or Tabs.
+
+POST /api/cli/external-servers/<serverId>/workspaces/<$sessionId>/tabs
+  Body: { "sessionCreated": "exact-tmux-session-creation-identity" }
+  Adds one unowned window to the exact live session represented by the Workspace.
+  Response: { "tabId": "@7", "workspaceId": "$4", "sessionCreated": "...",
+              "externalTerminalTarget": { "serverId": "...", "sessionId": "$4", "windowId": "@7" } }
+  The returned stable IDs select the new Tab immediately. HTTP 409 reports session or
+  socket identity drift; the operation never creates a session or writes Workspace state.
+
 POST /api/cli/external-servers/<serverId>/terminals
   Body: { "requestId": "client-stable-id", "name"?: "terminal-name" }
   Creates a new tmux session (never an implicit window in an existing session) and

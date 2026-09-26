@@ -170,6 +170,43 @@ describe('external tmux server registrations', () => {
       .resolves.toBeUndefined();
   });
 
+  it('adapts live sessions and windows without re-registration or workspace persistence', async () => {
+    vi.spyOn(os, 'homedir').mockReturnValue(directory);
+    vi.resetModules();
+    const store = await import('@/lib/external-server-store');
+    const adapter = await import('@/lib/external-workspace-adapter');
+    const server = await store.registerExternalServer({ name: 'external source', socketPath: socket });
+    const registrationFile = path.join(directory, '.purplemux', 'external-servers.json');
+    const persistedRegistration = await fs.readFile(registrationFile, 'utf8');
+
+    let source = await adapter.getExternalWorkspaceSource(server.id);
+    expect(source).toMatchObject({ serverId: server.id, name: 'external source', exists: true,
+      workspaces: [{ id: '$0', name: 'external', tabs: [{ id: '@0' }] }] });
+
+    tmux('new-session', '-d', '-s', 'live-added', 'sleep 300');
+    const addedSessionId = tmux('display-message', '-p', '-t', 'live-added', '#{session_id}');
+    const addedCreated = tmux('display-message', '-p', '-t', addedSessionId, '#{session_created}');
+    source = await adapter.getExternalWorkspaceSource(server.id);
+    expect(source?.workspaces.map(({ id, name }) => ({ id, name }))).toContainEqual({
+      id: addedSessionId, name: 'live-added',
+    });
+
+    const created = await adapter.createExternalWorkspaceTab(server.id,
+      { id: addedSessionId, sessionCreated: addedCreated });
+    expect(created).toMatchObject({ workspaceId: addedSessionId,
+      externalTerminalTarget: { serverId: server.id, sessionId: addedSessionId } });
+    source = await adapter.getExternalWorkspaceSource(server.id);
+    expect(source?.workspaces.find(({ id }) => id === addedSessionId)?.tabs
+      .map(({ id }) => id)).toContain(created?.tabId);
+
+    tmux('kill-window', '-t', `${addedSessionId}:${created?.tabId}`);
+    tmux('kill-session', '-t', addedSessionId);
+    source = await adapter.getExternalWorkspaceSource(server.id);
+    expect(source?.workspaces.some(({ id }) => id === addedSessionId)).toBe(false);
+    expect(await fs.readFile(registrationFile, 'utf8')).toBe(persistedRegistration);
+    await expect(fs.access(path.join(directory, '.purplemux', 'workspaces.json'))).rejects.toThrow();
+  });
+
   it('rolls back an exact created session when history persistence fails, then retries cleanly', async () => {
     vi.spyOn(os, 'homedir').mockReturnValue(directory);
     vi.resetModules();
