@@ -136,6 +136,33 @@ describe('external tmux server registrations', () => {
     await expect(fs.access(path.join(directory, '.purplemux', 'workspaces.json'))).rejects.toThrow();
   });
 
+  it('adapts window links in the same and different sessions with their session targets', async () => {
+    vi.spyOn(os, 'homedir').mockReturnValue(directory);
+    vi.resetModules();
+    const store = await import('@/lib/external-server-store');
+    const adapter = await import('@/lib/external-workspace-adapter');
+    const server = await store.registerExternalServer({ name: 'external', socketPath: socket });
+    tmux('link-window', '-d', '-s', '$0:@0', '-t', '$0:4');
+    tmux('new-session', '-d', '-s', 'linked', '-n', 'placeholder', 'sleep 300');
+    const linkedSessionId = tmux('display-message', '-p', '-t', 'linked:', '#{session_id}');
+    tmux('link-window', '-d', '-s', '$0:@0', '-t', `${linkedSessionId}:3`);
+
+    const source = await adapter.getExternalWorkspaceSource(server.id);
+    const original = source?.workspaces.find(({ id }) => id === '$0');
+    const linked = source?.workspaces.find(({ id }) => id === linkedSessionId);
+
+    expect(original?.tabs.filter(({ id }) => id === '@0').map(({ order }) => order))
+      .toEqual([0, 4]);
+    expect(original?.tabs.filter(({ id }) => id === '@0').map(({ externalTerminalTarget }) =>
+      externalTerminalTarget)).toEqual([
+      { serverId: server.id, sessionId: '$0', windowId: '@0' },
+      { serverId: server.id, sessionId: '$0', windowId: '@0' },
+    ]);
+    expect(linked?.tabs.find(({ id }) => id === '@0')?.externalTerminalTarget).toEqual({
+      serverId: server.id, sessionId: linkedSessionId, windowId: '@0',
+    });
+  });
+
   it('rejects the managed socket and fails closed after socket replacement', async () => {
     vi.stubEnv('TMUX_TMPDIR', directory);
     const managedDirectory = path.join(directory, `tmux-${process.getuid?.()}`);

@@ -211,6 +211,32 @@ describe('external server browser page', () => {
     expect(screen.getByTestId('external-terminal').textContent).toBe('server-1:$1:@4');
   });
 
+  it('keeps linked window tabs distinct within and across external Workspaces', async () => {
+    const linkedWindow = tab('@2', 'linked', 4, false);
+    const source = {
+      ...externalSource(),
+      workspaces: [
+        workspace('$1', 'original', [tab('@2', 'linked', 0, true), linkedWindow]),
+        workspace('$2', 'other session', [tab('@2', 'linked', 3, true, '$2')]),
+      ],
+    };
+    vi.stubGlobal('fetch', fetchFor(() => source));
+    mount(createElement(ExternalWorkspaceChromePage));
+
+    const linkedTabs = await screen.findAllByRole('tab', { name: 'linked' });
+    expect(linkedTabs).toHaveLength(2);
+    expect(linkedTabs.map((element) => element.getAttribute('data-tab-id'))).toEqual([
+      'server-1:$1:@2:0', 'server-1:$1:@2:4',
+    ]);
+    fireEvent.click(linkedTabs[1]);
+    expect(screen.getByTestId('external-terminal').textContent).toBe('server-1:$1:@2');
+
+    fireEvent.click(screen.getByRole('button', { name: 'other session' }));
+    expect(screen.getByRole('tab', { name: 'linked' }).getAttribute('data-tab-id'))
+      .toBe('server-1:$2:@2');
+    expect(screen.getByTestId('external-terminal').textContent).toBe('server-1:$2:@2');
+  });
+
   it('selects one registered server explicitly without flattening server workspaces together', async () => {
     const dev = externalSource(undefined, 'server-1', 'dev');
     const prod = {

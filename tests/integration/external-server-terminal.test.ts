@@ -125,6 +125,7 @@ describe('shared terminal path for discovered external windows', () => {
 
     const first = await connect();
     await vi.waitFor(() => expect(first.output()).toContain('FIRST_WINDOW'));
+    await vi.waitFor(() => expect(first.output()).toContain('PREEXISTING_045'));
     expect(first.output()).toContain('PREEXISTING_001');
     expect(first.output()).toContain('PREEXISTING_045');
     expect(tmux('list-clients', '-F', '#{client_flags}').split('\n')

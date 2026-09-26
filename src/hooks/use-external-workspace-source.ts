@@ -21,6 +21,13 @@ const workspaceEndpoint = (serverId: string) =>
   `${endpoint}/${encodeURIComponent(serverId)}/workspaces`;
 const chromeId = (serverId: string, resourceId: string) =>
   `${encodeURIComponent(serverId)}:${resourceId}`;
+const tabChromeId = (
+  serverId: string,
+  workspaceId: string,
+  tabId: string,
+  duplicateLinkIndex?: number,
+) => `${chromeId(serverId, workspaceId)}:${tabId}`
+  + (duplicateLinkIndex === undefined ? '' : `:${duplicateLinkIndex}`);
 const requestStorageKey = (serverId: string, workspaceId: string, sessionCreated: string) =>
   `purplemux-external-tab-request:${serverId}:${workspaceId}:${sessionCreated}`;
 
@@ -110,15 +117,24 @@ export default function useExternalWorkspaceSource(): IExternalWorkspaceChromeSt
         const workspaceId = chromeId(externalSource.serverId, workspace.id);
         workspaces.push({ id: workspaceId, name: workspace.name, directories: [] });
         rawWorkspaces.set(workspaceId, { serverId: externalSource.serverId, workspace });
+        const windowLinkCounts = workspace.tabs.reduce((counts, tab) => {
+          counts.set(tab.id, (counts.get(tab.id) ?? 0) + 1);
+          return counts;
+        }, new Map<string, number>());
         const tabs = workspace.tabs.map<ITab>((tab) => {
-          const id = chromeId(externalSource.serverId, tab.id);
+          const id = tabChromeId(
+            externalSource.serverId,
+            workspace.id,
+            tab.id,
+            windowLinkCounts.get(tab.id)! > 1 ? tab.order : undefined,
+          );
           targets.set(id, tab.externalTerminalTarget);
           return { id, sessionName: workspace.id, name: tab.name, order: tab.order };
         });
         if (optimistic?.workspaceId === workspace.id
           && optimistic.externalTerminalTarget.serverId === externalSource.serverId
           && !workspace.tabs.some((tab) => tab.id === optimistic.tabId)) {
-          const id = chromeId(externalSource.serverId, optimistic.tabId);
+          const id = tabChromeId(externalSource.serverId, workspace.id, optimistic.tabId);
           targets.set(id, optimistic.externalTerminalTarget);
           tabs.push({ id, sessionName: workspace.id, name: optimistic.tabId, order: tabs.length });
         }
@@ -211,7 +227,7 @@ export default function useExternalWorkspaceSource(): IExternalWorkspaceChromeSt
         throw new Error('External tab creation outcome is unknown; retry to reconcile it.');
       }
       clearRequestId();
-      const id = chromeId(raw.serverId, created.tabId);
+      const id = tabChromeId(raw.serverId, raw.workspace.id, created.tabId);
       setOptimistic(created);
       setSelectedWorkspaceId(workspaceId);
       setSelectedTabId(id);
