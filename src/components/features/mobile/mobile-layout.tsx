@@ -9,9 +9,10 @@ import type { IWorkspaceChromeSourceAdapter } from '@/types/workspace-chrome';
 interface IMobileLayoutProps {
   children: ReactNode;
   source: IWorkspaceChromeSourceAdapter;
+  navigationHeader?: ReactNode;
 }
 
-const MobileLayout = ({ children, source }: IMobileLayoutProps) => {
+const MobileLayout = ({ children, source, navigationHeader }: IMobileLayoutProps) => {
   const [menuOpen, setMenuOpen] = useState(false);
   const settingsOpen = useWorkspaceStore((state) => state.isSettingsDialogOpen);
   const setSettingsOpen = useWorkspaceStore((state) => state.setSettingsDialogOpen);
@@ -33,6 +34,7 @@ const MobileLayout = ({ children, source }: IMobileLayoutProps) => {
         open={menuOpen}
         onOpenChange={setMenuOpen}
         source={source}
+        navigationHeader={navigationHeader}
         onOpenSettings={() => setSettingsOpen(true)}
       />
       {source.capabilities.persistenceControls && (

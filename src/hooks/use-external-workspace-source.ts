@@ -1,76 +1,114 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { nanoid } from 'nanoid';
-import useSWR from 'swr';
+import useSWR, { useSWRConfig } from 'swr';
 import type { IExternalTerminalTarget, IPaneNode, ITab, IWorkspace } from '@/types/terminal';
 import type {
   ICreatedExternalWorkspaceTab,
   IExternalWorkspace,
   IExternalWorkspaceSource,
 } from '@/types/external-workspace';
-import type { IExternalServerInventory } from '@/types/external-server';
+import type {
+  IExternalServer,
+  IExternalServerInventory,
+  IRegisterExternalServer,
+} from '@/types/external-server';
 import type { IWorkspaceChromeSourceAdapter } from '@/types/workspace-chrome';
 import { externalWorkspaceChromeCapabilities } from '@/types/workspace-chrome';
 
 const endpoint = '/api/cli/external-servers';
 const refreshInterval = 5000;
+const workspaceEndpoint = (serverId: string) =>
+  `${endpoint}/${encodeURIComponent(serverId)}/workspaces`;
 const chromeId = (serverId: string, resourceId: string) =>
   `${encodeURIComponent(serverId)}:${resourceId}`;
 const requestStorageKey = (serverId: string, workspaceId: string, sessionCreated: string) =>
   `purplemux-external-tab-request:${serverId}:${workspaceId}:${sessionCreated}`;
 
-interface IExternalWorkspaceChromeState {
-  source: IWorkspaceChromeSourceAdapter;
+export interface IExternalServerControls {
+  servers: IExternalServerInventory[];
+  selectedServerId: string | null;
+  isLoading: boolean;
+  isMutating: boolean;
+  error: string | null;
+  selectServer: (serverId: string) => void;
+  registerServer: (input: IRegisterExternalServer) => Promise<boolean>;
+  unregisterServer: () => Promise<boolean>;
 }
 
-const readSources = async (): Promise<IExternalWorkspaceSource[]> => {
-  const registrationsResponse = await fetch(endpoint);
-  if (!registrationsResponse.ok) throw new Error('Unable to load external tmux servers.');
-  const { servers } = await registrationsResponse.json() as { servers: IExternalServerInventory[] };
-  return Promise.all(servers.map(async (server) => {
-    const response = await fetch(`${endpoint}/${encodeURIComponent(server.id)}/workspaces`);
-    if (!response.ok) throw new Error(`Unable to load external workspaces from ${server.name}.`);
-    return response.json() as Promise<IExternalWorkspaceSource>;
-  }));
+interface IExternalWorkspaceChromeState {
+  source: IWorkspaceChromeSourceAdapter;
+  controls: IExternalServerControls;
+  emptyMessage: string;
+}
+
+const readRegistrations = async (): Promise<IExternalServerInventory[]> => {
+  const response = await fetch(endpoint);
+  if (!response.ok) throw new Error('Unable to load external tmux servers.');
+  const { servers } = await response.json() as { servers: IExternalServerInventory[] };
+  return servers;
+};
+
+const readSource = async (serverId: string): Promise<IExternalWorkspaceSource> => {
+  const response = await fetch(workspaceEndpoint(serverId));
+  if (!response.ok) throw new Error('Unable to load external workspaces from the selected server.');
+  return response.json() as Promise<IExternalWorkspaceSource>;
 };
 
 export default function useExternalWorkspaceSource(): IExternalWorkspaceChromeState {
-  const { data = [], error, isLoading, isValidating, mutate } = useSWR(
-    'external-workspace-chrome',
-    readSources,
+  const { mutate: mutateCache } = useSWRConfig();
+  const {
+    data: registrationData,
+    error: registrationsError,
+    isLoading: registrationsLoading,
+    mutate: mutateRegistrations,
+  } = useSWR('external-server-registrations', readRegistrations, { refreshInterval });
+  const servers = useMemo(() => registrationData ?? [], [registrationData]);
+  const [selectedServerPreference, setSelectedServerPreference] = useState<string | null>(null);
+  const selectedServerId = selectedServerPreference
+    && servers.some((server) => server.id === selectedServerPreference)
+    ? selectedServerPreference
+    : servers[0]?.id ?? null;
+  const selectedServerIdRef = useRef<string | null>(selectedServerId);
+  selectedServerIdRef.current = selectedServerId;
+  const selectedServer = servers.find((server) => server.id === selectedServerId) ?? null;
+  const {
+    data: externalSource,
+    error: sourceError,
+    isLoading: sourceLoading,
+    mutate: mutateSource,
+  } = useSWR(
+    selectedServerId ? workspaceEndpoint(selectedServerId) : null,
+    () => readSource(selectedServerId!),
     { refreshInterval },
   );
   const [selectedWorkspaceId, setSelectedWorkspaceId] = useState<string | null>(null);
   const [selectedTabId, setSelectedTabId] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
   const [mutationError, setMutationError] = useState<string | null>(null);
+  const [controlsBusy, setControlsBusy] = useState(false);
+  const [controlsError, setControlsError] = useState<string | null>(null);
   const [optimistic, setOptimistic] = useState<ICreatedExternalWorkspaceTab | null>(null);
   const requestIds = useRef(new Map<string, string>());
 
   useEffect(() => {
-    if (!optimistic) return;
-    const confirmed = data.some((externalSource) =>
-      externalSource.serverId === optimistic.externalTerminalTarget.serverId
+    if (!optimistic || !externalSource) return;
+    const confirmed = externalSource.serverId === optimistic.externalTerminalTarget.serverId
       && externalSource.workspaces.some((workspace) =>
         workspace.id === optimistic.workspaceId
-        && workspace.tabs.some((tab) => tab.id === optimistic.tabId)));
+        && workspace.tabs.some((tab) => tab.id === optimistic.tabId));
     if (confirmed) setOptimistic((current) => current === optimistic ? null : current);
-  }, [data, optimistic]);
+  }, [externalSource, optimistic]);
 
   const model = useMemo(() => {
     const workspaces: IWorkspace[] = [];
     const workspaceLayouts: Record<string, IPaneNode[]> = {};
     const targets = new Map<string, IExternalTerminalTarget>();
     const rawWorkspaces = new Map<string, { serverId: string; workspace: IExternalWorkspace }>();
-    const multipleSources = data.length > 1;
 
-    for (const externalSource of data) {
+    if (externalSource) {
       for (const workspace of externalSource.workspaces) {
         const workspaceId = chromeId(externalSource.serverId, workspace.id);
-        workspaces.push({
-          id: workspaceId,
-          name: multipleSources ? `${externalSource.name} / ${workspace.name}` : workspace.name,
-          directories: [],
-        });
+        workspaces.push({ id: workspaceId, name: workspace.name, directories: [] });
         rawWorkspaces.set(workspaceId, { serverId: externalSource.serverId, workspace });
         const tabs = workspace.tabs.map<ITab>((tab) => {
           const id = chromeId(externalSource.serverId, tab.id);
@@ -96,7 +134,7 @@ export default function useExternalWorkspaceSource(): IExternalWorkspaceChromeSt
       }
     }
     return { workspaces, workspaceLayouts, targets, rawWorkspaces };
-  }, [data, optimistic, selectedTabId]);
+  }, [externalSource, optimistic, selectedTabId]);
 
   const workspaceForSelectedTab = selectedTabId
     ? model.workspaces.find((workspace) =>
@@ -115,6 +153,16 @@ export default function useExternalWorkspaceSource(): IExternalWorkspaceChromeSt
   const effectiveTabId = selectedTabId && activePane?.tabs.some((tab) => tab.id === selectedTabId)
     ? selectedTabId
     : activePane?.activeTabId ?? activePane?.tabs[0]?.id ?? null;
+
+  const selectServer = useCallback((serverId: string) => {
+    selectedServerIdRef.current = serverId;
+    setOptimistic(null);
+    setSelectedWorkspaceId(null);
+    setSelectedTabId(null);
+    setMutationError(null);
+    setControlsError(null);
+    setSelectedServerPreference(serverId);
+  }, []);
 
   const selectWorkspace = useCallback((workspaceId: string) => {
     const pane = model.workspaceLayouts[workspaceId]?.[0];
@@ -167,7 +215,7 @@ export default function useExternalWorkspaceSource(): IExternalWorkspaceChromeSt
       setOptimistic(created);
       setSelectedWorkspaceId(workspaceId);
       setSelectedTabId(id);
-      void mutate().catch(() => {});
+      void mutateSource().catch(() => {});
       return { id, sessionName: created.workspaceId, name: created.tabId, order: Number.MAX_SAFE_INTEGER };
     } catch (createError) {
       setMutationError(createError instanceof Error ? createError.message : 'Unable to create external tab.');
@@ -175,12 +223,74 @@ export default function useExternalWorkspaceSource(): IExternalWorkspaceChromeSt
     } finally {
       setCreating(false);
     }
-  }, [model.rawWorkspaces, mutate]);
+  }, [model.rawWorkspaces, mutateSource]);
 
-  const unavailable = data.find((externalSource) => !externalSource.exists);
+  const registerServer = useCallback(async (input: IRegisterExternalServer): Promise<boolean> => {
+    setControlsBusy(true);
+    setControlsError(null);
+    try {
+      const response = await fetch(endpoint, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(input),
+      });
+      const body = await response.json();
+      if (!response.ok) throw new Error(body.error || 'Unable to register external tmux server.');
+      const registered = body as IExternalServer;
+      await mutateRegistrations((current = []) => [
+        ...current.filter((server) => server.id !== registered.id),
+        { ...registered, exists: true, sessions: [] },
+      ], { revalidate: false });
+      selectServer(registered.id);
+      void mutateRegistrations().catch(() => {});
+      return true;
+    } catch (registerError) {
+      setControlsError(registerError instanceof Error
+        ? registerError.message : 'Unable to register external tmux server.');
+      return false;
+    } finally {
+      setControlsBusy(false);
+    }
+  }, [mutateRegistrations, selectServer]);
+
+  const unregisterServer = useCallback(async (): Promise<boolean> => {
+    if (!selectedServerId) return false;
+    const serverId = selectedServerId;
+    setControlsBusy(true);
+    setControlsError(null);
+    try {
+      const response = await fetch(`${endpoint}/${encodeURIComponent(serverId)}`, { method: 'DELETE' });
+      const body = await response.json();
+      if (!response.ok && response.status !== 404) {
+        throw new Error(body.error || 'Unable to unregister external tmux server.');
+      }
+      if (selectedServerIdRef.current === serverId) {
+        setSelectedWorkspaceId(null);
+        setSelectedTabId(null);
+        setOptimistic(null);
+      }
+      await mutateCache(workspaceEndpoint(serverId), undefined, { revalidate: false });
+      await mutateRegistrations(
+        (current = []) => current.filter((server) => server.id !== serverId),
+        { revalidate: false },
+      );
+      setSelectedServerPreference((current) => current === serverId ? null : current);
+      void mutateRegistrations().catch(() => {});
+      return true;
+    } catch (unregisterError) {
+      setControlsError(unregisterError instanceof Error
+        ? unregisterError.message : 'Unable to unregister external tmux server.');
+      return false;
+    } finally {
+      setControlsBusy(false);
+    }
+  }, [mutateCache, mutateRegistrations, selectedServerId]);
+
+  const sourceBusy = (!registrationData && registrationsLoading)
+    || (!!selectedServerId && !externalSource && sourceLoading);
   const source: IWorkspaceChromeSourceAdapter = {
     kind: 'external',
-    label: data.length === 1 ? `External tmux · ${data[0].name}` : 'External tmux',
+    label: selectedServer ? `External tmux · ${selectedServer.name}` : 'External tmux',
     workspaces: model.workspaces,
     groups: [],
     workspaceLayouts: model.workspaceLayouts,
@@ -191,17 +301,44 @@ export default function useExternalWorkspaceSource(): IExternalWorkspaceChromeSt
     activePaneId,
     activeTabId: effectiveTabId,
     isCreatingTab: creating,
-    isLoading: isLoading || isValidating,
+    isLoading: sourceBusy,
     error: mutationError
-      ?? (error instanceof Error ? error.message : null)
-      ?? unavailable?.unavailableReason
+      ?? (registrationsError instanceof Error ? registrationsError.message : null)
+      ?? (sourceError instanceof Error ? sourceError.message : null)
+      ?? externalSource?.unavailableReason
       ?? null,
     capabilities: externalWorkspaceChromeCapabilities,
     selectWorkspace,
     selectTab,
     createTab,
-    refresh: () => { void mutate(); },
+    refresh: () => {
+      void mutateRegistrations();
+      if (selectedServerId) void mutateSource();
+    },
   };
 
-  return { source };
+  const emptyMessage = sourceBusy
+    ? 'Loading external workspaces…'
+    : servers.length === 0
+      ? 'No external tmux servers are registered.'
+      : externalSource && !externalSource.exists
+        ? externalSource.unavailableReason ?? 'The selected external tmux server is unavailable.'
+        : externalSource?.workspaces.length === 0
+          ? 'The selected external tmux server has no sessions.'
+          : 'No external windows are available.';
+
+  return {
+    source,
+    controls: {
+      servers,
+      selectedServerId,
+      isLoading: !registrationData && registrationsLoading,
+      isMutating: controlsBusy,
+      error: controlsError,
+      selectServer,
+      registerServer,
+      unregisterServer,
+    },
+    emptyMessage,
+  };
 }

@@ -1,10 +1,10 @@
 import Head from 'next/head';
 import dynamic from 'next/dynamic';
 import type { GetServerSideProps } from 'next';
-import type { ReactElement, ReactNode } from 'react';
 import { AlertTriangle } from 'lucide-react';
 import PaneTabBar from '@/components/features/workspace/pane-tab-bar';
 import MobileTabHeader from '@/components/features/mobile/mobile-tab-header';
+import ExternalServerControls from '@/components/features/workspace/external-server-controls';
 import WorkspaceChromeShell from '@/components/layout/workspace-chrome-shell';
 import { useWorkspaceChromeSource } from '@/components/layout/workspace-chrome-context';
 import useExternalWorkspaceSource from '@/hooks/use-external-workspace-source';
@@ -23,7 +23,7 @@ const EmptySurface = ({ message }: { message: string }) => (
   </div>
 );
 
-const ExternalWorkspaceContent = () => {
+const ExternalWorkspaceContent = ({ emptyMessage }: { emptyMessage: string }) => {
   const source = useWorkspaceChromeSource();
   const isMobile = useIsMobile();
   const activePane = source.activeWorkspaceId && source.activePaneId
@@ -95,33 +95,25 @@ const ExternalWorkspaceContent = () => {
           className="h-full min-h-0 flex-1 rounded-none border-0"
         />
       ) : (
-        <EmptySurface message={source.isLoading ? 'Loading external workspaces…' : 'No external windows are available.'} />
+        <EmptySurface message={emptyMessage} />
       )}
     </main>
   );
 };
 
-const ExternalWorkspaceChromeLayout = ({ children }: { children: ReactNode }) => {
-  const { source } = useExternalWorkspaceSource();
+export const ExternalWorkspaceChromePage = () => {
+  const { source, controls, emptyMessage } = useExternalWorkspaceSource();
   return (
-    <WorkspaceChromeShell source={source}>
-      {children}
+    <WorkspaceChromeShell
+      source={source}
+      navigationHeader={<ExternalServerControls controls={controls} />}
+    >
+      <ExternalWorkspaceContent emptyMessage={emptyMessage} />
     </WorkspaceChromeShell>
   );
 };
 
-export const ExternalWorkspaceChromePage = () => (
-  <ExternalWorkspaceChromeLayout>
-    <ExternalWorkspaceContent />
-  </ExternalWorkspaceChromeLayout>
-);
-
-const ExternalServersPage = () => <ExternalWorkspaceContent />;
-ExternalServersPage.getLayout = (page: ReactElement) => (
-  <ExternalWorkspaceChromeLayout>{page}</ExternalWorkspaceChromeLayout>
-);
-
-export default ExternalServersPage;
+export default ExternalWorkspaceChromePage;
 
 export const getServerSideProps: GetServerSideProps = (context) => requireAuth(context,
   async () => ({ props: { messages: await loadMessagesServer() } }), { skipPreflight: true });
