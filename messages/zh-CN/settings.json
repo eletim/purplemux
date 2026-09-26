@@ -53,8 +53,8 @@
     "themeDescription": "选择各模式的终端配色主题。",
     "keyBar": "快捷键栏",
     "keyBarDescription": "在终端下方显示屏幕按键栏（Tab、Esc、Ctrl、方向键），在触控设备上很方便。",
-    "promptPrefix": "提示符复制前缀",
-    "promptPrefixDescription": "以此文本开头的行会显示复制按钮。留空可禁用提示符复制。",
+    "promptPrefix": "提示符标记前缀",
+    "promptPrefixDescription": "以此文本开头的行会显示提示符标记。留空可禁用提示符标记。",
     "keyBarOptions": {
       "auto": "自动",
       "always": "始终",

@@ -53,8 +53,8 @@
     "themeDescription": "モードごとのターミナルカラーテーマを選択します。",
     "keyBar": "ショートカットキーバー",
     "keyBarDescription": "ターミナルの下に画面キーバー（Tab、Esc、Ctrl、矢印）を表示します。タッチデバイスで便利です。",
-    "promptPrefix": "プロンプトコピーのプレフィックス",
-    "promptPrefixDescription": "この文字列で始まる行にコピーボタンを表示します。空欄にすると無効になります。",
+    "promptPrefix": "プロンプトマーカーのプレフィックス",
+    "promptPrefixDescription": "この文字列で始まる行にプロンプトマーカーを表示します。空欄にすると無効になります。",
     "keyBarOptions": {
       "auto": "自動",
       "always": "常に表示",

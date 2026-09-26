@@ -53,8 +53,8 @@
     "themeDescription": "Her mod için terminal renk temalarını seçin.",
     "keyBar": "Kısayol Tuş Çubuğu",
     "keyBarDescription": "Terminalin altında ekran tuş çubuğu (Tab, Esc, Ctrl, oklar) gösterir — dokunmatik cihazlarda kullanışlıdır.",
-    "promptPrefix": "İstem kopyalama öneki",
-    "promptPrefixDescription": "Bu metinle başlayan satırlarda kopyalama düğmesi gösterilir. Devre dışı bırakmak için boş bırakın.",
+    "promptPrefix": "İstem işareti öneki",
+    "promptPrefixDescription": "Bu metinle başlayan satırlarda istem işareti gösterilir. Devre dışı bırakmak için boş bırakın.",
     "keyBarOptions": {
       "auto": "Otomatik",
       "always": "Her zaman",

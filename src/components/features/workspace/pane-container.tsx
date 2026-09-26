@@ -437,7 +437,7 @@ const PaneContainer = memo(({ paneId, paneNumber }: IPaneContainerProps) => {
   }, [normalizeTerminalSize]);
 
   const { terminalRef, write, clear, reset, fit, focus, isReady, getBufferText } = useTerminal({
-    enablePromptCopy: true,
+    enablePromptMarkers: true,
     promptPrefix,
     theme: terminalTheme.colors,
     fontSize: (TERMINAL_FONT_SIZES[configFontSize] ?? TERMINAL_FONT_SIZES.normal)[isAgentPanel ? 'claudeCode' : 'normal'],

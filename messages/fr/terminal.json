@@ -89,7 +89,6 @@
   "copyPaneCaptureFailed": "Impossible de charger la sortie du terminal",
   "copyPaneCopyAll": "Tout copier",
   "copyPaneSuccess": "Copié dans le presse-papiers",
-  "copyPromptBlockLabel": "Copier la commande et la sortie",
   "copyPaneCopyFailed": "Échec de la copie",
   "codexNotInstalled": "Install Codex CLI: npm i -g @openai/codex or brew install --cask codex",
   "codexHookInstallFailed": "Codex hook installation failed. State detection may be inaccurate.",
