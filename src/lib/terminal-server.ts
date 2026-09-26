@@ -34,6 +34,7 @@ const HEARTBEAT_INTERVAL = 30_000;
 const HEARTBEAT_TIMEOUT = 90_000;
 const BACKPRESSURE_HIGH = 1024 * 1024;
 const BACKPRESSURE_LOW = 256 * 1024;
+const BACKPRESSURE_POLL_INTERVAL_MS = 50;
 const THROTTLE_WINDOW_MS = 500;
 const THROTTLE_FLUSH_INTERVAL_MS = 250;
 const EXTERNAL_SCROLLBACK_LINES = 5000;
@@ -52,6 +53,8 @@ interface IActiveConnection {
   detaching: boolean;
   disposables: pty.IDisposable[];
   backpressurePaused: boolean;
+  backpressureTimer: ReturnType<typeof setInterval> | null;
+  externalQueuePaused: boolean;
   capturePaused: boolean;
   currentCols: number;
   currentRows: number;
@@ -67,6 +70,15 @@ const globalStore = globalThis as unknown as {
 
 const connections = globalStore.__purplemux_terminal_connections ??= new Map<WebSocket, IActiveConnection>();
 const terminalOutputTimestamps = globalStore.__purplemux_terminal_output_ts ??= new Map<string, number>();
+
+const clearBackpressureState = (conn: IActiveConnection): void => {
+  if (conn.backpressureTimer) {
+    clearInterval(conn.backpressureTimer);
+    conn.backpressureTimer = null;
+  }
+  conn.backpressurePaused = false;
+  conn.externalQueuePaused = false;
+};
 
 export const getLastTerminalOutput = (sessionName: string): number | undefined =>
   terminalOutputTimestamps.get(sessionName);
@@ -95,6 +107,7 @@ const cleanup = (conn: IActiveConnection, sessionExited = false) => {
   terminalOutputTimestamps.delete(conn.sessionName);
 
   clearInterval(conn.heartbeatTimer);
+  clearBackpressureState(conn);
   if (conn.throttleInterval) {
     clearInterval(conn.throttleInterval);
     conn.throttleInterval = null;
@@ -188,6 +201,7 @@ export const gracefulShutdown = (): Promise<void> => {
       terminalOutputTimestamps.delete(conn.sessionName);
 
       clearInterval(conn.heartbeatTimer);
+      clearBackpressureState(conn);
       if (conn.throttleInterval) {
         clearInterval(conn.throttleInterval);
         conn.throttleInterval = null;
@@ -617,6 +631,8 @@ export const handleConnection = async (ws: WebSocket, request: IncomingMessage, 
     detaching: false,
     disposables: [],
     backpressurePaused: false,
+    backpressureTimer: null,
+    externalQueuePaused: false,
     capturePaused: false,
     currentCols,
     currentRows,
@@ -630,7 +646,34 @@ export const handleConnection = async (ws: WebSocket, request: IncomingMessage, 
   const ptyPid = ptyProcess.pid;
   let externalOutputQueue = Promise.resolve();
   let externalQueuedBytes = 0;
-  let externalQueuePaused = false;
+
+  const resumePtyIfOutputReady = () => {
+    if (!conn.cleaned && !conn.detaching && !conn.backpressurePaused && !conn.externalQueuePaused) {
+      ptyProcess!.resume();
+    }
+  };
+
+  const checkWebSocketBackpressure = () => {
+    if (!conn.backpressurePaused || conn.cleaned || ws.readyState !== WebSocket.OPEN) {
+      if (conn.backpressureTimer) {
+        clearInterval(conn.backpressureTimer);
+        conn.backpressureTimer = null;
+      }
+      return;
+    }
+    if (ws.bufferedAmount >= BACKPRESSURE_LOW) return;
+    conn.backpressurePaused = false;
+    if (conn.backpressureTimer) {
+      clearInterval(conn.backpressureTimer);
+      conn.backpressureTimer = null;
+    }
+    resumePtyIfOutputReady();
+  };
+
+  const startBackpressurePolling = () => {
+    if (conn.backpressureTimer) return;
+    conn.backpressureTimer = setInterval(checkWebSocketBackpressure, BACKPRESSURE_POLL_INTERVAL_MS);
+  };
 
   const sendStdout = (data: string) => {
     ws.send(encodeStdout(data));
@@ -638,17 +681,17 @@ export const handleConnection = async (ws: WebSocket, request: IncomingMessage, 
     if (ws.bufferedAmount > BACKPRESSURE_HIGH && !conn.backpressurePaused) {
       conn.backpressurePaused = true;
       ptyProcess!.pause();
+      startBackpressurePolling();
     } else if (ws.bufferedAmount < BACKPRESSURE_LOW && conn.backpressurePaused) {
-      conn.backpressurePaused = false;
-      if (!externalQueuePaused) ptyProcess!.resume();
+      checkWebSocketBackpressure();
     }
   };
 
   const sendCheckedStdout = (data: string) => {
     if (connectionKind === 'managed' || !externalWindowId) return sendStdout(data);
     externalQueuedBytes += Buffer.byteLength(data);
-    if (externalQueuedBytes > BACKPRESSURE_HIGH && !externalQueuePaused) {
-      externalQueuePaused = true;
+    if (externalQueuedBytes > BACKPRESSURE_HIGH && !conn.externalQueuePaused) {
+      conn.externalQueuePaused = true;
       ptyProcess.pause();
     }
     externalOutputQueue = externalOutputQueue.then(async () => {
@@ -666,9 +709,9 @@ export const handleConnection = async (ws: WebSocket, request: IncomingMessage, 
       cleanup(conn);
     }).finally(() => {
       externalQueuedBytes -= Buffer.byteLength(data);
-      if (externalQueuePaused && externalQueuedBytes < BACKPRESSURE_LOW && !conn.cleaned) {
-        externalQueuePaused = false;
-        if (!conn.backpressurePaused) ptyProcess.resume();
+      if (conn.externalQueuePaused && externalQueuedBytes < BACKPRESSURE_LOW && !conn.cleaned) {
+        conn.externalQueuePaused = false;
+        resumePtyIfOutputReady();
       }
     });
   };
