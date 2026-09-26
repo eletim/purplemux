@@ -486,3 +486,17 @@ export const resolveExternalServerWindow = async (
   await assertExternalServerSocketIdentity(server, signal);
   return externalServerTmuxTarget(server);
 };
+
+export const captureExternalServerWindow = async (
+  server: IExternalServer,
+  sessionId: string,
+  windowId: string,
+  signal?: AbortSignal,
+): Promise<string> => {
+  const backend = await resolveExternalServerWindow(server, sessionId, windowId, signal);
+  const { stdout } = await execTmux(backend, [
+    'capture-pane', '-p', '-t', `${sessionId}:${windowId}`,
+  ], { timeout: 5000, signal });
+  await assertExternalServerSocketIdentity(server, signal);
+  return stdout;
+};

@@ -17,8 +17,6 @@ const chromeId = (serverId: string, resourceId: string) =>
 
 interface IExternalWorkspaceChromeState {
   source: IWorkspaceChromeSourceAdapter;
-  activeTarget: IExternalTerminalTarget | null;
-  creating: boolean;
 }
 
 const readSources = async (): Promise<IExternalWorkspaceSource[]> => {
@@ -145,10 +143,15 @@ export default function useExternalWorkspaceSource(): IExternalWorkspaceChromeSt
     kind: 'external',
     label: data.length === 1 ? `External tmux · ${data[0].name}` : 'External tmux',
     workspaces: model.workspaces,
+    groups: [],
     workspaceLayouts: model.workspaceLayouts,
+    terminalTargets: Object.fromEntries([...model.targets].map(([tabId, target]) => [
+      tabId, { kind: 'external' as const, ...target },
+    ])),
     activeWorkspaceId,
     activePaneId,
     activeTabId: effectiveTabId,
+    isCreatingTab: creating,
     isLoading: isLoading || isValidating,
     error: mutationError
       ?? (error instanceof Error ? error.message : null)
@@ -161,9 +164,5 @@ export default function useExternalWorkspaceSource(): IExternalWorkspaceChromeSt
     refresh: () => { void mutate(); },
   };
 
-  return {
-    source,
-    activeTarget: effectiveTabId ? model.targets.get(effectiveTabId) ?? null : null,
-    creating,
-  };
+  return { source };
 }

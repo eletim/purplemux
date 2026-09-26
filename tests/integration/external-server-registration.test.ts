@@ -3,7 +3,7 @@ import fs from 'fs/promises';
 import os from 'os';
 import path from 'path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { assertExternalServerSocketIdentity, discoverExternalServer,
+import { assertExternalServerSocketIdentity, captureExternalServerWindow, discoverExternalServer,
   externalServerTmuxTarget, resolveExternalServerWindow } from '@/lib/external-server-tmux';
 import { execTmux } from '@/lib/tmux-target';
 
@@ -322,5 +322,18 @@ describe('external tmux server registrations', () => {
       .rejects.toThrow('window is unavailable');
     await expect(resolveExternalServerWindow(server, 'external', '@0'))
       .rejects.toThrow('Invalid external tmux window target');
+  });
+
+  it('captures only an exact external stable target', async () => {
+    vi.spyOn(os, 'homedir').mockReturnValue(directory);
+    vi.resetModules();
+    const store = await import('@/lib/external-server-store');
+    const server = await store.registerExternalServer({ name: 'external', socketPath: socket });
+    tmux('respawn-pane', '-k', '-t', '$0:@0', 'printf EXTERNAL_COPY_TARGET; sleep 300');
+
+    await vi.waitFor(async () => expect(await captureExternalServerWindow(server, '$0', '@0'))
+      .toContain('EXTERNAL_COPY_TARGET'));
+    await expect(captureExternalServerWindow(server, '$0', '@999'))
+      .rejects.toThrow('window is unavailable');
   });
 });

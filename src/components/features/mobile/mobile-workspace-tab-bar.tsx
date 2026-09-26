@@ -1,23 +1,16 @@
 import { useRef, useEffect, useMemo } from 'react';
-import { Globe, GitCompareArrows, History } from 'lucide-react';
+import { Globe, GitCompareArrows, History, Plus } from 'lucide-react';
 import { useTranslations } from 'next-intl';
 import useTabStore, { selectTabDisplayStatus } from '@/hooks/use-tab-store';
 import useUiMode from '@/hooks/use-ui-mode';
 import { cn } from '@/lib/utils';
 import ProcessIcon from '@/components/icons/process-icon';
 import AgentStatusGlyph from '@/components/features/workspace/agent-status-glyph';
-import type { IWorkspace, IPaneNode, TPanelType } from '@/types/terminal';
-import type { IWorkspaceChromeCapabilities } from '@/types/workspace-chrome';
-import { managedWorkspaceChromeCapabilities } from '@/types/workspace-chrome';
+import type { TPanelType } from '@/types/terminal';
+import type { IWorkspaceChromeSourceAdapter } from '@/types/workspace-chrome';
 
 interface IMobileWorkspaceTabBarProps {
-  workspaces: IWorkspace[];
-  activeWorkspaceId: string | null;
-  workspaceLayouts: Record<string, IPaneNode[]>;
-  selectedPaneId: string | null;
-  selectedTabId: string | null;
-  onSelect: (workspaceId: string, paneId: string, tabId: string) => void;
-  capabilities?: IWorkspaceChromeCapabilities;
+  source: IWorkspaceChromeSourceAdapter;
 }
 
 interface ITabDot {
@@ -30,14 +23,12 @@ interface ITabDot {
 }
 
 const MobileWorkspaceTabBar = ({
-  workspaces,
-  activeWorkspaceId,
-  workspaceLayouts,
-  selectedPaneId,
-  selectedTabId,
-  onSelect,
-  capabilities = managedWorkspaceChromeCapabilities,
+  source,
 }: IMobileWorkspaceTabBarProps) => {
+  const {
+    workspaces, activeWorkspaceId, workspaceLayouts,
+    activePaneId: selectedPaneId, activeTabId: selectedTabId, capabilities,
+  } = source;
   const t = useTranslations('terminal');
   const activeRef = useRef<HTMLButtonElement>(null);
   const statusTabs = useTabStore((s) => s.tabs);
@@ -77,7 +68,11 @@ const MobileWorkspaceTabBar = ({
   }, [selectedTabId]);
 
   const totalTabs = items.filter((i) => i !== 'divider').length;
-  if (totalTabs === 0) return null;
+  const activeWorkspaceHasTabs = activeWorkspaceId
+    ? (workspaceLayouts[activeWorkspaceId] ?? []).some((pane) => pane.tabs.length > 0)
+    : false;
+  const showCreateTab = capabilities.createTab && !!activeWorkspaceId && !activeWorkspaceHasTabs;
+  if (totalTabs === 0 && !showCreateTab) return null;
 
   return (
     <div className="shrink-0 border-t bg-background" data-ui-chrome="tab-bar">
@@ -128,7 +123,7 @@ const MobileWorkspaceTabBar = ({
               key={item.tabId}
               ref={isActive ? activeRef : undefined}
               className="flex h-8 w-8 shrink-0 items-center justify-center"
-              onClick={() => onSelect(item.workspaceId, item.paneId, item.tabId)}
+              onClick={() => source.selectTab(item.workspaceId, item.paneId, item.tabId)}
               aria-current={isActive ? 'true' : undefined}
               aria-label={`${item.workspaceName}, ${tabName}, ${statusLabel}`}
               data-ui-selection="pill"
@@ -154,6 +149,16 @@ const MobileWorkspaceTabBar = ({
             </button>
           );
         })}
+        {showCreateTab && (
+          <button
+            className="ml-1 flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-muted-foreground hover:bg-accent hover:text-foreground"
+            onClick={() => { if (activeWorkspaceId) void source.createTab?.(activeWorkspaceId); }}
+            disabled={source.isCreatingTab}
+            aria-label={t('newTabLabel')}
+          >
+            <Plus className="h-3.5 w-3.5" />
+          </button>
+        )}
       </div>
       <div style={{ height: 'env(safe-area-inset-bottom)' }} />
     </div>

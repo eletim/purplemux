@@ -18,11 +18,14 @@ import useTabStore, { selectGlobalStatus } from '@/hooks/use-tab-store';
 import AppLogo from '@/components/layout/app-logo';
 import { useNotificationCount } from '@/components/features/workspace/notification-sheet';
 import EditWorkspaceDialog from '@/components/features/workspace/edit-workspace-dialog';
+import type { IWorkspaceChromeCapabilities } from '@/types/workspace-chrome';
+import { managedWorkspaceChromeCapabilities } from '@/types/workspace-chrome';
 
 interface IAppHeaderProps {
   onMenuOpen?: () => void;
   workspaceId?: string;
   workspaceName?: string;
+  capabilities?: IWorkspaceChromeCapabilities;
 }
 
 const handleLogout = async () => {
@@ -30,7 +33,12 @@ const handleLogout = async () => {
   window.location.href = '/login';
 };
 
-const AppHeader = ({ onMenuOpen, workspaceId, workspaceName }: IAppHeaderProps) => {
+const AppHeader = ({
+  onMenuOpen,
+  workspaceId,
+  workspaceName,
+  capabilities = managedWorkspaceChromeCapabilities,
+}: IAppHeaderProps) => {
   const t = useTranslations('header');
   const tc = useTranslations('common');
   const hasBusy = useTabStore((s) => selectGlobalStatus(s.tabs).busyCount > 0);
@@ -52,18 +60,18 @@ const AppHeader = ({ onMenuOpen, workspaceId, workspaceName }: IAppHeaderProps) 
             aria-label={t('openMenu')}
           >
             <Menu className="h-5 w-5" />
-            {sessionsBadge > 0 && (
+            {capabilities.agentControls && sessionsBadge > 0 && (
               <span className="absolute -right-0.5 top-0.5 flex h-3.5 min-w-3.5 items-center justify-center rounded bg-[var(--ui-coral)] px-0.5 text-[9px] font-medium leading-none text-white">
                 {sessionsBadge}
               </span>
             )}
           </button>
         )}
-        <AppLogo shimmer={hasBusy} />
+        <AppLogo shimmer={capabilities.agentControls && hasBusy} />
         {workspaceName && (
           <>
             <span className="text-muted-foreground/40 text-sm">/</span>
-            {workspaceId ? (
+            {workspaceId && capabilities.renameWorkspace ? (
               <button
                 type="button"
                 onClick={() => setEditOpen(true)}
@@ -114,7 +122,7 @@ const AppHeader = ({ onMenuOpen, workspaceId, workspaceName }: IAppHeaderProps) 
           </AlertDialog>
         </div>
       </TooltipProvider>
-      {workspaceId && workspaceName && (
+      {capabilities.renameWorkspace && workspaceId && workspaceName && (
         <EditWorkspaceDialog
           open={editOpen}
           onOpenChange={setEditOpen}

@@ -31,7 +31,7 @@ import {
   AlertDialogTitle,
   AlertDialogTrigger,
 } from '@/components/ui/alert-dialog';
-import type { TPanelType } from '@/types/terminal';
+import type { IExternalTerminalTarget, TPanelType } from '@/types/terminal';
 import type { IWorkspaceChromeCapabilities } from '@/types/workspace-chrome';
 import { managedWorkspaceChromeCapabilities } from '@/types/workspace-chrome';
 
@@ -74,6 +74,7 @@ interface IMobileTabHeaderProps {
   tabId: string;
   tabName: string;
   sessionName: string | null;
+  externalTerminalTarget?: IExternalTerminalTarget | null;
   cwdKey: string | null;
   panelType: TPanelType;
   onSwitchPanelType: (type: TPanelType) => void;
@@ -87,6 +88,7 @@ const MobileTabHeader = ({
   tabId,
   tabName,
   sessionName,
+  externalTerminalTarget,
   cwdKey,
   panelType,
   onSwitchPanelType,
@@ -100,7 +102,10 @@ const MobileTabHeader = ({
   const tt = useTranslations('terminal');
   const [copyOpen, setCopyOpen] = useState(false);
   const [modeDrawerOpen, setModeDrawerOpen] = useState(false);
-  const showCopy = capabilities.terminalCopy && panelType === 'terminal' && !!sessionName;
+  const copyTarget = externalTerminalTarget
+    ? { kind: 'external' as const, ...externalTerminalTarget }
+    : sessionName ? { kind: 'managed' as const, sessionName } : null;
+  const showCopy = capabilities.terminalCopy && panelType === 'terminal' && !!copyTarget;
   const tabEntry = useTabStore((s) => s.tabs[tabId]);
   const gitPhase = useGitStatusStore((state) => state.phase);
   const gitStatus = useGitStatusStore((state) => state.status);
@@ -297,7 +302,7 @@ const MobileTabHeader = ({
       <CopyPaneDrawer
         open={copyOpen}
         onOpenChange={setCopyOpen}
-        sessionName={sessionName}
+        target={copyTarget}
       />
 
       <Drawer open={modeDrawerOpen} onOpenChange={setModeDrawerOpen}>

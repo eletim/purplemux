@@ -35,8 +35,7 @@ import WorkspaceStatusIndicator from '@/components/features/workspace/workspace-
 import SidebarRateLimits from '@/components/layout/sidebar-rate-limits';
 import MobileWorkspaceGroupHeader from '@/components/features/mobile/mobile-workspace-group-header';
 import RenameGroupDialog from '@/components/features/workspace/rename-group-dialog';
-import type { IWorkspaceChromeCapabilities } from '@/types/workspace-chrome';
-import { managedWorkspaceChromeCapabilities } from '@/types/workspace-chrome';
+import type { IWorkspaceChromeSourceAdapter } from '@/types/workspace-chrome';
 
 const WorkspacePortsLabel = ({ workspaceId }: { workspaceId: string }) => {
   const label = useTabStore(
@@ -49,39 +48,26 @@ const WorkspacePortsLabel = ({ workspaceId }: { workspaceId: string }) => {
 interface IMobileNavigationSheetProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  workspaces: IWorkspace[];
-  activeWorkspaceId: string | null;
-  workspaceLayouts: Record<string, IPaneNode[]>;
-  activePaneId: string | null;
-  activeTabId: string | null;
-  onSelectSurface: (workspaceId: string, paneId: string, tabId: string) => void;
-  onCreateWorkspace: () => Promise<void>;
+  source: IWorkspaceChromeSourceAdapter;
   onOpenSettings: () => void;
-  capabilities?: IWorkspaceChromeCapabilities;
-  sourceLabel?: string;
 }
 
 const MobileNavigationSheet = ({
   open,
   onOpenChange,
-  workspaces,
-  activeWorkspaceId,
-  workspaceLayouts,
-  activePaneId,
-  activeTabId,
-  onSelectSurface,
-  onCreateWorkspace,
+  source,
   onOpenSettings,
-  capabilities = managedWorkspaceChromeCapabilities,
-  sourceLabel,
 }: IMobileNavigationSheetProps) => {
+  const {
+    workspaces, groups, activeWorkspaceId, workspaceLayouts,
+    activePaneId, activeTabId, capabilities,
+  } = source;
   const t = useTranslations('mobile');
   const tt = useTranslations('terminal');
   const tc = useTranslations('common');
   const ts = useTranslations('sidebar');
   const router = useRouter();
   const mobileTab = useWorkspaceStore((s) => s.sidebarTab);
-  const groups = useWorkspaceStore((s) => s.groups);
 
   const handleMobileTabChange = useCallback((v: string) => {
     useWorkspaceStore.getState().setSidebarTab(v as 'workspace' | 'sessions');
@@ -212,7 +198,8 @@ const MobileNavigationSheet = ({
               setLongPressTabId(null);
               return;
             }
-            onSelectSurface(workspaceId, pane.id, tab.id);
+            onOpenChange(false);
+            source.selectTab(workspaceId, pane.id, tab.id);
           }}
           onTouchStart={() => handleLongPressStart(tab.id)}
           onTouchEnd={handleLongPressEnd}
@@ -391,7 +378,7 @@ const MobileNavigationSheet = ({
             </TabsList>
           </Tabs> : (
             <span className="min-w-0 flex-1 truncate text-sm font-medium">
-              {sourceLabel ?? 'WORKSPACE'}
+              {source.label ?? 'WORKSPACE'}
             </span>
           )}
         </SheetHeader>
@@ -439,7 +426,10 @@ const MobileNavigationSheet = ({
             <div className="flex items-stretch">
               <button
                 className="flex flex-1 items-center gap-2 px-4 py-3 text-sm text-muted-foreground transition-colors hover:bg-accent"
-                onClick={onCreateWorkspace}
+                onClick={() => {
+                  onOpenChange(false);
+                  void source.createWorkspace?.();
+                }}
               >
                 <Plus size={16} />
                 Workspace

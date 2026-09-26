@@ -31,7 +31,7 @@ vi.mock('next/dynamic', () => ({ default: () => ({ reviewId, windowId, externalT
 import ReviewTerminal from '@/components/features/ext-review/review-terminal';
 import ExtReviewsPage from '@/pages/ext-review';
 import ExtReviewPage from '@/pages/ext-review/[id]';
-import ExternalServersPage from '@/pages/external-server';
+import { ExternalWorkspaceChromePage } from '@/pages/external-server';
 
 class ObservationSocket {
   static OPEN = 1;
@@ -156,6 +156,7 @@ describe('external server browser page', () => {
       tabId: '@9', workspaceId: '$1', sessionCreated: '1750000000',
       externalTerminalTarget: { serverId: 'server-1', sessionId: '$1', windowId: '@9' },
     }, 201);
+    if (url.startsWith('/api/tmux/capture?')) return response({ content: 'captured external pane' });
     if (url.endsWith('/workspaces')) return response(getSource());
     return response({ servers: [{ id: 'server-1', name: 'dev' }] });
   });
@@ -164,11 +165,11 @@ describe('external server browser page', () => {
     vi.stubGlobal('fetch', fetchFor(() => externalSource([
       tab('@2', 'first', 0, true), tab('@4', 'second', 1),
     ])));
-    mount(createElement(ExternalServersPage));
+    mount(createElement(ExternalWorkspaceChromePage));
 
     expect((await screen.findByTestId('external-terminal')).textContent).toBe('server-1:$1:@2');
-    expect(screen.getByRole('navigation', { name: 'Workspace list' }).getAttribute('data-workspace-source')).toBe('external');
-    expect(screen.getByRole('navigation', { name: 'Workspace list' }).textContent).toContain('shells');
+    expect(screen.getByRole('navigation', { name: 'workspaceList' }).getAttribute('data-workspace-source')).toBe('external');
+    expect(screen.getByRole('navigation', { name: 'workspaceList' }).textContent).toContain('shells');
     expect(screen.getByRole('tablist').textContent).toContain('first');
     expect(screen.queryByText(/owned by purplemux/i)).toBeNull();
     expect(screen.queryByText('SESSIONS')).toBeNull();
@@ -181,7 +182,7 @@ describe('external server browser page', () => {
     vi.useFakeTimers();
     let source = externalSource();
     vi.stubGlobal('fetch', fetchFor(() => source));
-    mount(createElement(ExternalServersPage));
+    mount(createElement(ExternalWorkspaceChromePage));
     await act(async () => { await Promise.resolve(); });
 
     source = externalSource([tab('@2', 'first', 0, true), tab('@4', 'second', 1)]);
@@ -198,7 +199,7 @@ describe('external server browser page', () => {
   it('uses the shared + affordance to create in the exact Workspace and selects the returned stable ID', async () => {
     const fetchMock = fetchFor(() => externalSource());
     vi.stubGlobal('fetch', fetchMock);
-    mount(createElement(ExternalServersPage));
+    mount(createElement(ExternalWorkspaceChromePage));
 
     fireEvent.click(await screen.findByRole('button', { name: 'openNewTab' }));
     await waitFor(() => expect(screen.getByTestId('external-terminal').textContent).toBe('server-1:$1:@9'));
@@ -210,14 +211,30 @@ describe('external server browser page', () => {
   it('reuses mobile Workspace/Tab chrome while withholding managed Git, agent, and lifecycle controls', async () => {
     viewport.mobile = true;
     vi.stubGlobal('fetch', fetchFor(() => externalSource()));
-    mount(createElement(ExternalServersPage));
+    mount(createElement(ExternalWorkspaceChromePage));
 
     expect((await screen.findByTestId('external-terminal')).textContent).toBe('server-1:$1:@2');
     expect(document.querySelector('[data-ui-chrome="header"]')).toBeTruthy();
     expect(document.querySelector('[data-ui-chrome="tab-bar"]')).toBeTruthy();
     expect(screen.getByRole('button', { name: 'newTab' })).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'copyPaneLabel' }));
+    await waitFor(() => expect(fetch).toHaveBeenCalledWith(
+      '/api/tmux/capture?externalServerId=server-1&sessionId=%241&windowId=%402',
+    ));
     expect(screen.queryByRole('button', { name: 'Open Git' })).toBeNull();
     expect(screen.queryByRole('button', { name: 'closeTab' })).toBeNull();
     expect(screen.queryByRole('button', { name: 'Select tab mode' })).toBeNull();
+  });
+
+  it('keeps the mobile + affordance available for an empty external Workspace', async () => {
+    viewport.mobile = true;
+    const fetchMock = fetchFor(() => externalSource([]));
+    vi.stubGlobal('fetch', fetchMock);
+    mount(createElement(ExternalWorkspaceChromePage));
+
+    fireEvent.click(await screen.findByRole('button', { name: 'newTabLabel' }));
+    await waitFor(() => expect(screen.getByTestId('external-terminal').textContent).toBe('server-1:$1:@9'));
+    const creation = fetchMock.mock.calls.find(([, init]) => init?.method === 'POST')!;
+    expect(creation[0]).toBe('/api/cli/external-servers/server-1/workspaces/%241/tabs');
   });
 });

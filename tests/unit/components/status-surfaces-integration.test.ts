@@ -15,6 +15,7 @@ import { useLayoutStore } from '@/hooks/use-layout';
 import useSessionHistoryStore from '@/hooks/use-session-history-store';
 import useWorkspaceStore from '@/hooks/use-workspace-store';
 import type { IPaneNode, IWorkspace } from '@/types/terminal';
+import { managedWorkspaceChromeCapabilities } from '@/types/workspace-chrome';
 
 dayjs.extend(relativeTime);
 
@@ -86,6 +87,26 @@ const panes: IPaneNode[] = [{
     { id: 'shell-tab', sessionName: 'shell-session', name: 'Shell One', order: 1, panelType: 'terminal' },
   ],
 }];
+
+const mobileSource = (selectTab: (workspaceId: string, paneId: string, tabId: string) => void) => ({
+  kind: 'managed' as const,
+  workspaces: [workspace],
+  groups: [],
+  workspaceLayouts: { [workspace.id]: panes },
+  terminalTargets: {},
+  activeWorkspaceId: workspace.id,
+  activePaneId: 'pane-1',
+  activeTabId: 'agent-tab',
+  isCreatingTab: false,
+  isLoading: false,
+  error: null,
+  capabilities: managedWorkspaceChromeCapabilities,
+  selectWorkspace: vi.fn(),
+  selectTab,
+  createTab: vi.fn(),
+  createWorkspace: vi.fn(),
+  refresh: vi.fn(),
+});
 
 const NotificationCounts = () => {
   const { busyCount, attentionCount } = useNotificationCount();
@@ -162,14 +183,7 @@ describe('status surface integration', () => {
     });
     const onSelect = vi.fn();
 
-    render(createElement(MobileWorkspaceTabBar, {
-      workspaces: [workspace],
-      activeWorkspaceId: workspace.id,
-      workspaceLayouts: { [workspace.id]: panes },
-      selectedPaneId: 'pane-1',
-      selectedTabId: 'agent-tab',
-      onSelect,
-    }));
+    render(createElement(MobileWorkspaceTabBar, { source: mobileSource(onSelect) }));
 
     const agentButton = screen.getByRole('button', {
       name: 'Workspace One, Agent One, Needs review',
@@ -201,14 +215,7 @@ describe('status surface integration', () => {
       createElement(AgentStatusConnection),
       createElement(NotificationCounts),
       createElement(MobileTerminalPage),
-      createElement(MobileWorkspaceTabBar, {
-        workspaces: [workspace],
-        activeWorkspaceId: workspace.id,
-        workspaceLayouts: { [workspace.id]: panes },
-        selectedPaneId: 'pane-1',
-        selectedTabId: 'agent-tab',
-        onSelect: vi.fn(),
-      }),
+      createElement(MobileWorkspaceTabBar, { source: mobileSource(vi.fn()) }),
     ));
 
     expect(FakeWebSocket.instances).toHaveLength(1);

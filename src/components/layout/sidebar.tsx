@@ -43,9 +43,7 @@ const CheatSheetDialog = dynamic(
   () => import('@/components/features/shortcuts/cheat-sheet-dialog'),
   { ssr: false },
 );
-import { useSelectWorkspace } from '@/hooks/use-sidebar-actions';
 import useSidebarItems from '@/hooks/use-sidebar-items';
-import useWorkspaceLayouts from '@/hooks/use-workspace-layouts';
 import useWebviewStore from '@/hooks/use-webview-store';
 import IconRenderer from '@/components/features/settings/icon-renderer';
 import SidebarRateLimits from '@/components/layout/sidebar-rate-limits';
@@ -61,16 +59,15 @@ const handleLogout = async () => {
   window.location.href = '/login';
 };
 
-const ManagedSidebar = () => {
+const Sidebar = ({ source }: { source: IWorkspaceChromeSourceAdapter }) => {
   const t = useTranslations('sidebar');
   const tc = useTranslations('common');
   const router = useRouter();
-  const workspaces = useWorkspaceStore((s) => s.workspaces);
-  const groups = useWorkspaceStore((s) => s.groups);
-  const activeWorkspaceId = useWorkspaceStore((s) => s.activeWorkspaceId);
-  const collapsed = useWorkspaceStore((s) => s.sidebarCollapsed);
+  const { workspaces, groups, activeWorkspaceId, workspaceLayouts, capabilities } = source;
+  const storedCollapsed = useWorkspaceStore((s) => s.sidebarCollapsed);
+  const collapsed = capabilities.persistenceControls && storedCollapsed;
   const width = useWorkspaceStore((s) => s.sidebarWidth);
-  const isLoading = useWorkspaceStore((s) => s.isLoading);
+  const isLoading = source.isLoading;
   const hasBusy = useTabStore((s) => {
     for (const t of Object.values(s.tabs)) {
       if (t.cliState === 'busy') return true;
@@ -79,10 +76,9 @@ const ManagedSidebar = () => {
   });
   const { attentionCount, busyCount } = useNotificationCount();
   const sessionsBadge = attentionCount + busyCount;
-  const selectWorkspace = useSelectWorkspace();
-  const { items: sidebarItems } = useSidebarItems();
+  const selectWorkspace = source.selectWorkspace;
+  const { items: sidebarItems } = useSidebarItems(capabilities.persistenceControls);
   const activeWebviewId = useWebviewStore((s) => s.activeId);
-  const workspaceLayouts = useWorkspaceLayouts();
   const workspaceTabs = useMemo(() => {
     const map: Record<string, ITab[]> = {};
     for (const [wsId, panes] of Object.entries(workspaceLayouts)) {
@@ -104,16 +100,17 @@ const ManagedSidebar = () => {
   const showShortcuts = useShortcutHints();
 
   useEffect(() => {
-    if (workspaces.length === 0) {
-      useWorkspaceStore.getState().fetchWorkspaces();
+    if (source.kind === 'managed' && workspaces.length === 0) {
+      source.refresh();
     }
-  }, [workspaces.length]);
+  }, [source.kind, workspaces.length]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
+    if (!capabilities.persistenceControls) return undefined;
     const handler = () => setSettingsOpen(true);
     window.addEventListener('open-settings', handler);
     return () => window.removeEventListener('open-settings', handler);
-  }, [setSettingsOpen]);
+  }, [capabilities.persistenceControls, setSettingsOpen]);
 
   const [isCreating, setIsCreating] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<IWorkspace | null>(null);
@@ -176,14 +173,11 @@ const ManagedSidebar = () => {
   const handleCreateWorkspace = useCallback(async () => {
     setIsCreating(true);
     try {
-      const ws = await useWorkspaceStore.getState().createWorkspace('');
-      if (ws) {
-        selectWorkspace(ws.id);
-      }
+      await source.createWorkspace?.();
     } finally {
       setIsCreating(false);
     }
-  }, [selectWorkspace]);
+  }, [source]);
 
   const handleCreateGroup = useCallback(async () => {
     const defaultName = t('defaultGroupName');
@@ -431,11 +425,11 @@ const ManagedSidebar = () => {
     return (
       <div
         key={ws.id}
-        draggable
-        onDragStart={(e) => handleDragStart(e, flatIdx)}
-        onDragEnd={handleDragEnd}
-        onDragOver={(e) => handleWsDragOver(e, flatIdx, ws.groupId ?? null)}
-        onDrop={handleWsDrop}
+        draggable={capabilities.organizeWorkspaces}
+        onDragStart={capabilities.organizeWorkspaces ? (e) => handleDragStart(e, flatIdx) : undefined}
+        onDragEnd={capabilities.organizeWorkspaces ? handleDragEnd : undefined}
+        onDragOver={capabilities.organizeWorkspaces ? (e) => handleWsDragOver(e, flatIdx, ws.groupId ?? null) : undefined}
+        onDrop={capabilities.organizeWorkspaces ? handleWsDrop : undefined}
         style={{
           opacity: fadingOutIds.has(ws.id) ? 0 : undefined,
           transition: 'opacity 150ms ease-out',
@@ -445,14 +439,17 @@ const ManagedSidebar = () => {
       >
         <WorkspaceItem
           workspace={ws}
-          isActive={ws.id === activeWorkspaceId && router.pathname === '/' && !activeWebviewId}
+          isActive={ws.id === activeWorkspaceId && (source.kind === 'external' || (router.pathname === '/' && !activeWebviewId))}
           isDeleting={deletingIds.has(ws.id)}
-          shortcutLabel={flatIdx < 8 ? `⌘${flatIdx + 1}` : flatIdx === workspaces.length - 1 ? '⌘9' : undefined}
-          showShortcut={showShortcuts}
+          shortcutLabel={source.kind === 'managed' ? (flatIdx < 8 ? `⌘${flatIdx + 1}` : flatIdx === workspaces.length - 1 ? '⌘9' : undefined) : undefined}
+          showShortcut={source.kind === 'managed' && showShortcuts}
           tabs={workspaceTabs[ws.id]}
           onSelect={selectWorkspace}
           onRename={handleRename}
           onDelete={handleDeleteRequest}
+          managed={source.kind === 'managed'}
+          canRename={capabilities.renameWorkspace}
+          canDelete={capabilities.deleteWorkspace}
         />
       </div>
     );
@@ -464,8 +461,8 @@ const ManagedSidebar = () => {
         className="flex shrink-0 flex-col overflow-hidden border-r border-sidebar-border bg-sidebar"
         suppressHydrationWarning
         style={{
-          width: isLoading ? 'var(--initial-sb-w, 200px)' : (collapsed ? 0 : width),
-          minWidth: isLoading ? 'var(--initial-sb-mw, 160px)' : (collapsed ? 0 : MIN_WIDTH),
+          width: source.kind === 'external' ? 240 : isLoading ? 'var(--initial-sb-w, 200px)' : (collapsed ? 0 : width),
+          minWidth: source.kind === 'external' ? MIN_WIDTH : isLoading ? 'var(--initial-sb-mw, 160px)' : (collapsed ? 0 : MIN_WIDTH),
           maxWidth: MAX_WIDTH,
           borderRightStyle: collapsed ? 'none' : undefined,
           transition: isDragging ? 'none' : 'width 200ms ease, min-width 200ms ease',
@@ -473,16 +470,29 @@ const ManagedSidebar = () => {
         role="navigation"
         aria-label={t('workspaceList')}
         data-ui-chrome="sidebar"
+        data-workspace-source={source.kind}
       >
         <div
           className="relative z-[60] flex h-12 shrink-0 items-center justify-between border-b border-sidebar-border px-3 pl-traffic-light"
           {...(isElectron ? { style: { WebkitAppRegion: 'drag' } as React.CSSProperties } : {})}
         >
-          <AppLogo shimmer={hasBusy} className="pointer-events-none" />
+          <div className="min-w-0">
+            <AppLogo shimmer={capabilities.agentControls && hasBusy} className="pointer-events-none" />
+            {source.label && <span className="block truncate text-[11px] text-muted-foreground">{source.label}</span>}
+          </div>
           <div
             className="flex items-center gap-0.5"
             {...(isElectron ? { style: { WebkitAppRegion: 'no-drag' } as React.CSSProperties } : {})}
           >
+            {source.kind === 'external' && (
+              <button
+                className="flex h-7 w-7 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-sidebar-accent"
+                onClick={source.refresh}
+                aria-label="Refresh external workspaces"
+              >
+                <RefreshCw className={cn('h-3.5 w-3.5', source.isLoading && 'animate-spin')} />
+              </button>
+            )}
             <AlertDialog>
               <AlertDialogTrigger
                 render={
@@ -511,7 +521,7 @@ const ManagedSidebar = () => {
         </div>
 
         <div className="shrink-0 border-b border-sidebar-border px-2 py-1.5">
-          <Tabs
+          {capabilities.agentControls ? <Tabs
             value={sidebarTab}
             onValueChange={handleSidebarTabChange}
             className="gap-0"
@@ -549,10 +559,10 @@ const ManagedSidebar = () => {
                 )}
               </TabsTrigger>
             </TabsList>
-          </Tabs>
+          </Tabs> : <div className="flex h-7 items-center px-2.5 text-[11px] tracking-wide text-muted-foreground">WORKSPACE</div>}
         </div>
 
-        {sidebarTab === 'workspace' ? (
+        {!capabilities.agentControls || sidebarTab === 'workspace' ? (
           <div
             className="flex-1 overflow-y-auto"
             style={{ scrollbarWidth: 'none' }}
@@ -569,6 +579,7 @@ const ManagedSidebar = () => {
                 </span>
               </div>
             )}
+            {source.error && <p className="p-4 text-xs text-ui-red" role="alert">{source.error}</p>}
 
             {renderedSections.map((section) => {
               if (section.type === 'group') {
@@ -635,7 +646,7 @@ const ManagedSidebar = () => {
         )}
 
         <div className="shrink-0 border-t border-sidebar-border">
-          {sidebarTab === 'workspace' && (
+          {capabilities.createWorkspace && sidebarTab === 'workspace' && (
             <div className="relative flex h-9 items-stretch">
               <button
                 className="flex flex-1 items-center gap-2 px-3 text-sm text-muted-foreground transition-colors hover:bg-sidebar-accent disabled:opacity-50"
@@ -674,9 +685,9 @@ const ManagedSidebar = () => {
             </div>
           )}
 
-          <SidebarRateLimits />
+          {capabilities.providerControls && <SidebarRateLimits />}
 
-          <div className="flex items-center justify-between px-2 pb-2">
+          {capabilities.persistenceControls && <div className="flex items-center justify-between px-2 pb-2">
             <div className="flex items-center gap-0.5">
               {sidebarItems.map((item) => {
                 const isExternal = item.url.startsWith('http://') || item.url.startsWith('https://');
@@ -756,11 +767,11 @@ const ManagedSidebar = () => {
                 )}
               />
             </div>
-          </div>
+          </div>}
         </div>
       </div>
 
-      {!collapsed && (
+      {capabilities.persistenceControls && !collapsed && (
         <div
           className="group relative shrink-0"
           style={{
@@ -800,7 +811,7 @@ const ManagedSidebar = () => {
         </div>
       )}
 
-      {collapsed && (
+      {capabilities.persistenceControls && collapsed && (
         <div className="flex w-8 shrink-0 flex-col border-r border-sidebar-border bg-sidebar">
           <button
             className="flex flex-1 items-center justify-center text-muted-foreground transition-colors hover:bg-sidebar-accent"
@@ -813,8 +824,8 @@ const ManagedSidebar = () => {
         </div>
       )}
 
-      {settingsOpen && <SettingsDialog open={settingsOpen} onOpenChange={setSettingsOpen} />}
-      <CheatSheetDialog />
+      {capabilities.persistenceControls && settingsOpen && <SettingsDialog open={settingsOpen} onOpenChange={setSettingsOpen} />}
+      {capabilities.persistenceControls && <CheatSheetDialog />}
 
       <AlertDialog
         open={!!deleteTarget}
@@ -893,67 +904,5 @@ const ManagedSidebar = () => {
     </div>
   );
 };
-
-const SourceSidebar = ({ source }: { source: IWorkspaceChromeSourceAdapter }) => (
-  <div className="relative flex w-60 shrink-0">
-    <div
-      className="flex w-full shrink-0 flex-col overflow-hidden border-r border-sidebar-border bg-sidebar"
-      role="navigation"
-      aria-label="Workspace list"
-      data-ui-chrome="sidebar"
-      data-workspace-source={source.kind}
-    >
-      <div className="flex h-12 shrink-0 items-center justify-between border-b border-sidebar-border px-3">
-        <div className="min-w-0">
-          <AppLogo className="pointer-events-none" />
-          {source.label && (
-            <span className="block truncate text-[11px] text-muted-foreground">
-              {source.label}
-            </span>
-          )}
-        </div>
-        <button
-          className="flex h-7 w-7 shrink-0 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-sidebar-accent"
-          onClick={source.refresh}
-          aria-label="Refresh external workspaces"
-        >
-          <RefreshCw className={cn('h-3.5 w-3.5', source.isLoading && 'animate-spin')} />
-        </button>
-      </div>
-
-      <div className="shrink-0 border-b border-sidebar-border px-3 py-2 text-[11px] tracking-wide text-muted-foreground">
-        WORKSPACE
-      </div>
-
-      <div className="flex-1 overflow-y-auto" style={{ scrollbarWidth: 'none' }}>
-        {source.workspaces.map((workspace) => (
-          <WorkspaceItem
-            key={workspace.id}
-            workspace={workspace}
-            isActive={workspace.id === source.activeWorkspaceId}
-            isDeleting={false}
-            showShortcut={false}
-            tabs={source.workspaceLayouts[workspace.id]?.flatMap((pane) => pane.tabs)}
-            onSelect={source.selectWorkspace}
-            onRename={() => {}}
-            onDelete={() => {}}
-            managed={false}
-            canRename={source.capabilities.renameWorkspace}
-            canDelete={source.capabilities.deleteWorkspace}
-          />
-        ))}
-        {!source.isLoading && source.workspaces.length === 0 && (
-          <p className="p-4 text-xs text-muted-foreground" role="status">
-            No external workspaces are available.
-          </p>
-        )}
-        {source.error && <p className="p-4 text-xs text-ui-red" role="alert">{source.error}</p>}
-      </div>
-    </div>
-  </div>
-);
-
-const Sidebar = ({ source }: { source?: IWorkspaceChromeSourceAdapter }) =>
-  source ? <SourceSidebar source={source} /> : <ManagedSidebar />;
 
 export default Sidebar;

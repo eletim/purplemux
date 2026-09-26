@@ -1,4 +1,4 @@
-import type { IPaneNode, ITab, IWorkspace } from '@/types/terminal';
+import type { IPaneNode, ITab, IWorkspace, IWorkspaceGroup, TTerminalTarget } from '@/types/terminal';
 
 /** Operations and managed-only decorations understood by shared Workspace/Tab chrome. */
 export interface IWorkspaceChromeCapabilities {
@@ -52,7 +52,7 @@ export const externalWorkspaceChromeCapabilities: IWorkspaceChromeCapabilities =
   persistenceControls: false,
   ownershipControls: false,
   lifecycleControls: false,
-  terminalCopy: false,
+  terminalCopy: true,
 };
 
 /** Read/write boundary consumed by desktop and mobile Workspace/Tab chrome. */
@@ -60,15 +60,19 @@ export interface IWorkspaceChromeSourceAdapter {
   kind: 'managed' | 'external';
   label?: string;
   workspaces: IWorkspace[];
+  groups: IWorkspaceGroup[];
   workspaceLayouts: Record<string, IPaneNode[]>;
+  terminalTargets: Record<string, TTerminalTarget>;
   activeWorkspaceId: string | null;
   activePaneId: string | null;
   activeTabId: string | null;
+  isCreatingTab: boolean;
   isLoading: boolean;
   error: string | null;
   capabilities: IWorkspaceChromeCapabilities;
   selectWorkspace: (workspaceId: string) => void;
   selectTab: (workspaceId: string, paneId: string, tabId: string) => void;
   createTab?: (workspaceId: string) => Promise<ITab | null>;
+  createWorkspace?: () => Promise<void>;
   refresh: () => void;
 }

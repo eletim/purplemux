@@ -10,23 +10,24 @@ import {
   DrawerTitle,
 } from '@/components/ui/drawer';
 import { copyToClipboard } from '@/lib/clipboard';
+import type { TTerminalTarget } from '@/types/terminal';
 
 interface ICopyPaneDrawerProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  sessionName: string | null;
+  target: TTerminalTarget | null;
 }
 
 const trimTrailingBlanks = (text: string): string => text.replace(/\s+$/g, '');
 
-const CopyPaneDrawer = ({ open, onOpenChange, sessionName }: ICopyPaneDrawerProps) => {
+const CopyPaneDrawer = ({ open, onOpenChange, target }: ICopyPaneDrawerProps) => {
   const t = useTranslations('terminal');
   const [content, setContent] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [fetchKey, setFetchKey] = useState<string | null>(null);
 
-  const currentKey = open && sessionName ? sessionName : null;
+  const currentKey = open && target ? JSON.stringify(target) : null;
   if (currentKey !== fetchKey) {
     setFetchKey(currentKey);
     setContent('');
@@ -38,7 +39,15 @@ const CopyPaneDrawer = ({ open, onOpenChange, sessionName }: ICopyPaneDrawerProp
     if (!fetchKey) return;
     let cancelled = false;
 
-    fetch(`/api/tmux/capture?session=${encodeURIComponent(fetchKey)}`)
+    const selected = JSON.parse(fetchKey) as TTerminalTarget;
+    const params = new URLSearchParams(selected.kind === 'managed'
+      ? { session: selected.sessionName }
+      : {
+          externalServerId: selected.serverId,
+          sessionId: selected.sessionId,
+          windowId: selected.windowId,
+        });
+    fetch(`/api/tmux/capture?${params}`)
       .then((res) => {
         if (!res.ok) throw new Error('capture failed');
         return res.json();
