@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { nanoid } from 'nanoid';
-import useSWR from 'swr';
+import useSWR, { useSWRConfig } from 'swr';
 import type { IExternalTerminalTarget, IPaneNode, ITab, IWorkspace } from '@/types/terminal';
 import type {
   ICreatedExternalWorkspaceTab,
@@ -17,6 +17,8 @@ import { externalWorkspaceChromeCapabilities } from '@/types/workspace-chrome';
 
 const endpoint = '/api/cli/external-servers';
 const refreshInterval = 5000;
+const workspaceEndpoint = (serverId: string) =>
+  `${endpoint}/${encodeURIComponent(serverId)}/workspaces`;
 const chromeId = (serverId: string, resourceId: string) =>
   `${encodeURIComponent(serverId)}:${resourceId}`;
 const requestStorageKey = (serverId: string, workspaceId: string, sessionCreated: string) =>
@@ -47,12 +49,13 @@ const readRegistrations = async (): Promise<IExternalServerInventory[]> => {
 };
 
 const readSource = async (serverId: string): Promise<IExternalWorkspaceSource> => {
-  const response = await fetch(`${endpoint}/${encodeURIComponent(serverId)}/workspaces`);
+  const response = await fetch(workspaceEndpoint(serverId));
   if (!response.ok) throw new Error('Unable to load external workspaces from the selected server.');
   return response.json() as Promise<IExternalWorkspaceSource>;
 };
 
 export default function useExternalWorkspaceSource(): IExternalWorkspaceChromeState {
+  const { mutate: mutateCache } = useSWRConfig();
   const {
     data: registrationData,
     error: registrationsError,
@@ -65,6 +68,8 @@ export default function useExternalWorkspaceSource(): IExternalWorkspaceChromeSt
     && servers.some((server) => server.id === selectedServerPreference)
     ? selectedServerPreference
     : servers[0]?.id ?? null;
+  const selectedServerIdRef = useRef<string | null>(selectedServerId);
+  selectedServerIdRef.current = selectedServerId;
   const selectedServer = servers.find((server) => server.id === selectedServerId) ?? null;
   const {
     data: externalSource,
@@ -72,7 +77,7 @@ export default function useExternalWorkspaceSource(): IExternalWorkspaceChromeSt
     isLoading: sourceLoading,
     mutate: mutateSource,
   } = useSWR(
-    selectedServerId ? `${endpoint}/${selectedServerId}/workspaces` : null,
+    selectedServerId ? workspaceEndpoint(selectedServerId) : null,
     () => readSource(selectedServerId!),
     { refreshInterval },
   );
@@ -150,6 +155,7 @@ export default function useExternalWorkspaceSource(): IExternalWorkspaceChromeSt
     : activePane?.activeTabId ?? activePane?.tabs[0]?.id ?? null;
 
   const selectServer = useCallback((serverId: string) => {
+    selectedServerIdRef.current = serverId;
     setOptimistic(null);
     setSelectedWorkspaceId(null);
     setSelectedTabId(null);
@@ -249,21 +255,26 @@ export default function useExternalWorkspaceSource(): IExternalWorkspaceChromeSt
 
   const unregisterServer = useCallback(async (): Promise<boolean> => {
     if (!selectedServerId) return false;
+    const serverId = selectedServerId;
     setControlsBusy(true);
     setControlsError(null);
     try {
-      const response = await fetch(`${endpoint}/${encodeURIComponent(selectedServerId)}`, { method: 'DELETE' });
+      const response = await fetch(`${endpoint}/${encodeURIComponent(serverId)}`, { method: 'DELETE' });
       const body = await response.json();
       if (!response.ok && response.status !== 404) {
         throw new Error(body.error || 'Unable to unregister external tmux server.');
       }
-      const remaining = servers.filter((server) => server.id !== selectedServerId);
-      setSelectedWorkspaceId(null);
-      setSelectedTabId(null);
-      setOptimistic(null);
-      await mutateSource(undefined, { revalidate: false });
-      await mutateRegistrations(remaining, { revalidate: false });
-      setSelectedServerPreference(remaining[0]?.id ?? null);
+      if (selectedServerIdRef.current === serverId) {
+        setSelectedWorkspaceId(null);
+        setSelectedTabId(null);
+        setOptimistic(null);
+      }
+      await mutateCache(workspaceEndpoint(serverId), undefined, { revalidate: false });
+      await mutateRegistrations(
+        (current = []) => current.filter((server) => server.id !== serverId),
+        { revalidate: false },
+      );
+      setSelectedServerPreference((current) => current === serverId ? null : current);
       void mutateRegistrations().catch(() => {});
       return true;
     } catch (unregisterError) {
@@ -273,7 +284,7 @@ export default function useExternalWorkspaceSource(): IExternalWorkspaceChromeSt
     } finally {
       setControlsBusy(false);
     }
-  }, [mutateRegistrations, mutateSource, selectedServerId, servers]);
+  }, [mutateCache, mutateRegistrations, selectedServerId]);
 
   const sourceBusy = (!registrationData && registrationsLoading)
     || (!!selectedServerId && !externalSource && sourceLoading);

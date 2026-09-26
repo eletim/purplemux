@@ -369,6 +369,66 @@ describe('external server browser page', () => {
     expect(screen.queryByTestId('external-terminal')).toBeNull();
   });
 
+  it('finishes delayed unregistration against its original server and latest inventory', async () => {
+    const dev = {
+      id: 'server-1', name: 'dev', socketPath: '/tmp/dev.sock', exists: true, sessions: [],
+    };
+    const prod = {
+      id: 'server-2', name: 'prod', socketPath: '/tmp/prod.sock', exists: true, sessions: [],
+    };
+    const staging = {
+      id: 'server-3', name: 'staging', socketPath: '/tmp/staging.sock', exists: true, sessions: [],
+    };
+    const prodSource = externalSource([
+      tab('@7', 'prod-window', 0, true, '$1', prod.id),
+    ], prod.id, prod.name);
+    let inventory = [dev, prod];
+    let failRegistrationReads = false;
+    let resolveDelete!: () => void;
+    const deletePending = new Promise<void>((resolve) => { resolveDelete = resolve; });
+    const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
+      if (init?.method === 'DELETE') {
+        await deletePending;
+        return response({ deleted: true });
+      }
+      if (url.endsWith('/server-1/workspaces')) return response(externalSource());
+      if (url.endsWith('/server-2/workspaces')) return response(prodSource);
+      if (url.endsWith('/server-3/workspaces')) {
+        return response({ serverId: staging.id, name: staging.name, exists: true, workspaces: [] });
+      }
+      if (failRegistrationReads) return response({ error: 'refresh failed' }, 500);
+      return response({ servers: inventory });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    mount(createElement(ExternalWorkspaceChromePage));
+    expect((await screen.findByTestId('external-terminal')).textContent).toBe('server-1:$1:@2');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Unregister selected server' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Unregister' }));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
+      '/api/cli/external-servers/server-1', { method: 'DELETE' },
+    ));
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+
+    fireEvent.change(screen.getByLabelText('REGISTERED SERVER'), { target: { value: prod.id } });
+    await waitFor(() => expect(screen.getByTestId('external-terminal').textContent)
+      .toBe('server-2:$1:@7'));
+
+    inventory = [dev, prod, staging];
+    fireEvent.click(screen.getByRole('button', { name: 'Refresh external workspaces' }));
+    await screen.findByRole('option', { name: staging.name });
+    failRegistrationReads = true;
+    await act(async () => { resolveDelete(); });
+
+    await waitFor(() => expect((screen.getByRole('button', {
+      name: 'Unregister selected server',
+    }) as HTMLButtonElement).disabled).toBe(false));
+    const selector = screen.getByLabelText('REGISTERED SERVER') as HTMLSelectElement;
+    expect(selector.value).toBe(prod.id);
+    expect([...selector.options].map((option) => option.text)).toEqual([prod.name, staging.name]);
+    expect(screen.getByTestId('external-terminal').textContent).toBe('server-2:$1:@7');
+  });
+
   it('refreshes live stable-ID additions and falls back when the selected window disappears', async () => {
     vi.useFakeTimers();
     let source = externalSource();
