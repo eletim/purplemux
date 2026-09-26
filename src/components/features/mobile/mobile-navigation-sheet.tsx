@@ -1,4 +1,4 @@
-import { useMemo, useState, useCallback, useRef } from 'react';
+import { useMemo, useState, useCallback, useRef, type ReactNode } from 'react';
 import {
   ChevronDown,
   ChevronRight,
@@ -49,6 +49,7 @@ interface IMobileNavigationSheetProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   source: IWorkspaceChromeSourceAdapter;
+  navigationHeader?: ReactNode;
   onOpenSettings: () => void;
 }
 
@@ -56,6 +57,7 @@ const MobileNavigationSheet = ({
   open,
   onOpenChange,
   source,
+  navigationHeader,
   onOpenSettings,
 }: IMobileNavigationSheetProps) => {
   const {
@@ -389,6 +391,8 @@ const MobileNavigationSheet = ({
             </span>
           )}
         </SheetHeader>
+
+        {navigationHeader}
 
         {!capabilities.agentControls || mobileTab === 'workspace' ? (
           <div

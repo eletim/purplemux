@@ -29,9 +29,11 @@ const PageContent = ({ children, managed }: { children: ReactNode; managed: bool
 export default function WorkspaceChromeShell({
   source,
   children,
+  navigationHeader,
 }: {
   source: IWorkspaceChromeSourceAdapter;
   children: ReactNode;
+  navigationHeader?: ReactNode;
 }) {
   const isMobile = useIsMobile();
   const managed = source.kind === 'managed';
@@ -41,11 +43,11 @@ export default function WorkspaceChromeShell({
       {managed && <ManagedRuntimeSync />}
       {isMobile ? (
         <div className="flex h-dvh w-full flex-col overflow-hidden bg-background">
-          <MobileLayout source={source}>{children}</MobileLayout>
+          <MobileLayout source={source} navigationHeader={navigationHeader}>{children}</MobileLayout>
         </div>
       ) : (
         <div className="flex h-dvh w-full overflow-hidden bg-background max-md:hidden">
-          <Sidebar source={source} />
+          <Sidebar source={source} navigationHeader={navigationHeader} />
           <div className="relative flex min-w-0 flex-1 flex-col">
             <PageContent managed={managed}>{children}</PageContent>
             {managed && <WebviewLayer />}

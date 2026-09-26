@@ -1,4 +1,4 @@
-import { useState, useCallback, useMemo, useRef, useEffect } from 'react';
+import { useState, useCallback, useMemo, useRef, useEffect, type ReactNode } from 'react';
 import { useTranslations } from 'next-intl';
 import {
   ChevronsLeft,
@@ -59,7 +59,13 @@ const handleLogout = async () => {
   window.location.href = '/login';
 };
 
-const Sidebar = ({ source }: { source: IWorkspaceChromeSourceAdapter }) => {
+const Sidebar = ({
+  source,
+  navigationHeader,
+}: {
+  source: IWorkspaceChromeSourceAdapter;
+  navigationHeader?: ReactNode;
+}) => {
   const t = useTranslations('sidebar');
   const tc = useTranslations('common');
   const router = useRouter();
@@ -519,6 +525,8 @@ const Sidebar = ({ source }: { source: IWorkspaceChromeSourceAdapter }) => {
             </AlertDialog>
           </div>
         </div>
+
+        {navigationHeader}
 
         <div className="shrink-0 border-b border-sidebar-border px-2 py-1.5">
           {capabilities.agentControls ? <Tabs

@@ -143,15 +143,26 @@ describe('external Review browser pages', () => {
 });
 
 describe('external server browser page', () => {
-  const tab = (id: string, name: string, order: number, active = false, workspaceId = '$1') => ({
+  const tab = (
+    id: string,
+    name: string,
+    order: number,
+    active = false,
+    workspaceId = '$1',
+    serverId = 'server-1',
+  ) => ({
     id, workspaceId, name, order, active, panes: [],
-    externalTerminalTarget: { serverId: 'server-1', sessionId: workspaceId, windowId: id },
+    externalTerminalTarget: { serverId, sessionId: workspaceId, windowId: id },
   });
   const workspace = (id: string, name: string, tabs: ReturnType<typeof tab>[]) => ({
     id, name, sessionCreated: id === '$1' ? '1750000000' : '1750000001', attached: false, tabs,
   });
-  const externalSource = (tabs = [tab('@2', 'first', 0, true)]) => ({
-    serverId: 'server-1', name: 'dev', exists: true,
+  const externalSource = (
+    tabs = [tab('@2', 'first', 0, true)],
+    serverId = 'server-1',
+    name = 'dev',
+  ) => ({
+    serverId, name, exists: true,
     workspaces: [workspace('$1', 'shells', tabs)],
   });
   const mixedExternalSource = (populatedTabs = [tab('@2', 'first', 0, true)]) => ({
@@ -174,7 +185,10 @@ describe('external server browser page', () => {
     }
     if (url.startsWith('/api/tmux/capture?')) return response({ content: 'captured external pane' });
     if (url.endsWith('/workspaces')) return response(getSource());
-    return response({ servers: [{ id: 'server-1', name: 'dev' }] });
+    return response({ servers: [{
+      id: 'server-1', name: 'dev', socketPath: '/tmp/dev.sock', socketIdentity: '1:2:3',
+      exists: true, sessions: [],
+    }] });
   });
 
   it('reuses the Workspace sidebar and Tab bar without managed-only controls', async () => {
@@ -184,6 +198,9 @@ describe('external server browser page', () => {
     mount(createElement(ExternalWorkspaceChromePage));
 
     expect((await screen.findByTestId('external-terminal')).textContent).toBe('server-1:$1:@2');
+    expect(screen.getByText('External tmux · dev')).toBeTruthy();
+    expect((screen.getByLabelText('REGISTERED SERVER') as HTMLSelectElement).value).toBe('server-1');
+    expect(screen.getByText('/tmp/dev.sock')).toBeTruthy();
     expect(screen.getByRole('navigation', { name: 'workspaceList' }).getAttribute('data-workspace-source')).toBe('external');
     expect(screen.getByRole('navigation', { name: 'workspaceList' }).textContent).toContain('shells');
     expect(screen.getByRole('tablist').textContent).toContain('first');
@@ -192,6 +209,103 @@ describe('external server browser page', () => {
     expect(screen.queryByLabelText('closeTabLabel')).toBeNull();
     fireEvent.click(screen.getByRole('tab', { name: 'second' }));
     expect(screen.getByTestId('external-terminal').textContent).toBe('server-1:$1:@4');
+  });
+
+  it('selects one registered server explicitly without flattening server workspaces together', async () => {
+    const dev = externalSource(undefined, 'server-1', 'dev');
+    const prod = {
+      ...externalSource([tab('@7', 'prod-window', 0, true, '$1', 'server-2')], 'server-2', 'prod'),
+      workspaces: [workspace('$1', 'production', [
+        tab('@7', 'prod-window', 0, true, '$1', 'server-2'),
+      ])],
+    };
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+      if (url.endsWith('/server-1/workspaces')) return response(dev);
+      if (url.endsWith('/server-2/workspaces')) return response(prod);
+      return response({ servers: [
+        { id: 'server-1', name: 'dev', socketPath: '/tmp/dev.sock', exists: true },
+        { id: 'server-2', name: 'prod', socketPath: '/tmp/prod.sock', exists: true },
+      ] });
+    }));
+    mount(createElement(ExternalWorkspaceChromePage));
+
+    expect((await screen.findByTestId('external-terminal')).textContent).toBe('server-1:$1:@2');
+    expect(screen.getByRole('navigation', { name: 'workspaceList' }).textContent).not.toContain('production');
+    fireEvent.change(screen.getByLabelText('REGISTERED SERVER'), { target: { value: 'server-2' } });
+    await waitFor(() => expect(screen.getByTestId('external-terminal').textContent).toBe('server-2:$1:@7'));
+    expect(screen.getByText('External tmux · prod')).toBeTruthy();
+    expect(screen.getByRole('navigation', { name: 'workspaceList' }).textContent).not.toContain('shells');
+    expect(screen.getByRole('button', { name: 'production' })).toBeTruthy();
+  });
+
+  it('preserves no-registration, empty-server, and unavailable-server states', async () => {
+    let servers: unknown[] = [];
+    let selectedSource: unknown = null;
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+      if (url.endsWith('/workspaces')) return response(selectedSource);
+      return response({ servers });
+    }));
+    const view = mount(createElement(ExternalWorkspaceChromePage));
+    expect(await screen.findByText('No external tmux servers are registered.')).toBeTruthy();
+    expect((screen.getByLabelText('REGISTERED SERVER') as HTMLSelectElement).disabled).toBe(true);
+
+    view.unmount();
+    servers = [{ id: 'empty', name: 'empty', socketPath: '/tmp/empty.sock', exists: true }];
+    selectedSource = { serverId: 'empty', name: 'empty', exists: true, workspaces: [] };
+    mount(createElement(SWRConfig, { value: { provider: () => new Map(), dedupingInterval: 0 } },
+      createElement(ExternalWorkspaceChromePage)));
+    expect(await screen.findByText('The selected external tmux server has no sessions.')).toBeTruthy();
+
+    cleanup();
+    servers = [{ id: 'offline', name: 'offline', socketPath: '/tmp/offline.sock', exists: false }];
+    selectedSource = {
+      serverId: 'offline', name: 'offline', exists: false, workspaces: [],
+      unavailableReason: 'External tmux socket disappeared',
+    };
+    mount(createElement(ExternalWorkspaceChromePage));
+    expect((await screen.findByRole('status')).textContent).toContain('External tmux socket disappeared');
+    expect(screen.getByRole('option', { name: 'offline (unavailable)' })).toBeTruthy();
+  });
+
+  it('registers and unregisters servers from the shared shell controls', async () => {
+    const registered = {
+      id: 'server-new', name: 'new server', socketPath: '/tmp/new.sock',
+      socketIdentity: '2:3:4', exists: true, sessions: [],
+    };
+    let servers: typeof registered[] = [];
+    const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
+      if (init?.method === 'POST') {
+        servers = [registered];
+        return response(registered, 201);
+      }
+      if (init?.method === 'DELETE') {
+        servers = [];
+        return response({ deleted: true });
+      }
+      if (url.endsWith('/workspaces')) {
+        return response({ serverId: registered.id, name: registered.name, exists: true, workspaces: [] });
+      }
+      return response({ servers });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    mount(createElement(ExternalWorkspaceChromePage));
+    await screen.findByText('No external tmux servers are registered.');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Register external server' }));
+    fireEvent.change(await screen.findByLabelText('Name'), { target: { value: 'new server' } });
+    fireEvent.change(screen.getByLabelText('Absolute socket path'), { target: { value: '/tmp/new.sock' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Register' }));
+    await waitFor(() => expect((screen.getByLabelText('REGISTERED SERVER') as HTMLSelectElement).value)
+      .toBe('server-new'));
+    expect(fetchMock).toHaveBeenCalledWith('/api/cli/external-servers', expect.objectContaining({
+      method: 'POST',
+      body: JSON.stringify({ name: 'new server', socketPath: '/tmp/new.sock' }),
+    }));
+
+    fireEvent.click(screen.getByRole('button', { name: 'Unregister selected server' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Unregister' }));
+    expect(await screen.findByText('No external tmux servers are registered.')).toBeTruthy();
+    expect(fetchMock).toHaveBeenCalledWith('/api/cli/external-servers/server-new', { method: 'DELETE' });
   });
 
   it('refreshes live stable-ID additions and falls back when the selected window disappears', async () => {
@@ -304,6 +418,9 @@ describe('external server browser page', () => {
     expect(document.querySelector('[data-ui-chrome="header"]')).toBeTruthy();
     expect(document.querySelector('[data-ui-chrome="tab-bar"]')).toBeTruthy();
     expect(screen.getByRole('button', { name: 'newTab' })).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'openMenu' }));
+    expect((screen.getByLabelText('REGISTERED SERVER') as HTMLSelectElement).value).toBe('server-1');
+    fireEvent.click(screen.getByRole('button', { name: 'closeMenu' }));
     fireEvent.click(screen.getByRole('button', { name: 'copyPaneLabel' }));
     await waitFor(() => expect(fetch).toHaveBeenCalledWith(
       '/api/tmux/capture?externalServerId=server-1&sessionId=%241&windowId=%402',
