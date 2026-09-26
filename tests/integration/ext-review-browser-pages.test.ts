@@ -308,6 +308,67 @@ describe('external server browser page', () => {
     expect(fetchMock).toHaveBeenCalledWith('/api/cli/external-servers/server-new', { method: 'DELETE' });
   });
 
+  it('keeps a confirmed registration cached and selected when its follow-up refresh fails', async () => {
+    const registered = {
+      id: 'server-new', name: 'new server', socketPath: '/tmp/new.sock',
+      socketIdentity: '2:3:4', terminalCreations: [],
+    };
+    let registrationGets = 0;
+    const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
+      if (init?.method === 'POST') return response(registered, 201);
+      if (url.endsWith('/workspaces')) {
+        return response({ serverId: registered.id, name: registered.name, exists: true, workspaces: [] });
+      }
+      registrationGets += 1;
+      return registrationGets === 1
+        ? response({ servers: [] })
+        : response({ error: 'refresh failed' }, 500);
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    mount(createElement(ExternalWorkspaceChromePage));
+    await screen.findByText('No external tmux servers are registered.');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Register external server' }));
+    fireEvent.change(await screen.findByLabelText('Name'), { target: { value: registered.name } });
+    fireEvent.change(screen.getByLabelText('Absolute socket path'), {
+      target: { value: registered.socketPath },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Register' }));
+
+    await waitFor(() => expect(registrationGets).toBe(2));
+    const selector = screen.getByLabelText('REGISTERED SERVER') as HTMLSelectElement;
+    expect(selector.value).toBe(registered.id);
+    expect([...selector.options].map((option) => option.text)).toEqual([registered.name]);
+    expect(screen.getByText('External tmux · new server')).toBeTruthy();
+  });
+
+  it('removes a confirmed unregistration and its workspaces when its follow-up refresh fails', async () => {
+    const registered = {
+      id: 'server-1', name: 'dev', socketPath: '/tmp/dev.sock',
+      socketIdentity: '1:2:3', exists: true, sessions: [],
+    };
+    let registrationGets = 0;
+    const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
+      if (init?.method === 'DELETE') return response({ deleted: true });
+      if (url.endsWith('/workspaces')) return response(externalSource());
+      registrationGets += 1;
+      return registrationGets === 1
+        ? response({ servers: [registered] })
+        : response({ error: 'refresh failed' }, 500);
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    mount(createElement(ExternalWorkspaceChromePage));
+    await screen.findByTestId('external-terminal');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Unregister selected server' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Unregister' }));
+
+    await waitFor(() => expect(registrationGets).toBe(2));
+    expect(await screen.findByText('No external tmux servers are registered.')).toBeTruthy();
+    expect((screen.getByLabelText('REGISTERED SERVER') as HTMLSelectElement).disabled).toBe(true);
+    expect(screen.queryByTestId('external-terminal')).toBeNull();
+  });
+
   it('refreshes live stable-ID additions and falls back when the selected window disappears', async () => {
     vi.useFakeTimers();
     let source = externalSource();

@@ -7,7 +7,11 @@ import type {
   IExternalWorkspace,
   IExternalWorkspaceSource,
 } from '@/types/external-workspace';
-import type { IExternalServerInventory, IRegisterExternalServer } from '@/types/external-server';
+import type {
+  IExternalServer,
+  IExternalServerInventory,
+  IRegisterExternalServer,
+} from '@/types/external-server';
 import type { IWorkspaceChromeSourceAdapter } from '@/types/workspace-chrome';
 import { externalWorkspaceChromeCapabilities } from '@/types/workspace-chrome';
 
@@ -226,8 +230,13 @@ export default function useExternalWorkspaceSource(): IExternalWorkspaceChromeSt
       });
       const body = await response.json();
       if (!response.ok) throw new Error(body.error || 'Unable to register external tmux server.');
-      await mutateRegistrations();
-      selectServer(body.id);
+      const registered = body as IExternalServer;
+      await mutateRegistrations((current = []) => [
+        ...current.filter((server) => server.id !== registered.id),
+        { ...registered, exists: true, sessions: [] },
+      ], { revalidate: false });
+      selectServer(registered.id);
+      void mutateRegistrations().catch(() => {});
       return true;
     } catch (registerError) {
       setControlsError(registerError instanceof Error
@@ -252,8 +261,10 @@ export default function useExternalWorkspaceSource(): IExternalWorkspaceChromeSt
       setSelectedWorkspaceId(null);
       setSelectedTabId(null);
       setOptimistic(null);
+      await mutateSource(undefined, { revalidate: false });
+      await mutateRegistrations(remaining, { revalidate: false });
       setSelectedServerPreference(remaining[0]?.id ?? null);
-      await mutateRegistrations();
+      void mutateRegistrations().catch(() => {});
       return true;
     } catch (unregisterError) {
       setControlsError(unregisterError instanceof Error
@@ -262,7 +273,7 @@ export default function useExternalWorkspaceSource(): IExternalWorkspaceChromeSt
     } finally {
       setControlsBusy(false);
     }
-  }, [mutateRegistrations, selectedServerId, servers]);
+  }, [mutateRegistrations, mutateSource, selectedServerId, servers]);
 
   const sourceBusy = (!registrationData && registrationsLoading)
     || (!!selectedServerId && !externalSource && sourceLoading);
