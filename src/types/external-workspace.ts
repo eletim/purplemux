@@ -34,5 +34,6 @@ export interface ICreatedExternalWorkspaceTab {
   tabId: string;
   workspaceId: string;
   sessionCreated: string;
+  requestId: string;
   externalTerminalTarget: IExternalTerminalTarget;
 }

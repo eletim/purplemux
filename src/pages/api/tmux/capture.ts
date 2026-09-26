@@ -3,6 +3,8 @@ import { capturePaneContent, hasSession } from '@/lib/tmux';
 import { createLogger } from '@/lib/logger';
 import { getExternalServer } from '@/lib/external-server-store';
 import { captureExternalServerWindow, ExternalServerError } from '@/lib/external-server-tmux';
+import { verifyRequestSession } from '@/lib/auth';
+import { verifyCliToken } from '@/lib/cli-token';
 
 const log = createLogger('tmux');
 
@@ -35,6 +37,9 @@ const handler = async (req: NextApiRequest, res: NextApiResponse) => {
       return res.status(500).json({ error: 'Failed to capture pane' });
     }
   }
+
+  const authed = verifyCliToken(req) || (await verifyRequestSession(req.headers.cookie));
+  if (!authed) return res.status(403).json({ error: 'Forbidden' });
 
   try {
     const server = await getExternalServer(externalServerId!);

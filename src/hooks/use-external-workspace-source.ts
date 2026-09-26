@@ -1,4 +1,5 @@
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { nanoid } from 'nanoid';
 import useSWR from 'swr';
 import type { IExternalTerminalTarget, IPaneNode, ITab, IWorkspace } from '@/types/terminal';
 import type {
@@ -14,6 +15,8 @@ const endpoint = '/api/cli/external-servers';
 const refreshInterval = 5000;
 const chromeId = (serverId: string, resourceId: string) =>
   `${encodeURIComponent(serverId)}:${resourceId}`;
+const requestStorageKey = (serverId: string, workspaceId: string, sessionCreated: string) =>
+  `purplemux-external-tab-request:${serverId}:${workspaceId}:${sessionCreated}`;
 
 interface IExternalWorkspaceChromeState {
   source: IWorkspaceChromeSourceAdapter;
@@ -41,6 +44,17 @@ export default function useExternalWorkspaceSource(): IExternalWorkspaceChromeSt
   const [creating, setCreating] = useState(false);
   const [mutationError, setMutationError] = useState<string | null>(null);
   const [optimistic, setOptimistic] = useState<ICreatedExternalWorkspaceTab | null>(null);
+  const requestIds = useRef(new Map<string, string>());
+
+  useEffect(() => {
+    if (!optimistic) return;
+    const confirmed = data.some((externalSource) =>
+      externalSource.serverId === optimistic.externalTerminalTarget.serverId
+      && externalSource.workspaces.some((workspace) =>
+        workspace.id === optimistic.workspaceId
+        && workspace.tabs.some((tab) => tab.id === optimistic.tabId)));
+    if (confirmed) setOptimistic((current) => current === optimistic ? null : current);
+  }, [data, optimistic]);
 
   const model = useMemo(() => {
     const workspaces: IWorkspace[] = [];
@@ -118,6 +132,16 @@ export default function useExternalWorkspaceSource(): IExternalWorkspaceChromeSt
   const createTab = useCallback(async (workspaceId: string): Promise<ITab | null> => {
     const raw = model.rawWorkspaces.get(workspaceId);
     if (!raw) return null;
+    const storageKey = requestStorageKey(raw.serverId, raw.workspace.id, raw.workspace.sessionCreated);
+    let storedRequestId: string | null = null;
+    try { storedRequestId = sessionStorage.getItem(storageKey); } catch { /* unavailable */ }
+    const requestId = requestIds.current.get(storageKey) ?? storedRequestId ?? nanoid();
+    requestIds.current.set(storageKey, requestId);
+    try { sessionStorage.setItem(storageKey, requestId); } catch { /* unavailable */ }
+    const clearRequestId = () => {
+      requestIds.current.delete(storageKey);
+      try { sessionStorage.removeItem(storageKey); } catch { /* unavailable */ }
+    };
     setCreating(true);
     setMutationError(null);
     try {
@@ -126,12 +150,19 @@ export default function useExternalWorkspaceSource(): IExternalWorkspaceChromeSt
         {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ sessionCreated: raw.workspace.sessionCreated }),
+          body: JSON.stringify({ sessionCreated: raw.workspace.sessionCreated, requestId }),
         },
       );
       const body = await response.json();
-      if (!response.ok) throw new Error(body.error || 'Unable to create external tab.');
+      if (!response.ok) {
+        if (response.status < 500 && !body.outcomeUnknown) clearRequestId();
+        throw new Error(body.error || 'Unable to create external tab.');
+      }
       const created = body as ICreatedExternalWorkspaceTab;
+      if (created.requestId !== requestId) {
+        throw new Error('External tab creation outcome is unknown; retry to reconcile it.');
+      }
+      clearRequestId();
       const id = chromeId(raw.serverId, created.tabId);
       setOptimistic(created);
       setSelectedWorkspaceId(workspaceId);

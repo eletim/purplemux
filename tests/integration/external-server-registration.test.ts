@@ -151,22 +151,28 @@ describe('external tmux server registrations', () => {
     const server = await store.registerExternalServer({ name: 'external', socketPath: socket });
     const sessionCreated = tmux('display-message', '-p', '-t', '$0', '#{session_created}');
 
-    const created = await store.createExternalSessionWindow(server.id, { id: '$0', sessionCreated });
+    const created = await store.createExternalSessionWindow(server.id,
+      { id: '$0', sessionCreated, requestId: 'window-create-1' });
 
     expect(created).toEqual({
       serverId: server.id, sessionId: '$0', sessionCreated, windowId: '@1',
+      requestId: 'window-create-1',
     });
     expect(tmux('list-sessions', '-F', '#{session_id}')).toBe('$0');
     expect(tmux('display-message', '-p', '-t', '$0:@1',
       '#{session_id}:#{session_created}:#{window_id}')).toBe(`$0:${sessionCreated}:@1`);
+    await expect(store.createExternalSessionWindow(server.id,
+      { id: '$0', sessionCreated, requestId: 'window-create-1' })).resolves.toEqual(created);
+    expect(tmux('list-windows', '-t', '$0', '-F', '#{window_id}').split('\n')).toEqual(['@0', '@1']);
     expect(tmux('show-options', '-v', '-t', '$0', '@purplemux_provenance')).toBe('');
     expect((await store.listExternalServers())[0].terminalCreations).toEqual([]);
 
     await expect(store.createExternalSessionWindow(server.id,
-      { id: '$0', sessionCreated: String(Number(sessionCreated) - 1) }))
+      { id: '$0', sessionCreated: String(Number(sessionCreated) - 1), requestId: 'window-drift' }))
       .rejects.toThrow('session identity changed');
     expect(tmux('list-windows', '-t', '$0', '-F', '#{window_id}').split('\n')).toEqual(['@0', '@1']);
-    await expect(store.createExternalSessionWindow('missing', { id: '$0', sessionCreated }))
+    await expect(store.createExternalSessionWindow('missing',
+      { id: '$0', sessionCreated, requestId: 'window-missing' }))
       .resolves.toBeUndefined();
   });
 
@@ -192,7 +198,7 @@ describe('external tmux server registrations', () => {
     });
 
     const created = await adapter.createExternalWorkspaceTab(server.id,
-      { id: addedSessionId, sessionCreated: addedCreated });
+      { id: addedSessionId, sessionCreated: addedCreated, requestId: 'adapter-window-1' });
     expect(created).toMatchObject({ workspaceId: addedSessionId,
       externalTerminalTarget: { serverId: server.id, sessionId: addedSessionId } });
     source = await adapter.getExternalWorkspaceSource(server.id);
@@ -248,7 +254,8 @@ describe('external tmux server registrations', () => {
       .rejects.toThrow('identity changed');
     await expect(store.createExternalTerminal(server.id, { requestId: 'replaced-socket' }))
       .rejects.toThrow('identity changed');
-    await expect(store.createExternalSessionWindow(server.id, { id: '$0', sessionCreated }))
+    await expect(store.createExternalSessionWindow(server.id,
+      { id: '$0', sessionCreated, requestId: 'replaced-window' }))
       .rejects.toThrow('identity changed');
     expect(tmux('list-windows', '-t', '$0', '-F', '#{window_id}')).toBe('@0');
   });

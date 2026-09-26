@@ -23,6 +23,14 @@ export class ExternalTerminalOutcomeUnknownError extends ExternalServerError {
     super('External terminal creation outcome is unknown; retry with the same requestId');
   }
 }
+export class ExternalWindowOutcomeUnknownError extends ExternalServerError {
+  constructor(public readonly requestId: string) {
+    super('External tmux window creation outcome is unknown; retry with the same requestId');
+  }
+}
+
+const windowCreationMarker = Symbol('externalWindowCreation');
+type RuntimeWindow = IExternalTmuxWindow & { [windowCreationMarker]?: string };
 
 const knownExternalTerminalCreationError = (error: unknown): ExternalServerError | undefined => {
   const duplicate = error instanceof Error
@@ -64,32 +72,75 @@ export const externalServerTmuxTarget = (
 /** Add an unowned window to one exact live session without creating or adopting a session. */
 export const createExternalSessionWindow = async (
   server: IExternalServer,
-  session: Pick<IExternalTmuxSession, 'id' | 'sessionCreated'>,
+  session: Pick<IExternalTmuxSession, 'id' | 'sessionCreated'> & { requestId: string },
   signal?: AbortSignal,
 ): Promise<ICreatedExternalWindow> => {
-  if (!/^\$\d+$/.test(session.id) || !/^\d+$/.test(session.sessionCreated)) {
+  if (!/^\$\d+$/.test(session.id) || !/^\d+$/.test(session.sessionCreated)
+    || !/^[-_A-Za-z0-9]{1,128}$/.test(session.requestId)) {
     throw new ExternalServerError('Invalid external tmux session target');
   }
+  const findCreatedWindow = (inventory: IExternalServerInventory): ICreatedExternalWindow | null => {
+    if (!inventory.exists) {
+      throw new ExternalServerError(inventory.unavailableReason ?? 'External tmux server is unavailable');
+    }
+    const liveSession = inventory.sessions.find((candidate) => candidate.id === session.id);
+    if (!liveSession || liveSession.sessionCreated !== session.sessionCreated) {
+      throw new ExternalServerError('External tmux session identity changed');
+    }
+    const window = liveSession.windows.find((candidate) =>
+      (candidate as RuntimeWindow)[windowCreationMarker] === session.requestId);
+    return window ? { serverId: server.id, sessionId: liveSession.id,
+      sessionCreated: liveSession.sessionCreated, windowId: window.id,
+      requestId: session.requestId } : null;
+  };
+  const initial = await discoverExternalServer(server, signal);
+  const prior = findCreatedWindow(initial);
+  if (prior) return prior;
+  const activeWindowId = initial.sessions.find((candidate) => candidate.id === session.id)
+    ?.windows.find((window) => window.active)?.id;
+  if (!activeWindowId) throw new ExternalServerError('External tmux session has no active window');
+  const reconcileCreatedWindow = async (): Promise<ICreatedExternalWindow> => {
+    try {
+      const recovered = findCreatedWindow(await discoverExternalServer(server, signal));
+      if (recovered) return recovered;
+    } catch { /* The post-dispatch state is still ambiguous. */ }
+    throw new ExternalWindowOutcomeUnknownError(session.requestId);
+  };
+
   const mismatch = 'purplemux-session-identity-mismatch';
   const identityMatches = `#{&&:#{==:#{session_id},${session.id}},`
     + `#{==:#{session_created},${session.sessionCreated}}}`;
-  const format = '#{session_id}:#{session_created}:#{window_id}';
-  const { stdout } = await execTmux(externalServerTmuxTarget(server), [
-    'if-shell', '-F', '-t', session.id, identityMatches,
-    `new-window -d -P -F '${format}' -t ${session.id}`,
-    `display-message -p ${mismatch}`,
-  ], { timeout: 5000, signal });
+  const format = '#{session_id}\t#{session_created}\t#{window_id}';
+  let stdout: string;
+  try {
+    ({ stdout } = await execTmux(externalServerTmuxTarget(server), [
+      'if-shell', '-F', '-t', session.id, identityMatches,
+      `new-window -P -F '${format}' -t ${session.id} ; `
+        + `set-option -w @purplemux_tab_request_id ${session.requestId} ; `
+        + `select-window -t ${session.id}:${activeWindowId}`,
+      `display-message -p ${mismatch}`,
+    ], { timeout: 5000, signal }));
+  } catch {
+    signal?.throwIfAborted();
+    return reconcileCreatedWindow();
+  }
   const result = stdout.trimEnd();
   if (result === mismatch) {
     throw new ExternalServerError('External tmux session identity changed');
   }
-  const fields = result.split(':');
+  const fields = result.split('\t');
   if (fields.length !== 3 || fields[0] !== session.id || fields[1] !== session.sessionCreated
     || !/^@\d+$/.test(fields[2])) {
-    throw new ExternalServerError('Invalid external tmux window creation result');
+    return reconcileCreatedWindow();
   }
-  await assertExternalServerSocketIdentity(server, signal);
-  return { serverId: server.id, sessionId: fields[0], sessionCreated: fields[1], windowId: fields[2] };
+  try {
+    await assertExternalServerSocketIdentity(server, signal);
+  } catch {
+    signal?.throwIfAborted();
+    return reconcileCreatedWindow();
+  }
+  return { serverId: server.id, sessionId: fields[0], sessionCreated: fields[1],
+    windowId: fields[2], requestId: session.requestId };
 };
 
 export const freezeExternalServer = async (
@@ -393,6 +444,14 @@ const populateExternalServerMetadata = async (inventory: IExternalServerInventor
     tasks.push(async () => {
       const name = await readExternalTmuxField(backend, windowId, 'window_name', signal);
       links.forEach((window) => { window.name = name; });
+    });
+    tasks.push(async () => {
+      const requestId = await readExternalTmuxField(
+        backend, windowId, '@purplemux_tab_request_id', signal);
+      if (!/^[-_A-Za-z0-9]{1,128}$/.test(requestId)) return;
+      links.forEach((window) => {
+        Object.defineProperty(window, windowCreationMarker, { value: requestId });
+      });
     });
   }
   for (const [paneId, appearances] of panes) {

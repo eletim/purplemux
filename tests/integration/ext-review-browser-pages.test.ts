@@ -163,10 +163,12 @@ describe('external server browser page', () => {
   });
   const fetchFor = (getSource: () => ReturnType<typeof externalSource>) => vi.fn(async (url: string, init?: RequestInit) => {
     if (init?.method === 'POST') {
+      const input = JSON.parse(String(init.body)) as { requestId: string };
       const workspaceId = decodeURIComponent(url.match(/\/workspaces\/([^/]+)\/tabs$/)?.[1] ?? '');
       const selectedWorkspace = getSource().workspaces.find((candidate) => candidate.id === workspaceId)!;
       return response({
         tabId: '@9', workspaceId, sessionCreated: selectedWorkspace.sessionCreated,
+        requestId: input.requestId,
         externalTerminalTarget: { serverId: 'server-1', sessionId: workspaceId, windowId: '@9' },
       }, 201);
     }
@@ -219,7 +221,56 @@ describe('external server browser page', () => {
     await waitFor(() => expect(screen.getByTestId('external-terminal').textContent).toBe('server-1:$1:@9'));
     const creation = fetchMock.mock.calls.find(([, init]) => init?.method === 'POST')!;
     expect(creation[0]).toBe('/api/cli/external-servers/server-1/workspaces/%241/tabs');
-    expect(JSON.parse(String(creation[1]?.body))).toEqual({ sessionCreated: '1750000000' });
+    expect(JSON.parse(String(creation[1]?.body))).toEqual({
+      sessionCreated: '1750000000', requestId: expect.any(String),
+    });
+  });
+
+  it('reuses the persisted request ID after an ambiguous tab-creation response', async () => {
+    const successfulFetch = fetchFor(() => externalSource());
+    let postCount = 0;
+    const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
+      if (init?.method === 'POST' && postCount++ === 0) {
+        const { requestId } = JSON.parse(String(init.body)) as { requestId: string };
+        return response({ error: 'outcome unknown', outcomeUnknown: true, requestId }, 503);
+      }
+      return successfulFetch(url, init);
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    mount(createElement(ExternalWorkspaceChromePage));
+
+    const create = await screen.findByRole('button', { name: 'openNewTab' });
+    fireEvent.click(create);
+    expect(await screen.findAllByText('outcome unknown')).not.toHaveLength(0);
+    fireEvent.click(create);
+    await waitFor(() => expect(screen.getByTestId('external-terminal').textContent)
+      .toBe('server-1:$1:@9'));
+
+    const creations = fetchMock.mock.calls.filter(([, init]) => init?.method === 'POST');
+    expect(creations).toHaveLength(2);
+    const requestIds = creations.map(([, init]) =>
+      JSON.parse(String(init?.body)).requestId as string);
+    expect(requestIds[0]).toBeTruthy();
+    expect(requestIds[1]).toBe(requestIds[0]);
+  });
+
+  it('retires a confirmed optimistic tab so external deletion cannot resurrect it', async () => {
+    let source = externalSource();
+    const fetchMock = fetchFor(() => source);
+    vi.stubGlobal('fetch', fetchMock);
+    mount(createElement(ExternalWorkspaceChromePage));
+
+    fireEvent.click(await screen.findByRole('button', { name: 'openNewTab' }));
+    await waitFor(() => expect(screen.getByTestId('external-terminal').textContent)
+      .toBe('server-1:$1:@9'));
+    source = externalSource([tab('@2', 'first', 0, true), tab('@9', 'created', 1)]);
+    fireEvent.click(screen.getByRole('button', { name: 'Refresh external workspaces' }));
+    await waitFor(() => expect(screen.getByRole('tab', { name: 'created' })).toBeTruthy());
+
+    source = externalSource();
+    fireEvent.click(screen.getByRole('button', { name: 'Refresh external workspaces' }));
+    await waitFor(() => expect(screen.queryByRole('tab', { name: 'created' })).toBeNull());
+    expect(screen.getByTestId('external-terminal').textContent).toBe('server-1:$1:@2');
   });
 
   it('keeps an empty desktop Workspace selected by stable ID while populated sessions refresh', async () => {

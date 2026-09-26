@@ -69,15 +69,17 @@ describe('external Workspace/Tab adapter', () => {
       discover: vi.fn(),
       createWindow: vi.fn().mockResolvedValue({
         serverId: 'server-1', sessionId: '$4', sessionCreated: '1750000001', windowId: '@7',
+        requestId: 'window-request',
       }),
     };
 
     await expect(createExternalWorkspaceTab('server-1',
-      { id: '$4', sessionCreated: '1750000001' }, dependencies)).resolves.toEqual({
+      { id: '$4', sessionCreated: '1750000001', requestId: 'window-request' }, dependencies)).resolves.toEqual({
       tabId: '@7', workspaceId: '$4', sessionCreated: '1750000001',
+      requestId: 'window-request',
       externalTerminalTarget: { serverId: 'server-1', sessionId: '$4', windowId: '@7' },
     });
     expect(dependencies.createWindow).toHaveBeenCalledWith('server-1',
-      { id: '$4', sessionCreated: '1750000001' });
+      { id: '$4', sessionCreated: '1750000001', requestId: 'window-request' });
   });
 });
