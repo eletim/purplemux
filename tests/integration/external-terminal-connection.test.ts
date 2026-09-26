@@ -26,13 +26,30 @@ afterEach(() => {
   TestSocket.instances = [];
 });
 
+it('connects managed terminal targets through the standard session transport', () => {
+  vi.stubGlobal('WebSocket', TestSocket);
+  const { result } = renderHook(() => useTerminalWebSocket());
+  act(() => result.current.connect({ kind: 'managed', sessionName: 'managed/session' }, 90, 25));
+
+  const url = new URL(TestSocket.instances[0].url);
+  expect([...url.searchParams.entries()]).toEqual([
+    ['clientId', expect.any(String)],
+    ['session', 'managed/session'],
+    ['cols', '90'],
+    ['rows', '25'],
+  ]);
+});
+
 it('retains an exact discovered external window target across reconnects', () => {
   vi.useFakeTimers();
   vi.stubGlobal('WebSocket', TestSocket);
-  const { result } = renderHook(() => useTerminalWebSocket({
-    externalTerminalTarget: { serverId: 'server/id', sessionId: '$4', windowId: '@9' },
-  }));
-  act(() => result.current.connect('external:$4:@9', 100, 40));
+  const { result } = renderHook(() => useTerminalWebSocket());
+  act(() => result.current.connect({
+    kind: 'external',
+    serverId: 'server/id',
+    sessionId: '$4',
+    windowId: '@9',
+  }, 100, 40));
 
   let url = new URL(TestSocket.instances[0].url);
   expect([...url.searchParams.entries()]).toEqual([
