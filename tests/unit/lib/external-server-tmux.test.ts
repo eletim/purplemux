@@ -16,7 +16,7 @@ vi.mock('@/lib/external-terminal-marker-key', () => ({
 
 import { encodeOwnedExternalTerminalMarker,
   encodePendingExternalTerminalMarker } from '@/lib/external-terminal-marker';
-import { createExternalTerminal, discoverExternalServer,
+import { createExternalSessionWindow, createExternalTerminal, discoverExternalServer,
   rollbackExternalTerminalCreation } from '@/lib/external-server-tmux';
 
 const server = { id: 'server', name: 'dev', socketPath: '/known/socket', socketIdentity: '1:2:3' };
@@ -80,6 +80,35 @@ describe('external tmux runtime decoding', () => {
       'set-option', '-t', '$4', '@purplemux_provenance',
       encodeOwnedExternalTerminalMarker(server, provenance),
     ], expect.objectContaining({ timeout: 5000 }));
+  });
+
+  it('adds an unowned window to one exact stable external session', async () => {
+    mocks.exec.mockResolvedValueOnce({ stdout: '$4:1750000001:@7\n', stderr: '' });
+
+    await expect(createExternalSessionWindow(server,
+      { id: '$4', sessionCreated: '1750000001' })).resolves.toEqual({
+      serverId: 'server', sessionId: '$4', sessionCreated: '1750000001', windowId: '@7',
+    });
+
+    expect(mocks.exec).toHaveBeenCalledOnce();
+    expect(mocks.exec).toHaveBeenCalledWith(expect.anything(), [
+      'if-shell', '-F', '-t', '$4',
+      '#{&&:#{==:#{session_id},$4},#{==:#{session_created},1750000001}}',
+      "new-window -d -P -F '#{session_id}:#{session_created}:#{window_id}' -t $4",
+      'display-message -p purplemux-session-identity-mismatch',
+    ], expect.objectContaining({ timeout: 5000 }));
+    expect(mocks.exec.mock.calls[0][1].join(' ')).not.toContain('new-session');
+    expect(mocks.exec.mock.calls[0][1].join(' ')).not.toContain('@purplemux_provenance');
+  });
+
+  it('fails closed when the external session identity drifts or output names another target', async () => {
+    mocks.exec.mockResolvedValueOnce({ stdout: 'purplemux-session-identity-mismatch\n', stderr: '' });
+    await expect(createExternalSessionWindow(server,
+      { id: '$4', sessionCreated: '1750000001' })).rejects.toThrow('session identity changed');
+
+    mocks.exec.mockResolvedValueOnce({ stdout: '$5:1750000001:@7\n', stderr: '' });
+    await expect(createExternalSessionWindow(server,
+      { id: '$4', sessionCreated: '1750000001' })).rejects.toThrow('Invalid external tmux window creation result');
   });
 
   it.each([

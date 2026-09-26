@@ -3,10 +3,12 @@ import os from 'os';
 import path from 'path';
 import { nanoid } from 'nanoid';
 import { createExternalTerminal as createTmuxExternalTerminal,
+  createExternalSessionWindow as createTmuxExternalSessionWindow,
   freezeExternalServer, rollbackExternalTerminalCreation } from '@/lib/external-server-tmux';
 import { stopExternalTerminals } from '@/lib/external-terminal-resources';
-import type { ICreatedExternalTerminal, ICreateExternalTerminal,
-  IExternalServer, IExternalTerminalProvenance, IRegisterExternalServer } from '@/types/external-server';
+import type { ICreatedExternalTerminal, ICreatedExternalWindow, ICreateExternalTerminal,
+  IExternalServer, IExternalTerminalProvenance, IExternalTmuxSession,
+  IRegisterExternalServer } from '@/types/external-server';
 
 const file = path.join(os.homedir(), '.purplemux', 'external-servers.json');
 const state = globalThis as typeof globalThis & { __purplemuxExternalServerLock?: Promise<void> };
@@ -59,6 +61,14 @@ export const registerExternalServer = (input: IRegisterExternalServer): Promise<
     await write([...servers, server]);
     return server;
   });
+
+export const createExternalSessionWindow = (
+  serverId: string,
+  session: Pick<IExternalTmuxSession, 'id' | 'sessionCreated'>,
+): Promise<ICreatedExternalWindow | undefined> => withLock(async () => {
+  const server = (await read()).find((candidate) => candidate.id === serverId);
+  return server ? createTmuxExternalSessionWindow(server, session) : undefined;
+});
 
 export const createExternalTerminal = (
   serverId: string,

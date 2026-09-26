@@ -36,6 +36,14 @@ export interface ICreatedExternalTerminal {
   provenance: IExternalTerminalProvenance;
 }
 
+/** Exact identities returned after adding an unowned window to an existing external session. */
+export interface ICreatedExternalWindow {
+  serverId: string;
+  sessionId: string;
+  sessionCreated: string;
+  windowId: string;
+}
+
 export interface IExternalTmuxPane {
   id: string;
   index: number;

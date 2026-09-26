@@ -144,6 +144,32 @@ describe('external tmux server registrations', () => {
     expect(tmux('list-sessions', '-F', '#{session_name}')).toBe('external');
   });
 
+  it('adds an unowned window to an exact existing session for immediate selection', async () => {
+    vi.spyOn(os, 'homedir').mockReturnValue(directory);
+    vi.resetModules();
+    const store = await import('@/lib/external-server-store');
+    const server = await store.registerExternalServer({ name: 'external', socketPath: socket });
+    const sessionCreated = tmux('display-message', '-p', '-t', '$0', '#{session_created}');
+
+    const created = await store.createExternalSessionWindow(server.id, { id: '$0', sessionCreated });
+
+    expect(created).toEqual({
+      serverId: server.id, sessionId: '$0', sessionCreated, windowId: '@1',
+    });
+    expect(tmux('list-sessions', '-F', '#{session_id}')).toBe('$0');
+    expect(tmux('display-message', '-p', '-t', '$0:@1',
+      '#{session_id}:#{session_created}:#{window_id}')).toBe(`$0:${sessionCreated}:@1`);
+    expect(tmux('show-options', '-v', '-t', '$0', '@purplemux_provenance')).toBe('');
+    expect((await store.listExternalServers())[0].terminalCreations).toEqual([]);
+
+    await expect(store.createExternalSessionWindow(server.id,
+      { id: '$0', sessionCreated: String(Number(sessionCreated) - 1) }))
+      .rejects.toThrow('session identity changed');
+    expect(tmux('list-windows', '-t', '$0', '-F', '#{window_id}').split('\n')).toEqual(['@0', '@1']);
+    await expect(store.createExternalSessionWindow('missing', { id: '$0', sessionCreated }))
+      .resolves.toBeUndefined();
+  });
+
   it('rolls back an exact created session when history persistence fails, then retries cleanly', async () => {
     vi.spyOn(os, 'homedir').mockReturnValue(directory);
     vi.resetModules();
@@ -177,6 +203,7 @@ describe('external tmux server registrations', () => {
 
     await fs.unlink(path.join(managedDirectory, 'purple'));
     const server = await store.registerExternalServer({ name: 'external', socketPath: socket });
+    const sessionCreated = tmux('display-message', '-p', '-t', '$0', '#{session_created}');
     tmux('kill-server');
     tmux('new-session', '-d', '-s', 'replacement', 'sleep 300');
     await expect(assertExternalServerSocketIdentity(server)).rejects.toThrow('identity changed');
@@ -184,6 +211,9 @@ describe('external tmux server registrations', () => {
       .rejects.toThrow('identity changed');
     await expect(store.createExternalTerminal(server.id, { requestId: 'replaced-socket' }))
       .rejects.toThrow('identity changed');
+    await expect(store.createExternalSessionWindow(server.id, { id: '$0', sessionCreated }))
+      .rejects.toThrow('identity changed');
+    expect(tmux('list-windows', '-t', '$0', '-F', '#{window_id}')).toBe('@0');
   });
 
   it('discovers fresh sessions, windows, and pane foreground metadata without recreating deletions', async () => {
