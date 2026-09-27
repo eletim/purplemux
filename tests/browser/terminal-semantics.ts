@@ -14,6 +14,11 @@ const execFileAsync = promisify(execFile);
 const root = process.cwd();
 const password = 'browser-terminal-test';
 
+interface ITmuxPane {
+  selector: string[];
+  target: string;
+}
+
 const findChrome = async (): Promise<string> => {
   const candidates = [
     process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH,
@@ -60,42 +65,43 @@ const waitForServer = async (origin: string, child: ChildProcess): Promise<void>
   throw new Error('Timed out waiting for purplemux');
 };
 
-const tmux = async (socket: string, ...args: string[]): Promise<string> => {
-  const { stdout } = await execFileAsync('tmux', ['-S', socket, ...args]);
+const tmux = async (pane: ITmuxPane, ...args: string[]): Promise<string> => {
+  const { stdout } = await execFileAsync('tmux', [...pane.selector, ...args]);
   return stdout;
 };
 
-const capture = (socket: string): Promise<string> =>
-  tmux(socket, 'capture-pane', '-p', '-J', '-S', '-200', '-t', 'browser-terminal:0.0');
+const capture = (pane: ITmuxPane): Promise<string> =>
+  tmux(pane, 'capture-pane', '-p', '-J', '-S', '-200', '-t', pane.target);
 
-const waitForClient = async (socket: string): Promise<void> => {
+const waitForClient = async (pane: ITmuxPane): Promise<void> => {
   const deadline = Date.now() + 10_000;
   while (Date.now() < deadline) {
     try {
-      const flags = (await tmux(socket, 'list-clients', '-F', '#{client_flags}')).trim().split('\n');
-      if (flags.some((value) => value && !value.includes('no-output'))) return;
-    } catch { /* the first external client is still attaching */ }
+      const clients = (await tmux(pane, 'list-clients', '-F', '#{client_pid}:#{client_flags}'))
+        .trim().split('\n');
+      if (clients.some((value) => value && !value.includes('no-output'))) return;
+    } catch { /* the first terminal client is still attaching */ }
     await new Promise((resolve) => setTimeout(resolve, 100));
   }
-  throw new Error('Timed out waiting for the external tmux client');
+  throw new Error(`Timed out waiting for the tmux client for ${pane.target}`);
 };
 
-const waitForCapture = async (socket: string, text: string, timeout = 10_000): Promise<string> => {
+const waitForCapture = async (pane: ITmuxPane, text: string, timeout = 10_000): Promise<string> => {
   const deadline = Date.now() + timeout;
   let contents = '';
   while (Date.now() < deadline) {
-    contents = await capture(socket);
+    contents = await capture(pane);
     if (contents.includes(text)) return contents;
     await new Promise((resolve) => setTimeout(resolve, 100));
   }
   throw new Error(`Timed out waiting for terminal output: ${text}\n${contents}`);
 };
 
-const waitForTmuxValue = async (socket: string, format: string, expected: string): Promise<void> => {
+const waitForTmuxValue = async (pane: ITmuxPane, format: string, expected: string): Promise<void> => {
   const deadline = Date.now() + 10_000;
   while (Date.now() < deadline) {
     const value = (await tmux(
-      socket, 'display-message', '-p', '-t', 'browser-terminal:0.0', format,
+      pane, 'display-message', '-p', '-t', pane.target, format,
     )).trim();
     if (value === expected) return;
     await new Promise((resolve) => setTimeout(resolve, 100));
@@ -103,11 +109,11 @@ const waitForTmuxValue = async (socket: string, format: string, expected: string
   throw new Error(`Timed out waiting for tmux ${format}=${expected}`);
 };
 
-const waitForCaptureCount = async (socket: string, text: string, count: number): Promise<string> => {
+const waitForCaptureCount = async (pane: ITmuxPane, text: string, count: number): Promise<string> => {
   const deadline = Date.now() + 10_000;
   let contents = '';
   while (Date.now() < deadline) {
-    contents = await capture(socket);
+    contents = await capture(pane);
     if (contents.split(text).length - 1 >= count) return contents;
     await new Promise((resolve) => setTimeout(resolve, 100));
   }
@@ -136,14 +142,56 @@ const typeCommand = async (page: Page, command: string): Promise<void> => {
   await page.keyboard.press('Enter');
 };
 
+const copySentinelWithDrag = async (page: Page, pane: ITmuxPane): Promise<string> => {
+  const sentinel = 'COPY_BROWSER_SENTINEL';
+  await typeCommand(page,
+    `for i in $(seq 1 80); do echo COPY_BROWSER_FILL; done; for i in 1 2 3 4 5; do echo ${sentinel}; done`);
+  await waitForCaptureCount(pane, sentinel, 5);
+  await page.evaluate(() => navigator.clipboard.writeText(''));
+
+  const box = await terminalScreen(page).boundingBox();
+  assert(box, 'terminal screen has no browser geometry');
+  const rows = Number((await tmux(
+    pane, 'display-message', '-p', '-t', pane.target, '#{pane_height}',
+  )).trim());
+  const character = await page.locator('.xterm-char-measure-element').first().boundingBox();
+  assert(character, 'xterm character geometry is unavailable');
+  const cellWidth = character.width / 32;
+  const renderedRows = Math.floor(box.height / character.height);
+  const visibleRows = Math.min(rows, renderedRows);
+  const selectionStartY = box.y + ((visibleRows - 7.5) * character.height);
+  const selectionEndY = box.y + ((visibleRows - 1.5) * character.height);
+  await page.mouse.move(box.x + (0.5 * cellWidth), selectionStartY);
+  await page.mouse.down();
+  await page.mouse.move(box.x + (22.5 * cellWidth), selectionEndY, { steps: 10 });
+  await page.mouse.up();
+
+  let copied = '';
+  const clipboardDeadline = Date.now() + 10_000;
+  while (Date.now() < clipboardDeadline) {
+    copied = await page.evaluate(async () => navigator.clipboard.readText());
+    if (copied.includes(sentinel)) break;
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  const copiedSentinels = copied.split(/\r?\n/).filter((line) => line === sentinel);
+  assert(copiedSentinels.length > 0,
+    `tmux drag selection must reach the browser clipboard, received ${JSON.stringify(copied)}`);
+  return copiedSentinels[0];
+};
+
 const main = async () => {
   const temporary = await fs.mkdtemp(path.join(os.tmpdir(), 'purplemux-browser-terminal-'));
   const socket = path.join(temporary, 'external.sock');
+  const externalPane: ITmuxPane = {
+    selector: ['-S', socket],
+    target: 'browser-terminal:0.0',
+  };
   const probe = path.join(temporary, 'input-probe.py');
   const port = await freePort();
   const origin = `http://localhost:${port}`;
   let server: ChildProcess | undefined;
   let browser: Awaited<ReturnType<typeof chromium.launch>> | undefined;
+  let managedSession: string | undefined;
   let serverLog = '';
 
   try {
@@ -152,10 +200,12 @@ mode = sys.argv[1]
 fd = sys.stdin.fileno()
 old = termios.tcgetattr(fd)
 tty.setraw(fd)
-if mode == "mouse":
-    os.write(sys.stdout.fileno(), b"\x1b[?1000h\x1b[?1006hMOUSE_READY\r\n")
+mouse = mode.startswith("mouse-")
+label = mode.upper().replace("-", "_")
+if mouse:
+    os.write(sys.stdout.fileno(), b"\x1b[?1000h\x1b[?1006h" + label.encode() + b"_READY\r\n")
 else:
-    os.write(sys.stdout.fileno(), (mode.upper() + "_READY\r\n").encode())
+    os.write(sys.stdout.fileno(), (label + "_READY\r\n").encode())
 data = b""
 deadline = 2.0
 while True:
@@ -163,12 +213,12 @@ while True:
     if not readable:
         break
     data += os.read(fd, 64)
-    if mode == "plain" or data.endswith((b"M", b"m")):
+    if not mouse or data.endswith((b"M", b"m")):
         break
-if mode == "mouse":
+if mouse:
     os.write(sys.stdout.fileno(), b"\x1b[?1000l\x1b[?1006l")
 termios.tcsetattr(fd, termios.TCSADRAIN, old)
-print("PROBE_" + mode.upper() + ":" + data.hex(), flush=True)
+print("PROBE_" + label + ":" + data.hex(), flush=True)
 `);
 
     await execFileAsync('tmux', [
@@ -222,80 +272,72 @@ print("PROBE_" + mode.upper() + ":" + data.hex(), flush=True)
     });
     await page.goto(`${origin}/external-server`);
     await terminalScreen(page).waitFor({ state: 'visible', timeout: 30_000 });
-    await waitForClient(socket);
+    await waitForClient(externalPane);
     await Promise.race([
       firstTerminalOutput,
       new Promise((_, reject) => setTimeout(() => reject(new Error('Terminal output did not connect')), 10_000)),
     ]);
-    if ((await tmux(socket, 'display-message', '-p', '-t', 'browser-terminal:0.0', '#{pane_in_mode}')).trim() === '1') {
-      await tmux(socket, 'send-keys', '-t', 'browser-terminal:0.0', '-X', 'cancel');
+    if ((await tmux(externalPane, 'display-message', '-p', '-t', externalPane.target, '#{pane_in_mode}')).trim() === '1') {
+      await tmux(externalPane, 'send-keys', '-t', externalPane.target, '-X', 'cancel');
     }
 
-    await tmux(socket, 'send-keys', '-t', 'browser-terminal:0.0', `python3 ${probe} keyboard`, 'Enter');
-    await waitForCapture(socket, 'KEYBOARD_READY');
+    await tmux(externalPane, 'send-keys', '-t', externalPane.target, `python3 ${probe} keyboard`, 'Enter');
+    await waitForCapture(externalPane, 'KEYBOARD_READY');
     await page.locator('.xterm-helper-textarea').focus();
     await page.keyboard.press('k');
-    assert.match(await waitForCapture(socket, 'PROBE_KEYBOARD:'), /PROBE_KEYBOARD:6b/,
+    assert.match(await waitForCapture(externalPane, 'PROBE_KEYBOARD:'), /PROBE_KEYBOARD:6b/,
       'a real browser key event must reach the external PTY');
     await typeCommand(page, "printf 'KEYBOARD_OK\\n'");
-    await waitForCaptureCount(socket, 'KEYBOARD_OK', 2);
+    await waitForCaptureCount(externalPane, 'KEYBOARD_OK', 2);
 
     await typeCommand(page, `python3 ${probe} plain`);
-    await waitForCapture(socket, 'PLAIN_READY');
+    await waitForCapture(externalPane, 'PLAIN_READY');
     const box = await terminalScreen(page).boundingBox();
     assert(box, 'terminal screen has no browser geometry');
     await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
     await page.locator('.xterm-helper-textarea').focus();
     await page.keyboard.type('q');
-    assert.match(await waitForCapture(socket, 'PROBE_PLAIN:'), /PROBE_PLAIN:71/,
+    assert.match(await waitForCapture(externalPane, 'PROBE_PLAIN:'), /PROBE_PLAIN:71/,
       'a browser click must not become PTY text when mouse reporting is disabled');
 
     await typeCommand(page, "for i in $(seq 1 80); do printf 'SCROLL_%03d\\n' \"$i\"; done");
-    await waitForCapture(socket, 'SCROLL_080');
+    await waitForCapture(externalPane, 'SCROLL_080');
+    await typeCommand(page, `python3 ${probe} wheel`);
+    await waitForCapture(externalPane, 'WHEEL_READY');
     await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
     await page.mouse.wheel(0, -600);
-    await waitForTmuxValue(socket, '#{pane_in_mode}', '1');
-    await tmux(socket, 'send-keys', '-t', 'browser-terminal:0.0', '-X', 'cancel');
+    await waitForTmuxValue(externalPane, '#{pane_in_mode}', '1');
+    await page.keyboard.press('q');
+    await waitForTmuxValue(externalPane, '#{pane_in_mode}', '0');
+    await page.keyboard.press('q');
+    assert.match(await waitForCapture(externalPane, 'PROBE_WHEEL:'), /PROBE_WHEEL:71/,
+      'wheel input handled by tmux scrollback must not also become PTY text');
 
-    await typeCommand(page, `python3 ${probe} mouse`);
-    await waitForCapture(socket, 'MOUSE_READY');
+    await typeCommand(page, `python3 ${probe} mouse-click`);
+    await waitForCapture(externalPane, 'MOUSE_CLICK_READY');
     await page.mouse.click(box.x + box.width / 3, box.y + box.height / 3);
-    assert.match(await waitForCapture(socket, 'PROBE_MOUSE:'), /PROBE_MOUSE:1b5b3c(?:30|31)[0-9a-f]*4d/,
-      'tmux must forward SGR mouse reports to a TUI');
+    assert.match(await waitForCapture(externalPane, 'PROBE_MOUSE_CLICK:'),
+      /PROBE_MOUSE_CLICK:1b5b3c(?:30|31)[0-9a-f]*4d/,
+      'tmux must forward SGR click reports to a TUI');
 
-    await typeCommand(page, "printf 'COPY_BROWSER_SENTINEL\\n'");
-    await waitForCaptureCount(socket, 'COPY_BROWSER_SENTINEL', 2);
-    await page.evaluate(() => navigator.clipboard.writeText(''));
-    const rows = Number((await tmux(
-      socket, 'display-message', '-p', '-t', 'browser-terminal:0.0', '#{pane_height}',
-    )).trim());
-    const character = await page.locator('.xterm-char-measure-element').first().boundingBox();
-    assert(character, 'xterm character geometry is unavailable');
-    const cellWidth = character.width / 32;
-    const cellHeight = character.height;
-    const selectionY = box.y + ((rows - 0.5) * cellHeight);
-    await page.mouse.move(box.x + (0.5 * cellWidth), selectionY);
-    await page.mouse.down();
-    await page.mouse.move(box.x + (22.5 * cellWidth), selectionY, { steps: 10 });
-    await page.mouse.up();
-    let copied = '';
-    const clipboardDeadline = Date.now() + 10_000;
-    while (Date.now() < clipboardDeadline) {
-      copied = await page.evaluate(async () => navigator.clipboard.readText());
-      if (copied.includes("printf 'COPY")) break;
-      await new Promise((resolve) => setTimeout(resolve, 100));
-    }
-    assert(copied.includes("printf 'COPY"),
-      `tmux drag selection must reach the browser clipboard, received ${JSON.stringify(copied)}`);
+    await typeCommand(page, `python3 ${probe} mouse-wheel`);
+    await waitForCapture(externalPane, 'MOUSE_WHEEL_READY');
+    await page.mouse.move(box.x + box.width / 3, box.y + box.height / 3);
+    await page.mouse.wheel(0, -100);
+    assert.match(await waitForCapture(externalPane, 'PROBE_MOUSE_WHEEL:'),
+      /PROBE_MOUSE_WHEEL:1b5b3c3634[0-9a-f]*4d/,
+      'tmux must forward SGR wheel reports to a TUI');
+
+    const externalCopied = await copySentinelWithDrag(page, externalPane);
 
     await page.evaluate(() => navigator.clipboard.writeText("printf 'PASTE_OK\\n'"));
     await page.locator('.xterm-helper-textarea').focus();
     await page.keyboard.press(process.platform === 'darwin' ? 'Meta+V' : 'Control+Shift+V');
     await page.keyboard.press('Enter');
-    await waitForCaptureCount(socket, 'PASTE_OK', 2);
+    await waitForCaptureCount(externalPane, 'PASTE_OK', 2);
 
-    await tmux(socket, 'send-keys', '-t', 'browser-terminal:0.0', `python3 ${probe} ime`, 'Enter');
-    await waitForCapture(socket, 'IME_READY');
+    await tmux(externalPane, 'send-keys', '-t', externalPane.target, `python3 ${probe} ime`, 'Enter');
+    await waitForCapture(externalPane, 'IME_READY');
     await page.locator('.xterm-helper-textarea').evaluate((textarea) => {
       textarea.dispatchEvent(new CompositionEvent('compositionstart', { data: '', bubbles: true }));
       (textarea as HTMLTextAreaElement).value = '한글';
@@ -305,8 +347,51 @@ print("PROBE_" + mode.upper() + ":" + data.hex(), flush=True)
       }));
       textarea.dispatchEvent(new CompositionEvent('compositionend', { data: '한글', bubbles: true }));
     });
-    assert.match(await waitForCapture(socket, 'PROBE_IME:'), /PROBE_IME:ed959ceab880/,
+    assert.match(await waitForCapture(externalPane, 'PROBE_IME:'), /PROBE_IME:ed959ceab880/,
       'IME composition must commit its UTF-8 text exactly once');
+
+    const workspaceResponse = await context.request.post(`${origin}/api/workspace`, {
+      data: { directory: temporary, name: 'Managed browser semantics' },
+    });
+    assert.equal(workspaceResponse.status(), 200, await workspaceResponse.text());
+    const workspace = await workspaceResponse.json() as { id: string };
+    const activeResponse = await context.request.patch(`${origin}/api/workspace/active`, {
+      data: { activeWorkspaceId: workspace.id },
+    });
+    assert.equal(activeResponse.status(), 200, await activeResponse.text());
+    const layoutResponse = await context.request.get(`${origin}/api/layout?workspace=${workspace.id}`);
+    assert.equal(layoutResponse.status(), 200, await layoutResponse.text());
+    const layout = await layoutResponse.json() as {
+      root: { type: 'pane'; tabs: Array<{ id: string; sessionName: string }> };
+    };
+    assert.equal(layout.root.type, 'pane', 'managed baseline should start with one pane');
+    const managedTab = layout.root.tabs[0];
+    assert(managedTab, 'managed baseline has no terminal tab');
+    const managedPane: ITmuxPane = {
+      selector: ['-L', 'purple'],
+      target: managedTab.sessionName,
+    };
+    managedSession = managedTab.sessionName;
+    const managedPage = await context.newPage();
+    let managedOutputReady!: () => void;
+    const firstManagedOutput = new Promise<void>((resolve) => { managedOutputReady = resolve; });
+    managedPage.on('websocket', (websocket) => {
+      if (websocket.url().includes('/api/terminal')) {
+        websocket.on('framereceived', ({ payload }) => {
+          if (typeof payload !== 'string') managedOutputReady();
+        });
+      }
+    });
+    await managedPage.goto(`${origin}/?workspace=${workspace.id}&tab=${managedTab.id}`);
+    await terminalScreen(managedPage).waitFor({ state: 'visible', timeout: 30_000 });
+    await Promise.race([
+      firstManagedOutput,
+      new Promise((_, reject) => setTimeout(() => reject(new Error('Managed terminal output did not connect')), 10_000)),
+    ]);
+    const managedCopied = await copySentinelWithDrag(managedPage, managedPane);
+    assert.equal(managedCopied, externalCopied,
+      'external drag/select/copy behavior must match the managed terminal baseline');
+    await managedPage.close();
 
     const touchContext = await browser.newContext({
       viewport: { width: 390, height: 844 },
@@ -315,7 +400,7 @@ print("PROBE_" + mode.upper() + ":" + data.hex(), flush=True)
     });
     const touchPage = await openTerminal(touchContext, origin);
     await touchPage.waitForTimeout(500);
-    await tmux(socket, 'send-keys', '-t', 'browser-terminal:0.0', 'C-l');
+    await tmux(externalPane, 'send-keys', '-t', externalPane.target, 'C-l');
     await touchPage.evaluate(() => {
       const screen = document.querySelector('.xterm-screen');
       const terminal = screen?.closest('.xterm')?.parentElement;
@@ -354,6 +439,9 @@ print("PROBE_" + mode.upper() + ":" + data.hex(), flush=True)
       server.kill('SIGTERM');
       await Promise.race([once(server, 'exit'), new Promise((resolve) => setTimeout(resolve, 10_000))]);
       if (server.exitCode === null) server.kill('SIGKILL');
+    }
+    if (managedSession) {
+      await execFileAsync('tmux', ['-L', 'purple', 'kill-session', '-t', `=${managedSession}`]).catch(() => {});
     }
     await execFileAsync('tmux', ['-S', socket, 'kill-server']).catch(() => {});
     await fs.rm(temporary, { recursive: true, force: true });
