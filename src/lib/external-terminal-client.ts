@@ -10,9 +10,9 @@ import { bindExternalTerminalSession, EXTERNAL_TERMINAL_SESSION_OPTION,
 const EXTERNAL_TERMINAL_SESSION_PREFIX = '__purplemux_external_client_';
 
 /**
- * A private grouped session gives PurpleMux its own current-window state. The
- * session exists only while this control client is attached, so tmux cleans it
- * after disconnects and process crashes without PurpleMux killing any session.
+ * A private session linked to one exact window gives PurpleMux isolated client
+ * state. The session exists only while this control client is attached, so tmux
+ * cleans it after disconnects and process crashes without killing the source.
  */
 export class ExternalTerminalClientResource {
   private buffer = '';
@@ -24,6 +24,7 @@ export class ExternalTerminalClientResource {
   private windowCols = 0;
   private windowRows = 0;
   private active = false;
+  private identityTimer: ReturnType<typeof setInterval> | null = null;
   private readonly ownedClientNames = new Set<string>();
   private readonly clientsSeenOutsideShadow = new Set<string>();
   private readonly exited: Promise<void>;
@@ -63,6 +64,16 @@ export class ExternalTerminalClientResource {
     // '=' form inside the same command queue that creates the session.
     const shadowTarget = shadowName;
     if (backend.kind !== 'external') throw new Error('External terminal client requires an external backend');
+    const { stdout: sourceOutput } = await execTmux(backend, [
+      'display-message', '-p', '-t', `${sessionId}:${windowId}`,
+      '#{session_id}\t#{window_id}\t#{window_width}\t#{window_height}',
+    ], { timeout: 5000, signal });
+    const [sourceId, sourceWindowId, sourceCols, sourceRows] = sourceOutput.trimEnd().split('\t');
+    if (sourceId !== sessionId || sourceWindowId !== windowId
+      || !/^\d+$/.test(sourceCols) || !/^\d+$/.test(sourceRows)
+      || Number(sourceCols) < 1 || Number(sourceRows) < 1) {
+      throw new Error('External terminal source identity changed');
+    }
     const registration = registerExternalTerminalSession({
       socketIdentity, sessionName: shadowName, marker,
     });
@@ -71,15 +82,17 @@ export class ExternalTerminalClientResource {
     try {
       client = await spawnTmuxPty(backend, [
         '-u', '-C',
-        'new-session', '-d', '-s', shadowName, '-t', sessionId,
+        'new-session', '-d', '-s', shadowName, '-x', sourceCols, '-y', sourceRows,
+        ';', 'link-window', '-s', `${sessionId}:${windowId}`, '-t', `${shadowTarget}:1`,
+        ';', 'kill-window', '-t', `${shadowTarget}:0`,
         ';', 'set-option', '-t', shadowTarget, 'destroy-unattached', 'on',
         ';', 'set-option', '-t', shadowTarget, EXTERNAL_TERMINAL_SESSION_OPTION, marker,
         ';', 'set-option', '-t', shadowTarget, 'status', 'off',
         ';', 'select-window', '-t', `${shadowTarget}:${windowId}`,
-        ';', 'attach-session', '-f', 'read-only,ignore-size,no-output',
+        ';', 'attach-session', '-f', 'read-only,no-output',
         '-t', `${shadowTarget}:${windowId}`,
       ], {
-        name: 'xterm-256color', cols: 80, rows: 24,
+        name: 'xterm-256color', cols: Number(sourceCols), rows: Number(sourceRows),
         cwd: PRISTINE_ENV.HOME || '/', env: buildShellEnv(),
       }, {
         signal,
@@ -124,6 +137,11 @@ export class ExternalTerminalClientResource {
     this.drainProtocol();
     if (!await this.check([], signal)) throw new Error('External terminal client unavailable');
     this.active = true;
+    this.identityTimer = setInterval(() => {
+      void this.inspectIdentity().then((safe) => {
+        if (!safe) this.fail();
+      });
+    }, 250);
   }
 
   private fail(): void {
@@ -188,17 +206,16 @@ export class ExternalTerminalClientResource {
   private inspectIdentity(signal?: AbortSignal): Promise<boolean> {
     return execTmux(this.backend, [
       'display-message', '-p', '-t', `${this.sourceSessionId}:${this.windowId}`,
-      '#{session_id}\t#{session_group}\t#{window_id}',
+      '#{session_id}\t#{window_id}',
       ';', 'display-message', '-p', '-t', `${this.shadowSessionId}:${this.windowId}`,
-      `#{session_id}\t#{session_name}\t#{session_group}\t#{window_id}\t#{${EXTERNAL_TERMINAL_SESSION_OPTION}}`,
+      `#{session_id}\t#{session_name}\t#{window_id}\t#{${EXTERNAL_TERMINAL_SESSION_OPTION}}`,
     ], { timeout: 5000, signal }).then(({ stdout }) => {
       const [source, shadow, extra] = stdout.trimEnd().split('\n');
-      const [sourceId, sourceGroup, sourceWindow] = (source ?? '').split('\t');
-      const [shadowId, shadowName, shadowGroup, shadowWindow, marker] = (shadow ?? '').split('\t');
+      const [sourceId, sourceWindow] = (source ?? '').split('\t');
+      const [shadowId, shadowName, shadowWindow, marker] = (shadow ?? '').split('\t');
       return extra === undefined && sourceId === this.sourceSessionId && sourceWindow === this.windowId
         && shadowId === this.shadowSessionId && shadowName === this.shadowSessionName
-        && shadowWindow === this.windowId && marker === this.marker
-        && !!sourceGroup && sourceGroup === shadowGroup;
+        && shadowWindow === this.windowId && marker === this.marker;
     }).catch(() => false);
   }
 
@@ -240,6 +257,10 @@ export class ExternalTerminalClientResource {
   stop(): Promise<void> {
     if (this.stopPromise) return this.stopPromise;
     this.stopped = true;
+    if (this.identityTimer) {
+      clearInterval(this.identityTimer);
+      this.identityTimer = null;
+    }
     this.fail();
     const detach = this.shadowSessionId
       ? execTmux(this.backend, ['detach-client', '-s', this.shadowSessionId], { timeout: 5000 }).then(() => {})

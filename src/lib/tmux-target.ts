@@ -147,6 +147,7 @@ export const attachTmuxPty = async (
     controlMode?: boolean;
     noOutput?: boolean;
     readOnly?: boolean;
+    ignoreSize?: boolean;
     historyCapture?: { bufferName: string; historyLines: number };
     signal?: AbortSignal;
     onSpawn?: (client: pty.IPty) => void;
@@ -157,7 +158,8 @@ export const attachTmuxPty = async (
   if (settings.historyCapture && controlMode) {
     throw new Error('History capture requires a normal tmux client');
   }
-  const attachArgs = ['attach-session', ...(settings.readOnly ? ['-r'] : []), '-t', sessionName];
+  const attachArgs = ['attach-session', ...(settings.readOnly ? ['-r'] : []),
+    ...(settings.ignoreSize ? ['-f', 'ignore-size'] : []), '-t', sessionName];
   const clientArgs = settings.historyCapture
     ? ['-u', 'capture-pane', '-e', '-S', `-${settings.historyCapture.historyLines}`,
       '-E', '-1', '-b', settings.historyCapture.bufferName, '-t', sessionName, ';', ...attachArgs]

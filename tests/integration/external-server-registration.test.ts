@@ -99,7 +99,7 @@ describe('external tmux server registrations', () => {
     const gatedBackend = externalTmuxTarget(socket, async (signal) => {
       await stableBackend.validate(signal);
       validations += 1;
-      if (validations === 2) await gate;
+      if (validations === 4) await gate;
     });
     const creating = ExternalTerminalClientResource.create(
       gatedBackend, '$0', '@0', server.socketIdentity);

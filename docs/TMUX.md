@@ -110,6 +110,13 @@ Defined in `src/lib/terminal-protocol.ts` and imported by `terminal-server.ts`.
 8. pty.onExit → cleanup (distinguish detach vs session exit)
 ```
 
+Registered external windows use the same WebSocket → PTY → interactive tmux-client
+path. A hidden session links only the authorized window: a control-mode client guards
+its frozen identity and anchors the original geometry, while a writable `ignore-size`
+client carries stdout, keyboard, paste, mouse, copy-mode, and local PTY resize. Initial
+history is captured to a temporary tmux buffer before that client attaches. External
+kill frames remain rejected, and disconnect cleanup removes only the hidden session.
+
 ---
 
 ## Title-based Process Detection (Client)

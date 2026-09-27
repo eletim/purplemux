@@ -15,10 +15,9 @@ import { encodeStdout } from '@/lib/terminal-protocol';
 import { reconcileTabCwd } from '@/lib/layout-store';
 import { createLogger } from '@/lib/logger';
 import { externalTerminals } from '@/lib/external-terminal-resources';
-import { deleteExternalHistoryBuffer, readExternalHistoryBuffer,
-  sendExternalInput } from '@/lib/external-terminal-safety';
+import { deleteExternalHistoryBuffer, readExternalHistoryBuffer } from '@/lib/external-terminal-safety';
 import { ExternalTerminalClientResource } from '@/lib/external-terminal-client';
-import { attachTmuxPty, managedTmuxTarget, type TmuxTarget } from '@/lib/tmux-target';
+import { attachTmuxPty, managedTmuxTarget, validateTmuxTarget, type TmuxTarget } from '@/lib/tmux-target';
 import { getExternalServer } from '@/lib/external-server-store';
 import { resolveExternalServerWindow } from '@/lib/external-server-tmux';
 
@@ -89,6 +88,7 @@ const attachToSession = (target: TmuxTarget, sessionName: string, cols: number, 
     signal?: AbortSignal;
     controlMode?: boolean;
     readOnly?: boolean;
+    ignoreSize?: boolean;
     historyCapture?: { bufferName: string; historyLines: number };
     onSpawn?: (client: pty.IPty) => void;
   } = {},
@@ -310,7 +310,7 @@ export const handleConnection = async (ws: WebSocket, request: IncomingMessage, 
   let connectionKind: 'managed' | 'external-server' = 'managed';
   let externalClient: ExternalTerminalClientResource | undefined;
   let webStdinQueue = Promise.resolve();
-  let externalInputQueue = Promise.resolve();
+  let externalOperationQueue = Promise.resolve();
   const externalAbort = new AbortController();
   let currentCols = 80;
   let currentRows = 24;
@@ -331,7 +331,7 @@ export const handleConnection = async (ws: WebSocket, request: IncomingMessage, 
   };
 
   const queueExternalOperation = (operation: () => void | Promise<void>): void => {
-    externalInputQueue = externalInputQueue.then(async () => {
+    externalOperationQueue = externalOperationQueue.then(async () => {
       if (conn?.cleaned) return;
       if (!await externalWindowIsSafe()) throw new Error('External client left registered window');
       await operation();
@@ -368,12 +368,8 @@ export const handleConnection = async (ws: WebSocket, request: IncomingMessage, 
     switch (msg.type) {
       case MSG_STDIN: {
         if (connectionKind !== 'managed') {
-          queueExternalOperation(() => sendExternalInput(
-            tmuxTarget,
-            sessionName,
-            msg.payload,
-            externalAbort.signal,
-          ));
+          const data = textDecoder.decode(msg.payload);
+          queueExternalOperation(() => { ptyProcess?.write(data); });
           break;
         }
         ptyProcess.write(textDecoder.decode(msg.payload));
@@ -381,13 +377,12 @@ export const handleConnection = async (ws: WebSocket, request: IncomingMessage, 
       }
       case MSG_WEB_STDIN: {
         if (connectionKind !== 'managed') {
-          queueExternalOperation(() => sendExternalInput(
-            tmuxTarget,
-            sessionName,
-            msg.payload,
-            externalAbort.signal,
-            true,
-          ));
+          const data = textDecoder.decode(msg.payload);
+          queueExternalOperation(async () => {
+            await exitCopyMode(externalClient!.sessionTarget, tmuxTarget);
+            await validateTmuxTarget(tmuxTarget, externalAbort.signal);
+            ptyProcess?.write(data);
+          });
           break;
         }
         const data = textDecoder.decode(msg.payload);
@@ -409,16 +404,16 @@ export const handleConnection = async (ws: WebSocket, request: IncomingMessage, 
               conn.currentRows = newRows;
               if (!conn.capturePaused) {
                 if (connectionKind === 'external-server') {
-                  // External panes are shared resources. Keep the browser's local
-                  // dimensions without letting this client resize their geometry.
-                  queueExternalOperation(() => {});
+                  // The external display client is ignore-size, so resize only its
+                  // local PTY while preserving the shared pane's geometry.
+                  queueExternalOperation(() => { ptyProcess?.resize(newCols, newRows); });
                 }
                 else ptyProcess.resize(newCols, newRows);
                 if (sizeChanged) startThrottleWindow('resize');
               }
             } else {
               if (connectionKind === 'external-server') {
-                queueExternalOperation(() => {});
+                queueExternalOperation(() => { ptyProcess?.resize(newCols, newRows); });
               }
               else ptyProcess.resize(newCols, newRows);
             }
@@ -529,12 +524,12 @@ export const handleConnection = async (ws: WebSocket, request: IncomingMessage, 
       ptyProcess = await attachToSession(
         tmuxTarget,
         externalClient.sessionTarget,
-        externalClient.cols,
-        externalClient.rows,
+        currentCols,
+        currentRows,
         {
           signal: externalAbort.signal,
           controlMode: false,
-          readOnly: true,
+          ignoreSize: true,
           historyCapture: {
             bufferName: externalHistoryBufferName,
             historyLines: EXTERNAL_SCROLLBACK_LINES,
@@ -611,6 +606,7 @@ export const handleConnection = async (ws: WebSocket, request: IncomingMessage, 
         ws.close(1008, 'External client left registered window');
         return;
       }
+      ptyProcess.resize(currentCols, currentRows);
     }
     else ptyProcess.resize(currentCols, currentRows);
   }
@@ -775,7 +771,11 @@ export const handleConnection = async (ws: WebSocket, request: IncomingMessage, 
       log.debug(
         `pty exited (pid: ${ptyProcess!.pid}, code: ${exitCode}, signal: ${signal}, detaching: ${conn.detaching})`,
       );
-      cleanup(conn, !conn.detaching);
+      const invalidExternalExit = connectionKind === 'external-server' && !conn.detaching;
+      if (invalidExternalExit && ws.readyState === WebSocket.OPEN) {
+        ws.close(1008, 'External client left registered window');
+      }
+      cleanup(conn, !conn.detaching && !invalidExternalExit);
     }),
   );
 };

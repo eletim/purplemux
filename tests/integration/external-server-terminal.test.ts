@@ -3,6 +3,7 @@ import fs from 'fs/promises';
 import os from 'os';
 import path from 'path';
 import { createServer, type Server } from 'http';
+import * as pty from 'node-pty';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { WebSocket, WebSocketServer } from 'ws';
 import {
@@ -128,8 +129,10 @@ describe('shared terminal path for discovered external windows', () => {
     await vi.waitFor(() => expect(first.output()).toContain('PREEXISTING_045'));
     expect(first.output()).toContain('PREEXISTING_001');
     expect(first.output()).toContain('PREEXISTING_045');
-    expect(tmux('list-clients', '-F', '#{client_flags}').split('\n')
-      .every((flags) => flags.includes('read-only'))).toBe(true);
+    const clientFlags = tmux('list-clients', '-F', '#{client_flags}').split('\n');
+    expect(clientFlags).toHaveLength(2);
+    expect(clientFlags.some((flags) => flags.includes('read-only') && flags.includes('no-output'))).toBe(true);
+    expect(clientFlags.some((flags) => flags.includes('ignore-size') && !flags.includes('read-only'))).toBe(true);
 
     first.ws.send(encodeStdin('\x02n'));
     await vi.waitFor(() => expect(tmux('list-clients', '-F', '#{window_id}').split('\n'))
@@ -170,6 +173,28 @@ describe('shared terminal path for discovered external windows', () => {
     expect(second.output()).not.toContain('FIRST_WINDOW');
   }, 30_000);
 
+  it('routes wheel, copy-mode keys, and TUI mouse reporting through the interactive client PTY', async () => {
+    tmux('set-option', '-g', 'mouse', 'on');
+    const connected = await connect();
+    await vi.waitFor(() => expect(connected.output()).toContain('FIRST_WINDOW'));
+
+    connected.ws.send(encodeStdin('\x1b[<64;10;10M'));
+    await vi.waitFor(() => expect(tmux('display-message', '-p', '-t', '$0:@0', '#{pane_in_mode}')).toBe('1'));
+    connected.ws.send(encodeStdin('q'));
+    await vi.waitFor(() => expect(tmux('display-message', '-p', '-t', '$0:@0', '#{pane_in_mode}')).toBe('0'));
+
+    connected.ws.send(encodeStdin(
+      `node -e "process.stdin.setRawMode(true);process.stdout.write('TUI_READY\\n\\x1b[?1000h\\x1b[?1006h');`
+      + `process.stdin.once('data',d=>{process.stdout.write('TUI_MOUSE_'+d.toString('hex')+'\\n');process.exit()})"\r`,
+    ));
+    await vi.waitFor(() => expect(connected.output()).toContain('TUI_READY'));
+    connected.ws.send(encodeStdin('\x1b[<0;12;8M'));
+    await vi.waitFor(() => expect(connected.output()).toContain('TUI_MOUSE_1b5b3c303b31323b384d'));
+
+    connected.ws.send(encodeStdin("printf 'AFTER_MOUSE_INPUT\\n'\r"));
+    await vi.waitFor(() => expect(connected.output()).toContain('AFTER_MOUSE_INPUT'));
+  });
+
   it('hides and cleans its client session while isolating selection and geometry', async () => {
     tmux('select-window', '-t', '$0:@0');
     const originalSize = tmux('display-message', '-p', '-t', '$0:@1', '#{pane_width}:#{pane_height}');
@@ -200,6 +225,30 @@ describe('shared terminal path for discovered external windows', () => {
     await vi.waitFor(() => expect(connected.closed()?.code).toBe(1000));
     await vi.waitFor(() => expect(tmux('list-sessions', '-F', '#{session_id}')).toBe('$0'));
     expect(tmux('display-message', '-p', '-t', '$0:@1', '#{window_id}')).toBe('@1');
+  });
+
+  it('keeps an existing tmux client selection independent from the interactive shadow', async () => {
+    const peer = pty.spawn('tmux', ['-f', '/dev/null', '-S', socketPath, 'attach-session', '-t', '$0'], {
+      name: 'xterm-256color', cols: 90, rows: 30, cwd: directory,
+    });
+    const peerOutput = peer.onData(() => {});
+    try {
+      await vi.waitFor(() => expect(tmux('list-clients', '-F', '#{client_pid}\t#{session_id}\t#{window_id}'))
+        .toContain(`${peer.pid}\t$0\t@0`));
+
+      const connected = await connect('$0', '@1');
+      await vi.waitFor(() => expect(connected.output()).toContain('SECOND_WINDOW'));
+      connected.ws.send(encodeStdin('\x02n'));
+      connected.ws.send(encodeStdin("printf 'SHADOW_INPUT\\n'\r"));
+
+      await vi.waitFor(() => expect(connected.output()).toContain('SHADOW_INPUT'));
+      expect(tmux('list-clients', '-F', '#{client_pid}\t#{session_id}\t#{window_id}'))
+        .toContain(`${peer.pid}\t$0\t@0`);
+      expect(tmux('capture-pane', '-p', '-t', '$0:@0')).not.toContain('SHADOW_INPUT');
+    } finally {
+      peerOutput.dispose();
+      peer.kill();
+    }
   });
 
   it('preserves output produced while history and live attachment are initialized', async () => {
