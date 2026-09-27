@@ -123,6 +123,73 @@ const waitForCaptureCount = async (pane: ITmuxPane, text: string, count: number)
   throw new Error(`Timed out waiting for ${count} terminal occurrences: ${text}\n${contents}`);
 };
 
+const processIsAlive = (pid: number): boolean => {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ESRCH') return false;
+    throw error;
+  }
+};
+
+const signalProcess = (pid: number, signal: NodeJS.Signals): void => {
+  try {
+    process.kill(pid, signal);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ESRCH') throw error;
+  }
+};
+
+const waitForProcessExit = async (pids: Set<number>, timeout: number): Promise<number[]> => {
+  const deadline = Date.now() + timeout;
+  let live = [...pids].filter(processIsAlive);
+  while (live.length > 0 && Date.now() < deadline) {
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    live = live.filter(processIsAlive);
+  }
+  return live;
+};
+
+const recordTmuxProcesses = async (pane: ITmuxPane, pids: Set<number>): Promise<void> => {
+  const serverPid = Number((await tmux(pane, 'display-message', '-p', '#{pid}')).trim());
+  assert(Number.isSafeInteger(serverPid) && serverPid > 0, 'tmux did not report a valid server PID');
+  pids.add(serverPid);
+  const clients = (await tmux(pane, 'list-clients', '-F', '#{client_pid}')).trim();
+  for (const value of clients.split('\n')) {
+    if (!value) continue;
+    const clientPid = Number(value);
+    assert(Number.isSafeInteger(clientPid) && clientPid > 0, 'tmux did not report a valid client PID');
+    pids.add(clientPid);
+  }
+};
+
+const terminateTmuxServer = async (pane: ITmuxPane, pids: Set<number>): Promise<void> => {
+  let commandFailure: unknown;
+  try {
+    await recordTmuxProcesses(pane, pids);
+  } catch (error) {
+    commandFailure = error;
+  }
+
+  try {
+    await tmux(pane, 'kill-server');
+  } catch (error) {
+    commandFailure ??= error;
+    if (![...pids].some(processIsAlive)) return;
+  }
+
+  let live = await waitForProcessExit(pids, 3_000);
+  for (const pid of live) signalProcess(pid, 'SIGTERM');
+  live = await waitForProcessExit(new Set(live), 3_000);
+  for (const pid of live) signalProcess(pid, 'SIGKILL');
+  live = await waitForProcessExit(new Set(live), 3_000);
+  if (live.length > 0) {
+    const cause = commandFailure instanceof Error ? `; tmux command failed: ${commandFailure.message}` : '';
+    throw new Error(`tmux processes did not exit: ${live.join(', ')}${cause}`);
+  }
+};
+
 const terminalScreen = (page: Page) => page.locator('.xterm-screen');
 
 const login = async (context: BrowserContext, origin: string): Promise<void> => {
@@ -202,6 +269,7 @@ const main = async () => {
   const origin = `http://localhost:${port}`;
   let server: ChildProcess | undefined;
   let browser: Awaited<ReturnType<typeof chromium.launch>> | undefined;
+  const externalTmuxPids = new Set<number>();
   let serverLog = '';
 
   try {
@@ -245,6 +313,7 @@ print("PROBE_" + label + ":" + data.hex(), flush=True)
       'new-session', '-d', '-x', '100', '-y', '30', '-s', 'browser-terminal',
       'exec bash --noprofile --norc',
     ]);
+    await recordTmuxProcesses(externalPane, externalTmuxPids);
 
     const serverEnv: NodeJS.ProcessEnv = {
       ...process.env,
@@ -296,6 +365,7 @@ print("PROBE_" + label + ":" + data.hex(), flush=True)
     await page.goto(`${origin}/external-server`);
     await terminalScreen(page).waitFor({ state: 'visible', timeout: 30_000 });
     await waitForClient(externalPane);
+    await recordTmuxProcesses(externalPane, externalTmuxPids);
     await Promise.race([
       firstTerminalOutput,
       new Promise((_, reject) => setTimeout(() => reject(new Error('Terminal output did not connect')), 10_000)),
@@ -450,6 +520,7 @@ print("PROBE_" + label + ":" + data.hex(), flush=True)
     const wheelDelta = await touchPage.evaluate(() =>
       (window as typeof window & { __terminalWheelDelta?: number }).__terminalWheelDelta);
     assert.equal(wheelDelta, 50, 'mobile touch movement must become a wheel event on xterm');
+    await recordTmuxProcesses(externalPane, externalTmuxPids);
     await touchContext.close();
 
     console.log('Browser terminal semantics verified in real Chrome.');
@@ -465,7 +536,7 @@ print("PROBE_" + label + ":" + data.hex(), flush=True)
       if (server.exitCode === null) server.kill('SIGKILL');
     }
     await execFileAsync('tmux', ['-L', 'purple', 'kill-server'], { env: managedTmuxEnv }).catch(() => {});
-    await execFileAsync('tmux', ['-S', socket, 'kill-server']).catch(() => {});
+    await terminateTmuxServer(externalPane, externalTmuxPids);
     await fs.rm(temporary, { recursive: true, force: true });
   }
 };
