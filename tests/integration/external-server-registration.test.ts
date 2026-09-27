@@ -6,7 +6,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { assertExternalServerSocketIdentity, captureExternalServerWindow, discoverExternalServer,
   externalServerTmuxTarget, resolveExternalServerWindow } from '@/lib/external-server-tmux';
 import { ExternalTerminalClientResource } from '@/lib/external-terminal-client';
-import { registeredExternalTerminalSessions } from '@/lib/external-terminal-session-registry';
+import { registeredExternalTerminalSessions,
+  unregisterExternalTerminalSession } from '@/lib/external-terminal-session-registry';
 import { execTmux, externalTmuxTarget } from '@/lib/tmux-target';
 
 let directory: string;
@@ -177,7 +178,7 @@ describe('external tmux server registrations', () => {
     expect(abortedProbes).toBe(1);
   });
 
-  it('keeps a shadow hidden when cleanup cannot destroy it', async () => {
+  it('identity-verifies and deletes a shadow when destroy-unattached is ineffective', async () => {
     vi.spyOn(os, 'homedir').mockReturnValue(directory);
     vi.resetModules();
     const store = await import('@/lib/external-server-store');
@@ -192,9 +193,48 @@ describe('external tmux server registrations', () => {
 
     await resource.stop();
 
-    expect(tmux('has-session', '-t', shadow![0])).toBe('');
-    expect((await discoverExternalServer(server)).sessions.map(({ id }) => id)).toEqual(['$0']);
-    tmux('kill-session', '-t', shadow![0]);
+    expect(() => tmux('has-session', '-t', shadow![0])).toThrow();
+    expect(tmux('display-message', '-p', '-t', '$0:@0', '#{session_id}\t#{window_id}'))
+      .toBe('$0\t@0');
+
+    // Model a new PurpleMux process with no process-local shadow registrations.
+    const runtime = globalThis as typeof globalThis & {
+      __purplemux_external_terminal_sessions?: unknown;
+    };
+    const registrations = runtime.__purplemux_external_terminal_sessions;
+    delete runtime.__purplemux_external_terminal_sessions;
+    vi.resetModules();
+    try {
+      const restarted = await import('@/lib/external-server-tmux');
+      expect((await restarted.discoverExternalServer(server)).sessions.map(({ id }) => id))
+        .toEqual(['$0']);
+    } finally {
+      runtime.__purplemux_external_terminal_sessions = registrations;
+    }
+  }, 30_000);
+
+  it('does not delete a shadow whose ownership marker changed', async () => {
+    vi.spyOn(os, 'homedir').mockReturnValue(directory);
+    vi.resetModules();
+    const store = await import('@/lib/external-server-store');
+    const server = await store.registerExternalServer({ name: 'external', socketPath: socket });
+    const resource = await ExternalTerminalClientResource.create(
+      externalServerTmuxTarget(server), '$0', '@0', server.socketIdentity);
+    const registration = registeredExternalTerminalSessions(server.socketIdentity)[0]!;
+    expect(registration).toBeDefined();
+    const shadowId = tmux('display-message', '-p', '-t', `=${registration.sessionName}:`,
+      '#{session_id}');
+    tmux('set-option', '-t', shadowId, 'destroy-unattached', 'off');
+    tmux('set-option', '-t', shadowId, '@purplemux_internal_external_client',
+      'v1:00000000-0000-4000-8000-000000000000');
+
+    await resource.stop();
+
+    expect(tmux('has-session', '-t', shadowId)).toBe('');
+    expect(tmux('display-message', '-p', '-t', '$0:@0', '#{session_id}\t#{window_id}'))
+      .toBe('$0\t@0');
+    tmux('kill-session', '-t', shadowId);
+    unregisterExternalTerminalSession(registration);
   }, 30_000);
 
   it('adds an unowned window to an exact existing session for immediate selection', async () => {

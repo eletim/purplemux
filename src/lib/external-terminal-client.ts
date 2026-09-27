@@ -108,6 +108,8 @@ export class ExternalTerminalClientResource {
     } catch (error) {
       try { client?.kill(); } catch { /* Client already exited. */ }
       await resource?.exited;
+      await ExternalTerminalClientResource.destroyShadowSession(
+        backend, shadowName, marker, resource?.shadowSessionId || undefined);
       const destroyed = await ExternalTerminalClientResource.sessionWasDestroyed(backend, shadowName);
       if (destroyed) unregisterExternalTerminalSession(registration);
       throw error;
@@ -165,6 +167,28 @@ export class ExternalTerminalClientResource {
         return false;
       }
     }
+  }
+
+  private static async destroyShadowSession(
+    backend: TmuxTarget,
+    sessionName: string,
+    marker: string,
+    sessionId?: string,
+  ): Promise<void> {
+    const target = sessionId ?? `=${sessionName}`;
+    const nameAndMarkerMatch = `#{&&:#{==:#{session_name},${sessionName}},`
+      + `#{==:#{${EXTERNAL_TERMINAL_SESSION_OPTION}},${marker}}}`;
+    const identityMatches = sessionId
+      ? `#{&&:#{==:#{session_id},${sessionId}},${nameAndMarkerMatch}}`
+      : nameAndMarkerMatch;
+    try {
+      // Keep verification and deletion in one tmux command queue so a changed
+      // target can never turn cleanup into deletion of a user session.
+      await execTmux(backend, [
+        'if-shell', '-F', '-t', target, identityMatches,
+        `kill-session -t ${target}`,
+      ], { timeout: 5000 });
+    } catch { /* A missing, changed, or unavailable session is left untouched. */ }
   }
 
   private receive(data: string): void {
@@ -293,6 +317,8 @@ export class ExternalTerminalClientResource {
       try { this.client.kill(); } catch { /* Client already exited. */ }
     }
     this.stopPromise = Promise.all([this.exited, detach, this.identityWatchdog]).then(async () => {
+      await ExternalTerminalClientResource.destroyShadowSession(
+        this.backend, this.shadowSessionName, this.marker, this.shadowSessionId || undefined);
       if (await ExternalTerminalClientResource.sessionWasDestroyed(
         this.backend, this.shadowSessionName)) unregisterExternalTerminalSession(this.registration);
     });
