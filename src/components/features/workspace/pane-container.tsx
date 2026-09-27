@@ -13,7 +13,6 @@ import useTabMetadataStore from '@/hooks/use-tab-metadata-store';
 import { useLayoutStore } from '@/hooks/use-layout';
 import useConfigStore, { type TGitAskProvider } from '@/hooks/use-config-store';
 import useIsMobileDevice from '@/hooks/use-is-mobile-device';
-import { toCtrlChar } from '@/lib/terminal-keys';
 import TerminalSurface from '@/components/features/workspace/terminal-surface';
 import { useShallow } from 'zustand/react/shallow';
 import { buildClaudeLaunchCommand } from '@/lib/providers/claude/client';
@@ -135,29 +134,6 @@ const PaneContainer = memo(({ paneId, paneNumber }: IPaneContainerProps) => {
   const isTouchDevice = useIsMobileDevice();
   const claudeShowTerminal = useConfigStore((s) => s.claudeShowTerminal);
 
-  const [ctrlArmed, setCtrlArmed] = useState(false);
-  const [shiftArmed, setShiftArmed] = useState(false);
-  const ctrlArmedRef = useRef(false);
-  const shiftArmedRef = useRef(false);
-  useEffect(() => {
-    ctrlArmedRef.current = ctrlArmed;
-  }, [ctrlArmed]);
-  useEffect(() => {
-    shiftArmedRef.current = shiftArmed;
-  }, [shiftArmed]);
-
-  const applyArmedModifier = useCallback((data: string): string => {
-    if (data.length !== 1) return data;
-    if (ctrlArmedRef.current) {
-      setCtrlArmed(false);
-      return toCtrlChar(data) ?? data;
-    }
-    if (shiftArmedRef.current) {
-      setShiftArmed(false);
-      return data.toUpperCase();
-    }
-    return data;
-  }, []);
   const effectiveTerminalCollapsed = activeTab?.terminalCollapsed ?? !claudeShowTerminal;
   const [isTerminalCollapsed, setIsTerminalCollapsed] = useState(effectiveTerminalCollapsed);
   const [hasEverConnected, setHasEverConnected] = useState(false);
@@ -525,15 +501,15 @@ const PaneContainer = memo(({ paneId, paneNumber }: IPaneContainerProps) => {
     status,
     retryCount,
     disconnectReason,
-    connect,
+    connectTarget,
     reconnect,
     sendStdin,
-    sendWebStdin,
+    sendMobileInput,
     sendResize,
+    modifierKeys,
     theme: terminalTheme,
   } = useTerminalSurface({
     fontSizeMode: isAgentPanel ? 'agent' : 'configured',
-    onInput: (data, send) => send(applyArmedModifier(data)),
     onResize: sendEffectiveResize,
     onTitleChange: handleTerminalTitleChange,
     customKeyEventHandler: handleCustomKeyEvent,
@@ -600,14 +576,17 @@ const PaneContainer = memo(({ paneId, paneNumber }: IPaneContainerProps) => {
     });
 
     connectedSessionRef.current = tab.sessionName;
-    const { cols, rows } = fit();
     const isAgentTab = tab.panelType === 'claude-code' || tab.panelType === 'codex-cli';
-    const initialSize = normalizeTerminalSize(
-      cols,
-      rows,
-      isAgentTab ? (tab.terminalCollapsed ?? !claudeShowTerminal) : false,
+    connectTarget(
+      { kind: 'managed', sessionName: tab.sessionName },
+      {
+        initialSize: ({ cols, rows }) => normalizeTerminalSize(
+          cols,
+          rows,
+          isAgentTab ? (tab.terminalCollapsed ?? !claudeShowTerminal) : false,
+        ),
+      },
     );
-    connect({ kind: 'managed', sessionName: tab.sessionName }, initialSize.cols, initialSize.rows);
   }, [isReady, activeTabId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
@@ -1276,7 +1255,7 @@ const PaneContainer = memo(({ paneId, paneNumber }: IPaneContainerProps) => {
                   agentSessionId={claudeSessionId}
                   provider={isCodex ? 'codex' : 'claude'}
                   cliState={claudeCliState}
-                  sendStdin={sendWebStdin}
+                  sendStdin={sendMobileInput}
                   terminalWsConnected={status === 'connected'}
                   visible
                   focusTerminal={focus}
@@ -1340,10 +1319,7 @@ const PaneContainer = memo(({ paneId, paneNumber }: IPaneContainerProps) => {
                 )}
                 keyBar={showKeyBar ? {
                   sendStdin,
-                  ctrlActive: ctrlArmed,
-                  shiftActive: shiftArmed,
-                  setCtrlActive: setCtrlArmed,
-                  setShiftActive: setShiftArmed,
+                  ...modifierKeys,
                 } : undefined}
               />
             </div>

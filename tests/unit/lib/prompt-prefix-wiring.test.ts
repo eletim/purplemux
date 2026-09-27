@@ -21,7 +21,7 @@ describe('prompt-prefix terminal wiring', () => {
     const source = readSource(relativePath);
 
     expect(source).toContain("import useTerminalSurface from '@/hooks/use-terminal-surface'");
-    expect(source).toContain('useTerminalSurface({');
+    expect(source).toContain('useTerminalSurface(');
   });
 
   it.each([
