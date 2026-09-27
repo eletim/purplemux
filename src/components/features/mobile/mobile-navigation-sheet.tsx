@@ -1,4 +1,4 @@
-import { useMemo, useState, useCallback, useRef } from 'react';
+import { useMemo, useState, useCallback, useRef, type ReactNode } from 'react';
 import {
   ChevronDown,
   ChevronRight,
@@ -35,6 +35,7 @@ import WorkspaceStatusIndicator from '@/components/features/workspace/workspace-
 import SidebarRateLimits from '@/components/layout/sidebar-rate-limits';
 import MobileWorkspaceGroupHeader from '@/components/features/mobile/mobile-workspace-group-header';
 import RenameGroupDialog from '@/components/features/workspace/rename-group-dialog';
+import type { IWorkspaceChromeSourceAdapter } from '@/types/workspace-chrome';
 
 const WorkspacePortsLabel = ({ workspaceId }: { workspaceId: string }) => {
   const label = useTabStore(
@@ -47,35 +48,28 @@ const WorkspacePortsLabel = ({ workspaceId }: { workspaceId: string }) => {
 interface IMobileNavigationSheetProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  workspaces: IWorkspace[];
-  activeWorkspaceId: string | null;
-  workspaceLayouts: Record<string, IPaneNode[]>;
-  activePaneId: string | null;
-  activeTabId: string | null;
-  onSelectSurface: (workspaceId: string, paneId: string, tabId: string) => void;
-  onCreateWorkspace: () => Promise<void>;
+  source: IWorkspaceChromeSourceAdapter;
+  navigationHeader?: ReactNode;
   onOpenSettings: () => void;
 }
 
 const MobileNavigationSheet = ({
   open,
   onOpenChange,
-  workspaces,
-  activeWorkspaceId,
-  workspaceLayouts,
-  activePaneId,
-  activeTabId,
-  onSelectSurface,
-  onCreateWorkspace,
+  source,
+  navigationHeader,
   onOpenSettings,
 }: IMobileNavigationSheetProps) => {
+  const {
+    workspaces, groups, activeWorkspaceId, workspaceLayouts,
+    activePaneId, activeTabId, capabilities,
+  } = source;
   const t = useTranslations('mobile');
   const tt = useTranslations('terminal');
   const tc = useTranslations('common');
   const ts = useTranslations('sidebar');
   const router = useRouter();
   const mobileTab = useWorkspaceStore((s) => s.sidebarTab);
-  const groups = useWorkspaceStore((s) => s.groups);
 
   const handleMobileTabChange = useCallback((v: string) => {
     useWorkspaceStore.getState().setSidebarTab(v as 'workspace' | 'sessions');
@@ -92,7 +86,7 @@ const MobileNavigationSheet = ({
   const [longPressTabId, setLongPressTabId] = useState<string | null>(null);
   const longPressTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const metadata = useTabMetadataStore((s) => s.metadata);
-  const { items: sidebarItems } = useSidebarItems();
+  const { items: sidebarItems } = useSidebarItems(capabilities.persistenceControls);
 
   const handleToggleGroup = useCallback((groupId: string) => {
     useWorkspaceStore.getState().toggleGroupCollapsed(groupId);
@@ -113,9 +107,16 @@ const MobileNavigationSheet = ({
 
   const handleToggleWorkspace = useCallback(
     (workspaceId: string) => {
+      const hasTabs = (workspaceLayouts[workspaceId] ?? [])
+        .some((pane) => pane.tabs.length > 0);
+      if (!hasTabs) {
+        source.selectWorkspace(workspaceId);
+        onOpenChange(false);
+        return;
+      }
       setExpandedWsId((prev) => (prev === workspaceId ? null : workspaceId));
     },
-    [],
+    [onOpenChange, source, workspaceLayouts],
   );
 
   const handleLongPressStart = useCallback((tabId: string) => {
@@ -206,7 +207,8 @@ const MobileNavigationSheet = ({
               setLongPressTabId(null);
               return;
             }
-            onSelectSurface(workspaceId, pane.id, tab.id);
+            onOpenChange(false);
+            source.selectTab(workspaceId, pane.id, tab.id);
           }}
           onTouchStart={() => handleLongPressStart(tab.id)}
           onTouchEnd={handleLongPressEnd}
@@ -215,10 +217,10 @@ const MobileNavigationSheet = ({
           aria-current={isTabActive ? 'true' : undefined}
           data-ui-selection="rail"
         >
-          <TabStatusIndicator
+          {capabilities.agentControls && <TabStatusIndicator
             tabId={tab.id}
             panelType={panelType}
-          />
+          />}
           <span className="mt-0.5 flex w-4 shrink-0 items-center justify-center">
             {panelType === 'claude-code' ? (
               <ClaudeCodeIcon size={16} />
@@ -277,7 +279,8 @@ const MobileNavigationSheet = ({
     | { type: 'ungrouped'; workspaces: IWorkspace[] };
 
   const sections = useMemo<TSection[]>(() => {
-    const validGroupIds = new Set(groups.map((g) => g.id));
+    const visibleGroups = capabilities.organizeWorkspaces ? groups : [];
+    const validGroupIds = new Set(visibleGroups.map((g) => g.id));
     const byGroup = new Map<string, IWorkspace[]>();
     const ungrouped: IWorkspace[] = [];
     for (const ws of workspaces) {
@@ -290,14 +293,14 @@ const MobileNavigationSheet = ({
         ungrouped.push(ws);
       }
     }
-    const out: TSection[] = groups.map((g) => ({
+    const out: TSection[] = visibleGroups.map((g) => ({
       type: 'group',
       group: g,
       workspaces: byGroup.get(g.id) ?? [],
     }));
     out.push({ type: 'ungrouped', workspaces: ungrouped });
     return out;
-  }, [workspaces, groups]);
+  }, [capabilities.organizeWorkspaces, workspaces, groups]);
 
   const renderWorkspaceRow = (ws: IWorkspace) => {
     const isExpanded = ws.id === expandedWsId;
@@ -322,8 +325,8 @@ const MobileNavigationSheet = ({
           )}
           <div className="min-w-0 flex-1">
             <span className="block truncate">{ws.name}</span>
-            <WorkspacePortsLabel workspaceId={ws.id} />
-            {!isExpanded && (
+            {capabilities.persistenceControls && <WorkspacePortsLabel workspaceId={ws.id} />}
+            {capabilities.agentControls && !isExpanded && (
               <WorkspaceStatusIndicator
                 workspaceId={ws.id}
                 tabs={(workspaceLayouts[ws.id] ?? []).flatMap((pane) =>
@@ -364,7 +367,7 @@ const MobileNavigationSheet = ({
             <X size={20} />
           </button>
           <SheetTitle className="sr-only">Navigation</SheetTitle>
-          <Tabs
+          {capabilities.agentControls ? <Tabs
             value={mobileTab}
             onValueChange={handleMobileTabChange}
             className="min-w-0 flex-1 gap-0"
@@ -382,10 +385,16 @@ const MobileNavigationSheet = ({
                 )}
               </TabsTrigger>
             </TabsList>
-          </Tabs>
+          </Tabs> : (
+            <span className="min-w-0 flex-1 truncate text-sm font-medium">
+              {source.label ?? 'WORKSPACE'}
+            </span>
+          )}
         </SheetHeader>
 
-        {mobileTab === 'workspace' ? (
+        {navigationHeader}
+
+        {!capabilities.agentControls || mobileTab === 'workspace' ? (
           <div
             className="flex-1 overflow-y-auto"
             style={{ scrollbarWidth: 'none' }}
@@ -424,11 +433,14 @@ const MobileNavigationSheet = ({
         )}
 
         <div className="shrink-0 border-t">
-          {mobileTab === 'workspace' && (
+          {capabilities.createWorkspace && mobileTab === 'workspace' && (
             <div className="flex items-stretch">
               <button
                 className="flex flex-1 items-center gap-2 px-4 py-3 text-sm text-muted-foreground transition-colors hover:bg-accent"
-                onClick={onCreateWorkspace}
+                onClick={() => {
+                  onOpenChange(false);
+                  void source.createWorkspace?.();
+                }}
               >
                 <Plus size={16} />
                 Workspace
@@ -442,8 +454,8 @@ const MobileNavigationSheet = ({
               </button>
             </div>
           )}
-          <SidebarRateLimits />
-          <div className="flex items-center gap-0.5 px-3 pt-1 pb-4">
+          {capabilities.providerControls && <SidebarRateLimits />}
+          {capabilities.persistenceControls && <div className="flex items-center gap-0.5 px-3 pt-1 pb-4">
             {sidebarItems.map((item) => {
               const isExternal = item.url.startsWith('http://') || item.url.startsWith('https://');
               const navPath = isExternal ? `/webview?url=${encodeURIComponent(item.url)}` : item.url;
@@ -472,11 +484,11 @@ const MobileNavigationSheet = ({
             >
               <Settings size={15} />
             </button>
-          </div>
+          </div>}
         </div>
       </SheetContent>
 
-      {renameTargetGroup && (
+      {capabilities.organizeWorkspaces && renameTargetGroup && (
         <RenameGroupDialog
           open={!!renameTargetGroup}
           onOpenChange={(v) => { if (!v) setRenameGroupId(null); }}

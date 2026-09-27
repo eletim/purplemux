@@ -1,14 +1,22 @@
 import { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import { useTranslations } from 'next-intl';
-import { X, ChevronLeft, ChevronRight, AlertTriangle } from 'lucide-react';
+import { X, Plus, ChevronLeft, ChevronRight, AlertTriangle } from 'lucide-react';
+import dynamic from 'next/dynamic';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
+import Spinner from '@/components/ui/spinner';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import type { ITab, TPanelType } from '@/types/terminal';
 import useTabDrag from '@/hooks/use-tab-drag';
 import PaneTabItem from '@/components/features/workspace/pane-tab-item';
-import PaneNewTabMenu from '@/components/features/workspace/pane-new-tab-menu';
 import AgentModeSwitcher from '@/components/features/workspace/agent-mode-switcher';
+import type { IWorkspaceChromeCapabilities } from '@/types/workspace-chrome';
+import { managedWorkspaceChromeCapabilities } from '@/types/workspace-chrome';
+
+const PaneNewTabMenu = dynamic(
+  () => import('@/components/features/workspace/pane-new-tab-menu'),
+  { ssr: false },
+);
 
 interface IPaneTabBarProps {
   paneId: string;
@@ -31,6 +39,7 @@ interface IPaneTabBarProps {
   onMoveTab: (tabId: string, fromPaneId: string, toIndex: number) => void;
   onFocusPane: () => void;
   onRetry: () => void;
+  capabilities?: IWorkspaceChromeCapabilities;
 }
 
 const PaneTabBar = ({
@@ -54,6 +63,7 @@ const PaneTabBar = ({
   onMoveTab,
   onFocusPane,
   onRetry,
+  capabilities = managedWorkspaceChromeCapabilities,
 }: IPaneTabBarProps) => {
   const t = useTranslations('terminal');
   const tc = useTranslations('common');
@@ -158,10 +168,10 @@ const PaneTabBar = ({
         'flex h-[36px] shrink-0 items-stretch border-b border-border transition-colors',
         isDragOverFromOther ? 'bg-accent-color/10' : 'bg-background',
       )}
-      onDragEnter={handleTabBarDragEnter}
-      onDragLeave={handleTabBarDragLeave}
-      onDragOver={(e) => e.preventDefault()}
-      onDrop={handleDrop}
+      onDragEnter={capabilities.reorderTabs ? handleTabBarDragEnter : undefined}
+      onDragLeave={capabilities.reorderTabs ? handleTabBarDragLeave : undefined}
+      onDragOver={capabilities.reorderTabs ? (e) => e.preventDefault() : undefined}
+      onDrop={capabilities.reorderTabs ? handleDrop : undefined}
     >
       {hasOverflow && (
         <button
@@ -192,7 +202,7 @@ const PaneTabBar = ({
             dropSide={dropTarget?.id === tab.id ? dropTarget.side : null}
             displayTitle={tabTitles?.[tab.id]}
             currentProcess={tabProcesses?.[tab.id]}
-            modeSwitcher={tab.id === activeTabId && canSwitchMode(tab.panelType) ? (
+            modeSwitcher={capabilities.providerControls && tab.id === activeTabId && canSwitchMode(tab.panelType) ? (
               <AgentModeSwitcher
                 tabId={tab.id}
                 paneId={paneId}
@@ -209,6 +219,10 @@ const PaneTabBar = ({
             onDragEnd={endDrag}
             onDragOver={(e) => handleDragOver(e, tab.id)}
             onDragLeave={clearDropTarget}
+            canRename={capabilities.renameTab}
+            canClose={capabilities.closeTab}
+            canReorder={capabilities.reorderTabs}
+            showStatus={capabilities.agentControls}
           />
         ))}
       </div>
@@ -228,14 +242,30 @@ const PaneTabBar = ({
 
       <TooltipProvider>
         <div className="flex shrink-0 items-stretch">
-          <PaneNewTabMenu
-            paneId={paneId}
-            isCreating={isCreating}
-            activePanelType={sortedTabs.find((tab) => tab.id === activeTabId)?.panelType}
-            onCreateTab={onCreateTab}
-          />
+          {capabilities.createTab && (capabilities.providerControls ? (
+            <PaneNewTabMenu
+              paneId={paneId}
+              isCreating={isCreating}
+              activePanelType={sortedTabs.find((tab) => tab.id === activeTabId)?.panelType}
+              onCreateTab={onCreateTab}
+            />
+          ) : (
+            <div className="flex items-center border-l border-r border-border px-0.5">
+              <button
+                className={cn(
+                  'flex h-7 w-7 items-center justify-center text-muted-foreground hover:text-foreground',
+                  isCreating && 'pointer-events-none opacity-50',
+                )}
+                disabled={isCreating}
+                aria-label={t('openNewTab')}
+                onClick={() => onCreateTab('terminal')}
+              >
+                {isCreating ? <Spinner className="h-3 w-3" /> : <Plus className="h-3.5 w-3.5" />}
+              </button>
+            </div>
+          ))}
 
-          {paneCount >= 2 && (
+          {capabilities.lifecycleControls && paneCount >= 2 && (
             <div className="flex items-center px-0.5">
               <Tooltip>
                 <TooltipTrigger

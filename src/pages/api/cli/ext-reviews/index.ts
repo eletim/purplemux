@@ -13,7 +13,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   if (!authed) return res.status(403).json({ error: 'Forbidden' });
   try {
     if (req.method === 'GET') return res.status(200).json({ reviews: await listExtReviews() });
-    const review = await createExtReview(req.body);
+    const review = await createExtReview({ socketPath: req.body?.socketPath,
+      session: req.body?.session, windowTargets: req.body?.windowTargets });
     return res.status(201).json({ ...review, url: `/ext-review/${review.id}` });
   } catch (error) {
     return res.status(error instanceof ExtReviewError ? 400 : 500)

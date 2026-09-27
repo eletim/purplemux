@@ -25,6 +25,10 @@ interface IPaneTabItemProps {
   onDragEnd: () => void;
   onDragOver: (e: React.DragEvent) => void;
   onDragLeave: () => void;
+  canRename?: boolean;
+  canClose?: boolean;
+  canReorder?: boolean;
+  showStatus?: boolean;
 }
 
 const PaneTabItem = ({
@@ -43,6 +47,10 @@ const PaneTabItem = ({
   onDragEnd,
   onDragOver,
   onDragLeave,
+  canRename = true,
+  canClose = true,
+  canReorder = true,
+  showStatus = true,
 }: IPaneTabItemProps) => {
   const t = useTranslations('terminal');
   const [isEditing, setIsEditing] = useState(false);
@@ -56,6 +64,7 @@ const PaneTabItem = ({
   }, [isEditing]);
 
   const startEditing = () => {
+    if (!canRename) return;
     setIsEditing(true);
     setEditName(tab.name);
   };
@@ -90,11 +99,11 @@ const PaneTabItem = ({
         onFocusPane();
       }}
       onDoubleClick={startEditing}
-      draggable={!isEditing}
-      onDragStart={onDragStart}
-      onDragEnd={onDragEnd}
-      onDragOver={onDragOver}
-      onDragLeave={onDragLeave}
+      draggable={canReorder && !isEditing}
+      onDragStart={canReorder ? onDragStart : undefined}
+      onDragEnd={canReorder ? onDragEnd : undefined}
+      onDragOver={canReorder ? onDragOver : undefined}
+      onDragLeave={canReorder ? onDragLeave : undefined}
     >
       {dropSide === 'left' && (
         <div className="absolute top-1 bottom-1 left-0 w-0.5 bg-ui-blue" />
@@ -115,7 +124,7 @@ const PaneTabItem = ({
         />
       ) : (
         <>
-          <TabStatusIndicator tabId={tab.id} panelType={tab.panelType} />
+          {showStatus && <TabStatusIndicator tabId={tab.id} panelType={tab.panelType} />}
           {tab.panelType === 'claude-code' ? (
             <ClaudeCodeIcon className="mx-0.5 h-3 w-3 shrink-0" />
           ) : tab.panelType === 'codex-cli' ? (
@@ -144,7 +153,7 @@ const PaneTabItem = ({
         </>
       )}
 
-      <button
+      {canClose && <button
         className={cn(
           '-mr-0.5 flex h-6 w-6 shrink-0 items-center justify-center text-muted-foreground hover:text-foreground',
           isActive ? 'visible' : 'invisible group-hover:visible',
@@ -156,7 +165,7 @@ const PaneTabItem = ({
         aria-label={t('closeTabLabel')}
       >
         <X className="h-3 w-3" />
-      </button>
+      </button>}
 
       {dropSide === 'right' && (
         <div className="absolute top-1 right-0 bottom-1 w-0.5 bg-ui-blue" />

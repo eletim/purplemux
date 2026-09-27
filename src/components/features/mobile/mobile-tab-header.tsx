@@ -31,7 +31,9 @@ import {
   AlertDialogTitle,
   AlertDialogTrigger,
 } from '@/components/ui/alert-dialog';
-import type { TPanelType } from '@/types/terminal';
+import type { IExternalTerminalTarget, TPanelType } from '@/types/terminal';
+import type { IWorkspaceChromeCapabilities } from '@/types/workspace-chrome';
+import { managedWorkspaceChromeCapabilities } from '@/types/workspace-chrome';
 
 const iconButtonClassName = 'relative inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground';
 const iconClassName = 'h-4 w-4 shrink-0';
@@ -72,31 +74,38 @@ interface IMobileTabHeaderProps {
   tabId: string;
   tabName: string;
   sessionName: string | null;
+  externalTerminalTarget?: IExternalTerminalTarget | null;
   cwdKey: string | null;
   panelType: TPanelType;
   onSwitchPanelType: (type: TPanelType) => void;
   onCreateTab: () => void;
   onOpenGit: () => void;
   onClose: () => void;
+  capabilities?: IWorkspaceChromeCapabilities;
 }
 
 const MobileTabHeader = ({
   tabId,
   tabName,
   sessionName,
+  externalTerminalTarget,
   cwdKey,
   panelType,
   onSwitchPanelType,
   onCreateTab,
   onOpenGit,
   onClose,
+  capabilities = managedWorkspaceChromeCapabilities,
 }: IMobileTabHeaderProps) => {
   const t = useTranslations('mobile');
   const tc = useTranslations('common');
   const tt = useTranslations('terminal');
   const [copyOpen, setCopyOpen] = useState(false);
   const [modeDrawerOpen, setModeDrawerOpen] = useState(false);
-  const showCopy = panelType === 'terminal' && !!sessionName;
+  const copyTarget = externalTerminalTarget
+    ? { kind: 'external' as const, ...externalTerminalTarget }
+    : sessionName ? { kind: 'managed' as const, sessionName } : null;
+  const showCopy = capabilities.terminalCopy && panelType === 'terminal' && !!copyTarget;
   const tabEntry = useTabStore((s) => s.tabs[tabId]);
   const gitPhase = useGitStatusStore((state) => state.phase);
   const gitStatus = useGitStatusStore((state) => state.status);
@@ -108,6 +117,7 @@ const MobileTabHeader = ({
   const hasGitInlineStatus = gitIndicators.length > 0 || gitPhase === 'error';
 
   useEffect(() => {
+    if (!capabilities.gitControls) return undefined;
     const target = { cwdKey, tmuxSession: sessionName };
     resetGitStatusForTarget(target);
     void fetchGitStatusForTarget(target);
@@ -118,8 +128,8 @@ const MobileTabHeader = ({
       void fetchGitStatusForTarget(target);
     }, GIT_STATUS_REFRESH_MS);
     return () => window.clearInterval(timer);
-  }, [cwdKey, fetchGitStatusForTarget, resetGitStatusForTarget, sessionName]);
-  const switchable = canSwitchMode(panelType);
+  }, [capabilities.gitControls, cwdKey, fetchGitStatusForTarget, resetGitStatusForTarget, sessionName]);
+  const switchable = capabilities.providerControls && canSwitchMode(panelType);
   const runtimeAgentPanelType = getAgentPanelTypeFromProvider(tabEntry?.agentProviderId);
   const hasDetectedAgent = !!runtimeAgentPanelType
     && (tabEntry?.agentProcess === true || processMatchesAgent(runtimeAgentPanelType, tabEntry?.currentProcess));
@@ -196,7 +206,7 @@ const MobileTabHeader = ({
     >
       <div className="flex min-w-0 flex-1 items-center gap-2 px-2">
         <div className="flex min-w-0 flex-1 items-center gap-2 px-1.5 py-1">
-          <TabStatusIndicator tabId={tabId} panelType={panelType} />
+          {capabilities.agentControls && <TabStatusIndicator tabId={tabId} panelType={panelType} />}
           {renderTabIcon()}
           <span className="min-w-0 flex-1 truncate text-xs text-foreground">{tabName}</span>
           {switchable && (
@@ -224,7 +234,7 @@ const MobileTabHeader = ({
           </button>
         )}
 
-        <button
+        {capabilities.gitControls && <button
           className={cn(
             iconButtonClassName,
             hasGitInlineStatus && 'w-auto gap-1 px-2',
@@ -250,18 +260,18 @@ const MobileTabHeader = ({
               {indicator.label}
             </span>
           ))}
-        </button>
+        </button>}
 
-        <button
+        {capabilities.createTab && <button
           className={iconButtonClassName}
           onClick={onCreateTab}
           aria-label={t('newTab')}
           title={t('newTab')}
         >
           <Plus className={iconClassName} />
-        </button>
+        </button>}
 
-        <AlertDialog>
+        {capabilities.closeTab && <AlertDialog>
           <AlertDialogTrigger
             className={cn(iconButtonClassName, 'hover:text-ui-red')}
             aria-label={t('closeTab')}
@@ -286,13 +296,13 @@ const MobileTabHeader = ({
               </AlertDialogAction>
             </AlertDialogFooter>
           </AlertDialogContent>
-        </AlertDialog>
+        </AlertDialog>}
       </div>
 
       <CopyPaneDrawer
         open={copyOpen}
         onOpenChange={setCopyOpen}
-        sessionName={sessionName}
+        target={copyTarget}
       />
 
       <Drawer open={modeDrawerOpen} onOpenChange={setModeDrawerOpen}>

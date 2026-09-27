@@ -8,20 +8,16 @@ import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import type { ITab, TPanelType } from '@/types/terminal';
 import { findPane } from '@/lib/layout-tree';
-import useTerminal from '@/hooks/use-terminal';
-import useTerminalWebSocket from '@/hooks/use-terminal-websocket';
+import useTerminalSurface from '@/hooks/use-terminal-surface';
 import useTabMetadataStore from '@/hooks/use-tab-metadata-store';
 import { useLayoutStore } from '@/hooks/use-layout';
 import useConfigStore, { type TGitAskProvider } from '@/hooks/use-config-store';
 import useIsMobileDevice from '@/hooks/use-is-mobile-device';
-import { resolveLineHeight } from '@/lib/terminal-line-height';
-import { toCtrlChar } from '@/lib/terminal-keys';
-import TerminalKeyBar from '@/components/features/workspace/terminal-key-bar';
+import TerminalSurface from '@/components/features/workspace/terminal-surface';
 import { useShallow } from 'zustand/react/shallow';
 import { buildClaudeLaunchCommand } from '@/lib/providers/claude/client';
 import { fetchCodexLaunchCommand } from '@/lib/providers/codex/client';
 import { sendCodexQuitCommand } from '@/lib/agent-terminal-commands';
-import TerminalContainer from '@/components/features/workspace/terminal-container';
 import ClaudeCodePanel from '@/components/features/workspace/claude-code-panel';
 import CodexPanel from '@/components/features/workspace/codex-panel';
 import AgentSessionsPanel from '@/components/features/workspace/agent-sessions-panel';
@@ -41,7 +37,6 @@ import { useAgentInstallCheck } from '@/hooks/use-agent-install-check';
 import PaneTabBar from '@/components/features/workspace/pane-tab-bar';
 import { formatTabTitle, parseCurrentCommand, isShellProcess } from '@/lib/tab-title';
 import { isAppShortcut, isClearShortcut, isFocusInputShortcut, isShiftEnter } from '@/lib/keyboard-shortcuts';
-import useTerminalTheme from '@/hooks/use-terminal-theme';
 import useTabStore, { getInitialTabStateFromLayoutTab, isCliIdle, selectSessionView, selectTabDisplayStatus } from '@/hooks/use-tab-store';
 import useUiMode from '@/hooks/use-ui-mode';
 import { dismissTab as dismissStatusTab } from '@/hooks/use-agent-status';
@@ -94,11 +89,6 @@ interface IPaneContainerProps {
   paneNumber: number;
 }
 
-const TERMINAL_FONT_SIZES: Record<string, { normal: number; claudeCode: number }> = {
-  normal: { normal: 12, claudeCode: 10 },
-  large: { normal: 14, claudeCode: 12 },
-  'x-large': { normal: 16, claudeCode: 14 },
-};
 const MIN_COLLAPSED_AGENT_ROWS = 40;
 
 const EMPTY_TABS: ITab[] = [];
@@ -140,38 +130,10 @@ const PaneContainer = memo(({ paneId, paneNumber }: IPaneContainerProps) => {
   ));
   const { ensureAgentInstalled, installDialogs } = useAgentInstallCheck();
 
-  const { theme: terminalTheme } = useTerminalTheme();
-  const configFontSize = useConfigStore((s) => s.fontSize);
-  const configLineHeight = useConfigStore((s) => s.lineHeight);
-  const configLineHeightCustom = useConfigStore((s) => s.lineHeightCustom);
   const keyBarMode = useConfigStore((s) => s.terminalKeyBar);
-  const promptPrefix = useConfigStore((s) => s.promptPrefix);
   const isTouchDevice = useIsMobileDevice();
   const claudeShowTerminal = useConfigStore((s) => s.claudeShowTerminal);
 
-  const [ctrlArmed, setCtrlArmed] = useState(false);
-  const [shiftArmed, setShiftArmed] = useState(false);
-  const ctrlArmedRef = useRef(false);
-  const shiftArmedRef = useRef(false);
-  useEffect(() => {
-    ctrlArmedRef.current = ctrlArmed;
-  }, [ctrlArmed]);
-  useEffect(() => {
-    shiftArmedRef.current = shiftArmed;
-  }, [shiftArmed]);
-
-  const applyArmedModifier = useCallback((data: string): string => {
-    if (data.length !== 1) return data;
-    if (ctrlArmedRef.current) {
-      setCtrlArmed(false);
-      return toCtrlChar(data) ?? data;
-    }
-    if (shiftArmedRef.current) {
-      setShiftArmed(false);
-      return data.toUpperCase();
-    }
-    return data;
-  }, []);
   const effectiveTerminalCollapsed = activeTab?.terminalCollapsed ?? !claudeShowTerminal;
   const [isTerminalCollapsed, setIsTerminalCollapsed] = useState(effectiveTerminalCollapsed);
   const [hasEverConnected, setHasEverConnected] = useState(false);
@@ -436,71 +398,55 @@ const PaneContainer = memo(({ paneId, paneNumber }: IPaneContainerProps) => {
     wsActionsRef.current.sendResize(size.cols, size.rows);
   }, [normalizeTerminalSize]);
 
-  const { terminalRef, write, clear, reset, fit, focus, isReady, getBufferText } = useTerminal({
-    enablePromptCopy: true,
-    promptPrefix,
-    theme: terminalTheme.colors,
-    fontSize: (TERMINAL_FONT_SIZES[configFontSize] ?? TERMINAL_FONT_SIZES.normal)[isAgentPanel ? 'claudeCode' : 'normal'],
-    lineHeight: resolveLineHeight(configLineHeight, configLineHeightCustom),
-    onInput: (data) => {
-      wsActionsRef.current.sendStdin(applyArmedModifier(data));
-    },
-    onResize: sendEffectiveResize,
-    onTitleChange: (title) => {
-      const tabId = activeTabIdRef.current;
-      if (!tabId) return;
-      const activeTab = tabsRef.current.find((t) => t.id === tabId);
-      if (!activeTab) return;
-      if (activeTab?.panelType === 'web-browser' || activeTab?.panelType === 'agent-sessions') return;
-      if (title === lastTitleRef.current) return;
-      lastTitleRef.current = title;
+  const handleTerminalTitleChange = (title: string) => {
+    const tabId = activeTabIdRef.current;
+    if (!tabId) return;
+    const activeTab = tabsRef.current.find((t) => t.id === tabId);
+    if (!activeTab) return;
+    if (activeTab?.panelType === 'web-browser' || activeTab?.panelType === 'agent-sessions') return;
+    if (title === lastTitleRef.current) return;
+    lastTitleRef.current = title;
 
-      const formatted = formatTabTitle(title, activeTab?.panelType);
-      const process = parseCurrentCommand(title);
-      useTabMetadataStore.getState().setTitle(tabId, formatted);
-      useTabStore.getState().setCurrentProcess(tabId, process);
-      if (isShellProcess(title) && pendingRestartRef.current) {
-        const cmd = pendingRestartRef.current;
-        pendingRestartRef.current = null;
-        wsActionsRef.current.sendStdin(`${cmd}\r`);
-      }
-      const tab = tabsRef.current.find((t) => t.id === tabId);
-      if (tab) {
-        const prevCheckedAt = useTabStore.getState().tabs[tabId]?.agentProcessCheckedAt ?? 0;
-        fetch(`/api/check-agent?session=${tab.sessionName}`)
-          .then((res) => res.json())
-          .then((data: IAgentCheckResponse) => {
-            if (activeTab?.panelType === 'terminal') handleAgentCheckResult(tabId, data);
-            const { running } = data.running === true && isAgentPanelType(data.providerPanelType)
-              ? { running: true }
-              : { running: false };
-            const current = useTabStore.getState().tabs[tabId];
-            if (current && current.agentProcessCheckedAt !== prevCheckedAt) {
-              if (current.agentProcess !== running) {
-                setTimeout(() => {
-                  fetch(`/api/check-agent?session=${tab.sessionName}`)
-                    .then((r) => r.json())
-                    .then((retryData: IAgentCheckResponse) => {
-                      if (activeTab?.panelType === 'terminal') handleAgentCheckResult(tabId, retryData);
-                      applyAgentCheckResult(tabId, retryData);
-                    })
-                    .catch(() => {});
-                }, 500);
-              }
-              return;
+    const formatted = formatTabTitle(title, activeTab?.panelType);
+    const process = parseCurrentCommand(title);
+    useTabMetadataStore.getState().setTitle(tabId, formatted);
+    useTabStore.getState().setCurrentProcess(tabId, process);
+    if (isShellProcess(title) && pendingRestartRef.current) {
+      const cmd = pendingRestartRef.current;
+      pendingRestartRef.current = null;
+      wsActionsRef.current.sendStdin(`${cmd}\r`);
+    }
+    const tab = tabsRef.current.find((t) => t.id === tabId);
+    if (tab) {
+      const prevCheckedAt = useTabStore.getState().tabs[tabId]?.agentProcessCheckedAt ?? 0;
+      fetch(`/api/check-agent?session=${tab.sessionName}`)
+        .then((res) => res.json())
+        .then((data: IAgentCheckResponse) => {
+          if (activeTab?.panelType === 'terminal') handleAgentCheckResult(tabId, data);
+          const { running } = data.running === true && isAgentPanelType(data.providerPanelType)
+            ? { running: true }
+            : { running: false };
+          const current = useTabStore.getState().tabs[tabId];
+          if (current && current.agentProcessCheckedAt !== prevCheckedAt) {
+            if (current.agentProcess !== running) {
+              setTimeout(() => {
+                fetch(`/api/check-agent?session=${tab.sessionName}`)
+                  .then((r) => r.json())
+                  .then((retryData: IAgentCheckResponse) => {
+                    if (activeTab?.panelType === 'terminal') handleAgentCheckResult(tabId, retryData);
+                    applyAgentCheckResult(tabId, retryData);
+                  })
+                  .catch(() => {});
+              }, 500);
             }
-            applyAgentCheckResult(tabId, data);
-          })
-          .catch(() => {});
-      }
-      fetchAndUpdateCwd();
-    },
-    customKeyEventHandler: handleCustomKeyEvent,
-  });
-
-  useEffect(() => {
-    clearRef.current = clear;
-  });
+            return;
+          }
+          applyAgentCheckResult(tabId, data);
+        })
+        .catch(() => {});
+    }
+    fetchAndUpdateCwd();
+  };
 
   useEffect(() => {
     const handleGlobalKeyDown = (e: KeyboardEvent) => {
@@ -544,17 +490,30 @@ const PaneContainer = memo(({ paneId, paneNumber }: IPaneContainerProps) => {
   }, [paneId, switchTabInPane, deleteTabInPane, closePane]);
 
   const {
+    terminalRef,
+    write,
+    clear,
+    reset,
+    fit,
+    focus,
+    isReady,
+    getBufferText,
     status,
     retryCount,
     disconnectReason,
-    connect,
+    connectTarget,
     reconnect,
     sendStdin,
-    sendWebStdin,
+    sendMobileInput,
     sendResize,
-  } = useTerminalWebSocket({
-    onData: (data) => {
-      termActionsRef.current.write(data);
+    modifierKeys,
+    theme: terminalTheme,
+  } = useTerminalSurface({
+    fontSizeMode: isAgentPanel ? 'agent' : 'configured',
+    onResize: sendEffectiveResize,
+    onTitleChange: handleTerminalTitleChange,
+    customKeyEventHandler: handleCustomKeyEvent,
+    onData: () => {
       onTrustData();
       onCodexUpdateData();
     },
@@ -573,6 +532,10 @@ const PaneContainer = memo(({ paneId, paneNumber }: IPaneContainerProps) => {
       sessionSwitchTimerRef.current = window.setTimeout(() => setSessionSwitching(false), 50);
     },
     onSessionEnded: handleSessionEnded,
+  });
+
+  useEffect(() => {
+    clearRef.current = clear;
   });
 
   useEffect(() => {
@@ -613,14 +576,17 @@ const PaneContainer = memo(({ paneId, paneNumber }: IPaneContainerProps) => {
     });
 
     connectedSessionRef.current = tab.sessionName;
-    const { cols, rows } = fit();
     const isAgentTab = tab.panelType === 'claude-code' || tab.panelType === 'codex-cli';
-    const initialSize = normalizeTerminalSize(
-      cols,
-      rows,
-      isAgentTab ? (tab.terminalCollapsed ?? !claudeShowTerminal) : false,
+    connectTarget(
+      { kind: 'managed', sessionName: tab.sessionName },
+      {
+        initialSize: ({ cols, rows }) => normalizeTerminalSize(
+          cols,
+          rows,
+          isAgentTab ? (tab.terminalCollapsed ?? !claudeShowTerminal) : false,
+        ),
+      },
     );
-    connect(tab.sessionName, initialSize.cols, initialSize.rows);
   }, [isReady, activeTabId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
@@ -1289,7 +1255,7 @@ const PaneContainer = memo(({ paneId, paneNumber }: IPaneContainerProps) => {
                   agentSessionId={claudeSessionId}
                   provider={isCodex ? 'codex' : 'claude'}
                   cliState={claudeCliState}
-                  sendStdin={sendWebStdin}
+                  sendStdin={sendMobileInput}
                   terminalWsConnected={status === 'connected'}
                   visible
                   focusTerminal={focus}
@@ -1343,24 +1309,19 @@ const PaneContainer = memo(({ paneId, paneNumber }: IPaneContainerProps) => {
 
           <Panel id="terminal-area" minSize={0} collapsible collapsedSize={0}>
             <div className="flex h-full flex-col" onMouseDown={() => { clickedTerminalRef.current = true; }}>
-              <TerminalContainer
-                ref={terminalRef}
+              <TerminalSurface
+                terminalRef={terminalRef}
                 minHeight={isAgentPanel ? 256 : undefined}
-                className={cn(
+                containerClassName={cn(
                   'min-h-0 flex-1',
                   ready ? 'opacity-100' : 'opacity-0',
                   isAgentPanel && 'py-0 pl-2 pr-0.5',
                 )}
+                keyBar={showKeyBar ? {
+                  sendStdin,
+                  ...modifierKeys,
+                } : undefined}
               />
-              {showKeyBar && (
-                <TerminalKeyBar
-                  sendStdin={sendStdin}
-                  ctrlActive={ctrlArmed}
-                  shiftActive={shiftArmed}
-                  setCtrlActive={setCtrlArmed}
-                  setShiftActive={setShiftArmed}
-                />
-              )}
             </div>
           </Panel>
         </Group>
