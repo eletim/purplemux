@@ -2,7 +2,7 @@ import path from 'path';
 import { ExternalTmuxSocketError, frozenExternalTmuxSocketIdentity } from '@/lib/external-tmux-socket';
 import { execTmux, execTmuxBuffer, externalTmuxTarget, type TmuxTarget } from '@/lib/tmux-target';
 import { EXTERNAL_TERMINAL_SESSION_OPTION,
-  registeredExternalTerminalSessionMarker } from '@/lib/external-terminal-client';
+  registeredExternalTerminalSessions } from '@/lib/external-terminal-session-registry';
 import type {
   IExternalServer,
   IExternalServerInventory,
@@ -248,18 +248,29 @@ const omitRegisteredExternalTerminalSessions = async (
   backend: TmuxTarget,
   signal?: AbortSignal,
 ): Promise<void> => {
-  const visible: IExternalTmuxSession[] = [];
-  for (const session of inventory.sessions) {
-    const expected = registeredExternalTerminalSessionMarker(inventory.socketPath, session.id);
-    if (!expected) {
-      visible.push(session);
+  const hidden = new Set<string>();
+  const registrations = registeredExternalTerminalSessions(
+    inventory.socketPath, inventory.socketIdentity);
+  for (const registration of registrations) {
+    let sessionId = registration.sessionId;
+    if (!sessionId) {
+      try {
+        sessionId = await readExternalTmuxField(
+          backend, `=${registration.sessionName}:`, 'session_id', signal);
+      } catch {
+        continue;
+      }
+    }
+    if (!inventory.sessions.some((session) => session.id === sessionId)) continue;
+    if (!registration.sessionId) {
+      hidden.add(sessionId);
       continue;
     }
     const actual = await readExternalTmuxField(
-      backend, session.id, EXTERNAL_TERMINAL_SESSION_OPTION, signal);
-    if (actual !== expected) visible.push(session);
+      backend, sessionId, EXTERNAL_TERMINAL_SESSION_OPTION, signal);
+    if (actual === registration.marker) hidden.add(sessionId);
   }
-  inventory.sessions = visible;
+  inventory.sessions = inventory.sessions.filter((session) => !hidden.has(session.id));
 };
 
 const METADATA_CONCURRENCY = 8;

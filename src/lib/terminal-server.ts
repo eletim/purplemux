@@ -509,6 +509,7 @@ export const handleConnection = async (ws: WebSocket, request: IncomingMessage, 
         tmuxTarget,
         externalSessionId,
         externalWindowId,
+        server.socketIdentity,
         externalAbort.signal,
         () => {
           externalAbort.abort();

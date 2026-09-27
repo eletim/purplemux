@@ -3,19 +3,11 @@ import type * as pty from 'node-pty';
 import { buildShellEnv } from '@/lib/shell-env';
 import { PRISTINE_ENV } from '@/lib/pristine-env';
 import { execTmux, spawnTmuxPty, validateTmuxTarget, type TmuxTarget } from '@/lib/tmux-target';
+import { bindExternalTerminalSession, EXTERNAL_TERMINAL_SESSION_OPTION,
+  registerExternalTerminalSession, unregisterExternalTerminalSession,
+  type IExternalTerminalSessionRegistration } from '@/lib/external-terminal-session-registry';
 
-export const EXTERNAL_TERMINAL_SESSION_OPTION = '@purplemux_internal_external_client';
 const EXTERNAL_TERMINAL_SESSION_PREFIX = '__purplemux_external_client_';
-
-const globalStore = globalThis as unknown as {
-  __purplemux_external_terminal_sessions?: Map<string, Map<string, string>>;
-};
-const registeredSessions = globalStore.__purplemux_external_terminal_sessions ??= new Map();
-
-export const registeredExternalTerminalSessionMarker = (
-  socketPath: string,
-  sessionId: string,
-): string | undefined => registeredSessions.get(socketPath)?.get(sessionId);
 
 /**
  * A private grouped session gives PurpleMux its own current-window state. The
@@ -32,7 +24,6 @@ export class ExternalTerminalClientResource {
   private windowCols = 0;
   private windowRows = 0;
   private active = false;
-  private registered = false;
   private readonly ownedClientNames = new Set<string>();
   private readonly clientsSeenOutsideShadow = new Set<string>();
   private readonly exited: Promise<void>;
@@ -46,6 +37,7 @@ export class ExternalTerminalClientResource {
     private readonly windowId: string,
     private readonly shadowSessionName: string,
     private readonly marker: string,
+    private readonly registration: IExternalTerminalSessionRegistration,
     private readonly onInvalid?: () => void,
   ) {
     this.client.onData((data) => this.receive(data));
@@ -60,6 +52,7 @@ export class ExternalTerminalClientResource {
     backend: TmuxTarget,
     sessionId: string,
     windowId: string,
+    socketIdentity: string,
     signal?: AbortSignal,
     onInvalid?: () => void,
   ): Promise<ExternalTerminalClientResource> {
@@ -69,6 +62,10 @@ export class ExternalTerminalClientResource {
     // The random full name is unambiguous. tmux 3.2 cannot resolve its exact-match
     // '=' form inside the same command queue that creates the session.
     const shadowTarget = shadowName;
+    if (backend.kind !== 'external') throw new Error('External terminal client requires an external backend');
+    const registration = registerExternalTerminalSession({
+      socketPath: backend.socketPath, socketIdentity, sessionName: shadowName, marker,
+    });
     let resource: ExternalTerminalClientResource | undefined;
     let client: pty.IPty | undefined;
     try {
@@ -88,7 +85,7 @@ export class ExternalTerminalClientResource {
         signal,
         onSpawn: (spawned) => {
           resource = new ExternalTerminalClientResource(
-            backend, spawned, sessionId, windowId, shadowName, marker, onInvalid,
+            backend, spawned, sessionId, windowId, shadowName, marker, registration, onInvalid,
           );
         },
       });
@@ -96,12 +93,9 @@ export class ExternalTerminalClientResource {
       return resource!;
     } catch (error) {
       try { client?.kill(); } catch { /* Client already exited. */ }
-      resource?.unregister();
-      // If setup stopped between new-session and attach-session, applying this
-      // option to the still-unattached private session removes it without a kill.
-      await execTmux(backend, [
-        'set-option', '-t', `=${shadowName}`, 'destroy-unattached', 'on',
-      ], { timeout: 5000 }).catch(() => {});
+      await resource?.exited;
+      const destroyed = await ExternalTerminalClientResource.sessionWasDestroyed(backend, shadowName);
+      if (destroyed) unregisterExternalTerminalSession(registration);
       throw error;
     }
   }
@@ -126,7 +120,7 @@ export class ExternalTerminalClientResource {
     this.shadowSessionId = sessionId;
     this.windowCols = Number(cols);
     this.windowRows = Number(rows);
-    this.register();
+    bindExternalTerminalSession(this.registration, sessionId);
     this.drainProtocol();
     if (!await this.check([], signal)) throw new Error('External terminal client unavailable');
     this.active = true;
@@ -143,21 +137,18 @@ export class ExternalTerminalClientResource {
     if (firstFailure && this.active && !this.stopped) this.onInvalid?.();
   }
 
-  private register(): void {
-    if (this.backend.kind !== 'external') throw new Error('External terminal client requires an external backend');
-    const sessions = registeredSessions.get(this.backend.socketPath) ?? new Map<string, string>();
-    if (sessions.has(this.shadowSessionId)) throw new Error('External terminal client session is already registered');
-    sessions.set(this.shadowSessionId, this.marker);
-    registeredSessions.set(this.backend.socketPath, sessions);
-    this.registered = true;
-  }
-
-  private unregister(): void {
-    if (!this.registered || this.backend.kind !== 'external') return;
-    const sessions = registeredSessions.get(this.backend.socketPath);
-    if (sessions?.get(this.shadowSessionId) === this.marker) sessions.delete(this.shadowSessionId);
-    if (sessions?.size === 0) registeredSessions.delete(this.backend.socketPath);
-    this.registered = false;
+  private static async sessionWasDestroyed(backend: TmuxTarget, sessionName: string): Promise<boolean> {
+    try {
+      await execTmux(backend, ['has-session', '-t', `=${sessionName}`], { timeout: 5000 });
+      return false;
+    } catch {
+      try {
+        await validateTmuxTarget(backend);
+        return true;
+      } catch {
+        return false;
+      }
+    }
   }
 
   private receive(data: string): void {
@@ -257,7 +248,10 @@ export class ExternalTerminalClientResource {
     if (!this.hasExited) {
       try { this.client.kill(); } catch { /* Client already exited. */ }
     }
-    this.stopPromise = Promise.all([this.exited, detach]).then(() => {}).finally(() => this.unregister());
+    this.stopPromise = Promise.all([this.exited, detach]).then(async () => {
+      if (await ExternalTerminalClientResource.sessionWasDestroyed(
+        this.backend, this.shadowSessionName)) unregisterExternalTerminalSession(this.registration);
+    });
     return this.stopPromise;
   }
 }
