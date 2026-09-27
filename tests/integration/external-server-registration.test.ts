@@ -5,7 +5,9 @@ import path from 'path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { assertExternalServerSocketIdentity, captureExternalServerWindow, discoverExternalServer,
   externalServerTmuxTarget, resolveExternalServerWindow } from '@/lib/external-server-tmux';
-import { execTmux } from '@/lib/tmux-target';
+import { ExternalTerminalClientResource } from '@/lib/external-terminal-client';
+import { registeredExternalTerminalSessions } from '@/lib/external-terminal-session-registry';
+import { execTmux, externalTmuxTarget } from '@/lib/tmux-target';
 
 let directory: string;
 let socket: string;
@@ -67,6 +69,91 @@ describe('external tmux server registrations', () => {
     expect(await store.listExternalServers()).toEqual([]);
     expect(tmux('list-windows', '-t', 'external', '-F', '#{window_id}').split('\n')).toHaveLength(2);
   });
+
+  it('does not trust or delimit inventory with user-provided internal marker options', async () => {
+    vi.spyOn(os, 'homedir').mockReturnValue(directory);
+    vi.resetModules();
+    const store = await import('@/lib/external-server-store');
+    const server = await store.registerExternalServer({ name: 'external', socketPath: socket });
+
+    tmux('set-option', '-t', '$0', '@purplemux_internal_external_client', 'user\tvalue\nnext');
+    let inventory = await discoverExternalServer(server);
+    expect(inventory.sessions.map(({ id }) => id)).toEqual(['$0']);
+
+    tmux('set-option', '-t', '$0', '@purplemux_internal_external_client',
+      'v1:12345678-1234-4123-8123-123456789abc');
+    inventory = await discoverExternalServer(server);
+    expect(inventory.sessions.map(({ id }) => id)).toEqual(['$0']);
+  });
+
+  it('hides a shadow session throughout initialization', async () => {
+    vi.spyOn(os, 'homedir').mockReturnValue(directory);
+    vi.resetModules();
+    const store = await import('@/lib/external-server-store');
+    const server = await store.registerExternalServer({ name: 'external', socketPath: socket });
+    const stableBackend = externalServerTmuxTarget(server);
+    if (stableBackend.kind !== 'external') throw new Error('expected external backend');
+    let validations = 0;
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    const gatedBackend = externalTmuxTarget(socket, async (signal) => {
+      await stableBackend.validate(signal);
+      validations += 1;
+      if (validations === 2) await gate;
+    });
+    const creating = ExternalTerminalClientResource.create(
+      gatedBackend, '$0', '@0', server.socketIdentity);
+    void creating.catch(() => {});
+
+    await vi.waitFor(() => expect(tmux('list-sessions', '-F', '#{session_id}').split('\n'))
+      .toHaveLength(2));
+    const pending = registeredExternalTerminalSessions(server.socketIdentity);
+    expect(pending).toHaveLength(1);
+    expect(tmux('display-message', '-p', '-t', `=${pending[0].sessionName}:`, '#{session_id}')).toBe('$1');
+    expect((await discoverExternalServer(server)).sessions.map(({ id }) => id)).toEqual(['$0']);
+
+    release();
+    const resource = await creating;
+    await resource.stop();
+  });
+
+  it('hides a shadow discovered through a hard link to the same socket', async () => {
+    const linkedSocket = path.join(directory, 'tmux-linked');
+    await fs.link(socket, linkedSocket);
+    vi.spyOn(os, 'homedir').mockReturnValue(directory);
+    vi.resetModules();
+    const store = await import('@/lib/external-server-store');
+    const direct = await store.registerExternalServer({ name: 'direct', socketPath: socket });
+    const linked = await store.registerExternalServer({ name: 'linked', socketPath: linkedSocket });
+    expect(linked.socketIdentity).toBe(direct.socketIdentity);
+    const resource = await ExternalTerminalClientResource.create(
+      externalServerTmuxTarget(direct), '$0', '@0', direct.socketIdentity);
+
+    expect(tmux('list-sessions', '-F', '#{session_id}').split('\n')).toHaveLength(2);
+    expect((await discoverExternalServer(linked)).sessions.map(({ id }) => id)).toEqual(['$0']);
+
+    await resource.stop();
+  }, 30_000);
+
+  it('keeps a shadow hidden when cleanup cannot destroy it', async () => {
+    vi.spyOn(os, 'homedir').mockReturnValue(directory);
+    vi.resetModules();
+    const store = await import('@/lib/external-server-store');
+    const server = await store.registerExternalServer({ name: 'external', socketPath: socket });
+    const resource = await ExternalTerminalClientResource.create(
+      externalServerTmuxTarget(server), '$0', '@0', server.socketIdentity);
+    const shadow = tmux('list-sessions', '-F',
+      '#{session_id}\t#{session_name}\t#{@purplemux_internal_external_client}')
+      .split('\n').find((line) => line.includes('\tv1:'))?.split('\t');
+    expect(shadow).toHaveLength(3);
+    tmux('set-option', '-t', shadow![0], 'destroy-unattached', 'off');
+
+    await resource.stop();
+
+    expect(tmux('has-session', '-t', shadow![0])).toBe('');
+    expect((await discoverExternalServer(server)).sessions.map(({ id }) => id)).toEqual(['$0']);
+    tmux('kill-session', '-t', shadow![0]);
+  }, 30_000);
 
   it('adds an unowned window to an exact existing session for immediate selection', async () => {
     vi.spyOn(os, 'homedir').mockReturnValue(directory);
