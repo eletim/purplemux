@@ -101,12 +101,26 @@ describe('tmux target operations', () => {
     ], expect.objectContaining({ name: 'xterm' }));
   });
 
-  it('captures history and attaches a normal client in one tmux command queue', async () => {
+  it('uses a writable ignore-size normal terminal client when requested', async () => {
+    const target = externalTmuxTarget('/known/tmux.sock', vi.fn().mockResolvedValue(undefined));
+
+    await attachTmuxPty(target, '$1:@2', { name: 'xterm', cols: 100, rows: 40, cwd: '/' }, {
+      controlMode: false,
+      ignoreSize: true,
+    });
+
+    expect(mocks.ptySpawn).toHaveBeenCalledWith('tmux', [
+      '-N', '-S', '/known/tmux.sock', '-u', 'attach-session',
+      '-f', 'ignore-size', '-t', '$1:@2',
+    ], expect.objectContaining({ name: 'xterm', cols: 100, rows: 40 }));
+  });
+
+  it('captures history and attaches a writable ignore-size client in one tmux command queue', async () => {
     const target = externalTmuxTarget('/known/tmux.sock', vi.fn().mockResolvedValue(undefined));
 
     await attachTmuxPty(target, '$1:@2', { name: 'xterm', cols: 80, rows: 24, cwd: '/' }, {
       controlMode: false,
-      readOnly: true,
+      ignoreSize: true,
       historyCapture: { bufferName: 'purplemux-history-id', historyLines: 5000 },
     });
 
@@ -114,7 +128,7 @@ describe('tmux target operations', () => {
       '-N', '-S', '/known/tmux.sock', '-u',
       'capture-pane', '-e', '-S', '-5000', '-E', '-1',
       '-b', 'purplemux-history-id', '-t', '$1:@2',
-      ';', 'attach-session', '-r', '-t', '$1:@2',
+      ';', 'attach-session', '-f', 'ignore-size', '-t', '$1:@2',
     ], expect.objectContaining({ name: 'xterm' }));
   });
 

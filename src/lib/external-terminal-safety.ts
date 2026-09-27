@@ -26,20 +26,3 @@ export const readExternalHistoryBuffer = async (
     await deleteExternalHistoryBuffer(backend, bufferName);
   }
 };
-
-export const sendExternalInput = async (backend: TmuxTarget, target: string, data: Uint8Array,
-  signal: AbortSignal, webInput = false): Promise<void> => {
-  if (webInput) {
-    await execTmux(backend, ['copy-mode', '-q', '-t', target], { timeout: 5000, signal }).catch(async () => {
-      // Missing copy mode is harmless, but a replaced external socket is not.
-      await validateTmuxTarget(backend, signal);
-    });
-  }
-  // -H sends bytes to the exact target pane, without feeding tmux client keys.
-  for (let offset = 0; offset < data.length; offset += 1024) {
-    const bytes = data.subarray(offset, offset + 1024);
-    await execTmux(backend, ['send-keys', '-H', '-t', target,
-      ...Array.from(bytes, (byte) => byte.toString(16).padStart(2, '0'))], { timeout: 5000, signal });
-    await validateTmuxTarget(backend, signal);
-  }
-};
