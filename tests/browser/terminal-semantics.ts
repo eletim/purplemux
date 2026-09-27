@@ -189,6 +189,8 @@ const copySentinelWithDrag = async (page: Page, pane: ITmuxPane): Promise<string
 
 const main = async () => {
   const temporary = await fs.mkdtemp(path.join(os.tmpdir(), 'purplemux-browser-terminal-'));
+  const tmuxLauncherDirectory = path.join(temporary, 'bin');
+  const tmuxLauncher = path.join(tmuxLauncherDirectory, 'tmux');
   const socket = path.join(temporary, 'external.sock');
   const externalPane: ITmuxPane = {
     selector: ['-S', socket],
@@ -203,6 +205,15 @@ const main = async () => {
   let serverLog = '';
 
   try {
+    const { stdout: tmuxExecutableOutput } = await execFileAsync('which', ['tmux']);
+    const tmuxExecutable = tmuxExecutableOutput.trim();
+    assert(path.isAbsolute(tmuxExecutable), 'tmux executable was not found on PATH');
+    const shellQuote = (value: string) => `'${value.replace(/'/g, `'\\''`)}'`;
+    await fs.mkdir(tmuxLauncherDirectory);
+    await fs.writeFile(tmuxLauncher,
+      `#!/bin/sh\nTMUX_TMPDIR=${shellQuote(temporary)} exec ${shellQuote(tmuxExecutable)} "$@"\n`,
+      { mode: 0o700 });
+
     await fs.writeFile(probe, String.raw`import os, select, sys, termios, tty
 mode = sys.argv[1]
 fd = sys.stdin.fileno()
@@ -242,6 +253,7 @@ print("PROBE_" + label + ":" + data.hex(), flush=True)
       PORT: String(port),
       HOST: '127.0.0.1',
       TMUX_TMPDIR: temporary,
+      PATH: `${tmuxLauncherDirectory}:${process.env.PATH ?? ''}`,
       __PMUX_APP_DIR: root,
     };
     delete serverEnv.__PMUX_PRISTINE_ENV;
