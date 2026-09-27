@@ -249,8 +249,7 @@ const omitRegisteredExternalTerminalSessions = async (
   signal?: AbortSignal,
 ): Promise<void> => {
   const hidden = new Set<string>();
-  const registrations = registeredExternalTerminalSessions(
-    inventory.socketPath, inventory.socketIdentity);
+  const registrations = registeredExternalTerminalSessions(inventory.socketIdentity);
   for (const registration of registrations) {
     let sessionId = registration.sessionId;
     if (!sessionId) {

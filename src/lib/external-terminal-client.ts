@@ -64,7 +64,7 @@ export class ExternalTerminalClientResource {
     const shadowTarget = shadowName;
     if (backend.kind !== 'external') throw new Error('External terminal client requires an external backend');
     const registration = registerExternalTerminalSession({
-      socketPath: backend.socketPath, socketIdentity, sessionName: shadowName, marker,
+      socketIdentity, sessionName: shadowName, marker,
     });
     let resource: ExternalTerminalClientResource | undefined;
     let client: pty.IPty | undefined;

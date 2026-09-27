@@ -107,13 +107,31 @@ describe('external tmux server registrations', () => {
 
     await vi.waitFor(() => expect(tmux('list-sessions', '-F', '#{session_id}').split('\n'))
       .toHaveLength(2));
-    const pending = registeredExternalTerminalSessions(socket, server.socketIdentity);
+    const pending = registeredExternalTerminalSessions(server.socketIdentity);
     expect(pending).toHaveLength(1);
     expect(tmux('display-message', '-p', '-t', `=${pending[0].sessionName}:`, '#{session_id}')).toBe('$1');
     expect((await discoverExternalServer(server)).sessions.map(({ id }) => id)).toEqual(['$0']);
 
     release();
     const resource = await creating;
+    await resource.stop();
+  });
+
+  it('hides a shadow discovered through a hard link to the same socket', async () => {
+    const linkedSocket = path.join(directory, 'tmux-linked');
+    await fs.link(socket, linkedSocket);
+    vi.spyOn(os, 'homedir').mockReturnValue(directory);
+    vi.resetModules();
+    const store = await import('@/lib/external-server-store');
+    const direct = await store.registerExternalServer({ name: 'direct', socketPath: socket });
+    const linked = await store.registerExternalServer({ name: 'linked', socketPath: linkedSocket });
+    expect(linked.socketIdentity).toBe(direct.socketIdentity);
+    const resource = await ExternalTerminalClientResource.create(
+      externalServerTmuxTarget(direct), '$0', '@0', direct.socketIdentity);
+
+    expect(tmux('list-sessions', '-F', '#{session_id}').split('\n')).toHaveLength(2);
+    expect((await discoverExternalServer(linked)).sessions.map(({ id }) => id)).toEqual(['$0']);
+
     await resource.stop();
   });
 
