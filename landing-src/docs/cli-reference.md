@@ -114,7 +114,7 @@ The external server lifecycle API accepts the same CLI token or authenticated br
 |---|---|
 | `POST /api/cli/external-servers` | Body: `{"socketPath":"/absolute/known/tmux/socket","name":"dev-server"}`. Returns the stored `id`, `name`, `socketPath`, and `socketIdentity`; invalid or unavailable sockets return 400. |
 | `GET /api/cli/external-servers` | `{"servers":[...]}` returns persisted registrations with fresh sessions, windows, panes, and availability. All resources remain unowned by PurpleMux. |
-| `DELETE /api/cli/external-servers/<serverId>` | `{"deleted":true}` on success; missing registrations return 404. Registration-only deletion. |
+| `DELETE /api/cli/external-servers/<serverId>` | `{"deleted":true}` on success; missing registrations return 404. Closes active PurpleMux connections and removes their internal shadows without touching original/discovered external resources. |
 
 ### `tab create` panel types
 

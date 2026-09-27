@@ -20,6 +20,7 @@ export class ExternalTerminalClientResource {
   private stopped = false;
   private hasExited = false;
   private sequence = 0;
+  private shadowSessionId = '';
   private windowCols = 0;
   private windowRows = 0;
   private active = false;
@@ -38,7 +39,6 @@ export class ExternalTerminalClientResource {
     private readonly windowId: string,
     private readonly shadowSessionName: string,
     private readonly marker: string,
-    private readonly shadowSessionId: string,
     private readonly registration: IExternalTerminalSessionRegistration,
     private readonly onInvalid?: () => void,
   ) {
@@ -61,7 +61,6 @@ export class ExternalTerminalClientResource {
     const uuid = randomUUID();
     const marker = `v1:${uuid}`;
     const shadowName = `${EXTERNAL_TERMINAL_SESSION_PREFIX}${uuid.replaceAll('-', '')}`;
-    const createdMarker = `PMUX_EXTERNAL_CREATED_${uuid.replaceAll('-', '')}`;
     if (backend.kind !== 'external') throw new Error('External terminal client requires an external backend');
     const { stdout: sourceOutput } = await execTmux(backend, [
       'display-message', '-p', '-t', `${sessionId}:${windowId}`,
@@ -78,32 +77,20 @@ export class ExternalTerminalClientResource {
     });
     let resource: ExternalTerminalClientResource | undefined;
     let client: pty.IPty | undefined;
-    let shadowSessionId = '';
     try {
-      const { stdout } = await execTmux(backend, [
-        'new-session', '-d', '-P', '-F', `${createdMarker}:#{session_id}`,
-        '-s', shadowName, '-x', sourceCols, '-y', sourceRows,
-        // These commands intentionally use the new session's queue context. An
-        // after-new-session hook may rename it before either command runs.
-        ';', 'set-option', EXTERNAL_TERMINAL_SESSION_OPTION, marker,
-      ], { timeout: 5000, signal });
-      const createdIds = stdout.trimEnd().split('\n')
-        .filter((line) => line.startsWith(`${createdMarker}:`))
-        .map((line) => line.slice(createdMarker.length + 1));
-      if (createdIds.length !== 1 || !/^\$\d+$/.test(createdIds[0])) {
-        throw new Error('External terminal client identity unavailable');
-      }
-      [shadowSessionId] = createdIds;
-      bindExternalTerminalSession(registration, shadowSessionId);
       client = await spawnTmuxPty(backend, [
         '-u', '-C',
-        'set-option', '-t', shadowSessionId, 'destroy-unattached', 'on',
-        ';', 'link-window', '-s', `${sessionId}:${windowId}`, '-t', `${shadowSessionId}:1`,
-        ';', 'kill-window', '-t', `${shadowSessionId}:0`,
-        ';', 'set-option', '-t', shadowSessionId, 'status', 'off',
-        ';', 'select-window', '-t', `${shadowSessionId}:${windowId}`,
+        'new-session', '-d', '-s', shadowName, '-x', sourceCols, '-y', sourceRows,
+        // These targetless commands and ':' targets use the new session's
+        // queue context, which remains stable if after-new-session renames it.
+        ';', 'set-option', 'destroy-unattached', 'on',
+        ';', 'set-option', EXTERNAL_TERMINAL_SESSION_OPTION, marker,
+        ';', 'link-window', '-s', `${sessionId}:${windowId}`, '-t', ':1',
+        ';', 'kill-window', '-t', ':0',
+        ';', 'set-option', 'status', 'off',
+        ';', 'select-window', '-t', `:${windowId}`,
         ';', 'attach-session', '-f', 'read-only,no-output',
-        '-t', `${shadowSessionId}:${windowId}`,
+        '-t', `:${windowId}`,
       ], {
         name: 'xterm-256color', cols: Number(sourceCols), rows: Number(sourceRows),
         cwd: PRISTINE_ENV.HOME || '/', env: buildShellEnv(),
@@ -111,8 +98,7 @@ export class ExternalTerminalClientResource {
         signal,
         onSpawn: (spawned) => {
           resource = new ExternalTerminalClientResource(
-            backend, spawned, sessionId, windowId, shadowName, marker, shadowSessionId,
-            registration, onInvalid,
+            backend, spawned, sessionId, windowId, shadowName, marker, registration, onInvalid,
           );
         },
       });
@@ -122,9 +108,9 @@ export class ExternalTerminalClientResource {
       try { client?.kill(); } catch { /* Client already exited. */ }
       await resource?.exited;
       await ExternalTerminalClientResource.destroyShadowSession(
-        backend, shadowName, marker, shadowSessionId || undefined);
+        backend, shadowName, marker, resource?.shadowSessionId || undefined);
       const destroyed = await ExternalTerminalClientResource.sessionWasDestroyed(
-        backend, shadowName, shadowSessionId || undefined);
+        backend, shadowName, resource?.shadowSessionId || undefined);
       if (destroyed) unregisterExternalTerminalSession(registration);
       throw error;
     }
@@ -137,18 +123,23 @@ export class ExternalTerminalClientResource {
 
   private async initialize(signal?: AbortSignal): Promise<void> {
     const { stdout } = await execTmux(this.backend, [
-      'display-message', '-p', '-t', `${this.shadowSessionId}:${this.windowId}`,
-      `#{session_id}\t#{window_id}\t#{window_width}\t#{window_height}`
+      'list-clients', '-F', `#{client_pid}\t#{session_id}\t#{window_id}`
+        + `\t#{window_width}\t#{window_height}`
         + `\t#{${EXTERNAL_TERMINAL_SESSION_OPTION}}`,
     ], { timeout: 5000, signal });
-    const [sessionId, windowId, cols, rows, marker] = stdout.trimEnd().split('\t');
-    if (sessionId !== this.shadowSessionId || windowId !== this.windowId
+    const matches = stdout.trimEnd().split('\n').map((line) => line.split('\t'))
+      .filter(([pid]) => pid === String(this.pid));
+    if (matches.length !== 1) throw new Error('External terminal client identity changed');
+    const [, sessionId, windowId, cols, rows, marker] = matches[0];
+    if (!/^\$\d+$/.test(sessionId) || windowId !== this.windowId
       || !/^\d+$/.test(cols) || !/^\d+$/.test(rows)
       || Number(cols) < 1 || Number(rows) < 1 || marker !== this.marker) {
       throw new Error('External terminal client identity changed');
     }
+    this.shadowSessionId = sessionId;
     this.windowCols = Number(cols);
     this.windowRows = Number(rows);
+    bindExternalTerminalSession(this.registration, sessionId);
     this.drainProtocol();
     if (!await this.check([], signal)) throw new Error('External terminal client unavailable');
     this.active = true;

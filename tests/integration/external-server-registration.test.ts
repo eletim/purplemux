@@ -1,4 +1,4 @@
-import { execFileSync } from 'child_process';
+import { execFileSync, spawn } from 'child_process';
 import fs from 'fs/promises';
 import os from 'os';
 import path from 'path';
@@ -180,6 +180,56 @@ describe('external tmux server registrations', () => {
       runtime.__purplemux_external_terminal_sessions = registrations;
     }
   });
+
+  it('destroys the shadow when its creating process crashes during attachment', async () => {
+    vi.spyOn(os, 'homedir').mockReturnValue(directory);
+    vi.resetModules();
+    const store = await import('@/lib/external-server-store');
+    const server = await store.registerExternalServer({ name: 'external', socketPath: socket });
+    const ready = path.join(directory, 'shadow-ready');
+    const release = path.join(directory, 'release-hook');
+    tmux('set-hook', '-g', 'client-attached',
+      `run-shell "printf ready > ${ready}; while [ ! -e ${release} ]; do sleep 0.01; done"`);
+    const child = spawn(process.execPath, [
+      '--import', 'tsx',
+      path.join(process.cwd(), 'tests/fixtures/external-terminal-crash-child.ts'),
+      socket,
+      server.socketIdentity,
+    ], { stdio: 'ignore' });
+    const childExited = new Promise<void>((resolve) => { child.once('exit', () => resolve()); });
+
+    try {
+      await vi.waitFor(async () => expect(await fs.readFile(ready, 'utf8')).toBe('ready'), {
+        timeout: 5000,
+      });
+      expect(tmux('list-sessions', '-F', '#{session_id}').split('\n')).toHaveLength(2);
+
+      child.kill('SIGKILL');
+      await fs.writeFile(release, '');
+      await childExited;
+      await vi.waitFor(() => expect(tmux('list-sessions', '-F', '#{session_id}')).toBe('$0'), {
+        timeout: 5000,
+      });
+
+      const runtime = globalThis as typeof globalThis & {
+        __purplemux_external_terminal_sessions?: unknown;
+      };
+      const registrations = runtime.__purplemux_external_terminal_sessions;
+      delete runtime.__purplemux_external_terminal_sessions;
+      vi.resetModules();
+      try {
+        const restarted = await import('@/lib/external-server-tmux');
+        expect((await restarted.discoverExternalServer(server)).sessions.map(({ id }) => id))
+          .toEqual(['$0']);
+      } finally {
+        runtime.__purplemux_external_terminal_sessions = registrations;
+      }
+    } finally {
+      if (child.exitCode === null) child.kill('SIGKILL');
+      await fs.writeFile(release, '');
+      await childExited;
+    }
+  }, 15_000);
 
   it('hides a shadow discovered through a hard link to the same socket', async () => {
     const linkedSocket = path.join(directory, 'tmux-linked');
