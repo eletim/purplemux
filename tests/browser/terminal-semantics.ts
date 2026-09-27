@@ -320,16 +320,19 @@ elif bracketed_paste:
 else:
     os.write(sys.stdout.fileno(), (label + "_READY\r\n").encode())
 data = b""
-deadline = 2.0
+complete = False
+initial_timeout = 2.0
+quiet_interval = 0.2
 while True:
-    readable, _, _ = select.select([fd], [], [], deadline)
+    readable, _, _ = select.select(
+        [fd], [], [], quiet_interval if complete else initial_timeout)
     if not readable:
         break
     data += os.read(fd, 64)
     if ((mouse and data.endswith((b"M", b"m")))
             or (bracketed_paste and data.endswith(b"\x1b[201~"))
             or (not mouse and not bracketed_paste)):
-        break
+        complete = True
 if mouse:
     os.write(sys.stdout.fileno(), b"\x1b[?1000l\x1b[?1006l")
 elif bracketed_paste:
@@ -440,8 +443,9 @@ print("PROBE_" + label + ":" + data.hex(), flush=True)
     const clickReport = Buffer.from(
       await waitForProbePayload(externalPane, 'MOUSE_CLICK'), 'hex',
     ).toString('utf8');
-    assert.match(clickReport, /^\x1b\[<[01];\d+;\d+M$/,
-      'tmux must forward SGR click reports to a TUI');
+    assert.match(clickReport,
+      /^\x1b\[<([01]);(\d+);(\d+)M\x1b\[<\1;\2;\3m$/,
+      'tmux must forward one matching pair of SGR press and release reports to a TUI');
 
     await typeCommand(page, `python3 ${probe} mouse-wheel`);
     await waitForCapture(externalPane, 'MOUSE_WHEEL_READY');
