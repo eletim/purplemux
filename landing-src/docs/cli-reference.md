@@ -53,7 +53,7 @@ All subcommands require a running server. They read the port from `~/.purplemux/
 | `purplemux workspace delete -w WS --if-empty` | Conditionally delete an empty workspace |
 | `purplemux external-server register --socket PATH --name NAME` | Register an external tmux server |
 | `purplemux external-server list` | List external server registrations |
-| `purplemux external-server unregister ID` | Remove a registration without changing tmux resources |
+| `purplemux external-server unregister ID` | Remove a registration and internal shadow sessions while preserving original/discovered external tmux resources |
 | `purplemux tab list [-w WS]` | List tabs (optionally scoped to a workspace) |
 | `purplemux tab create -w WS [-n NAME] [-t TYPE]` | Create a new tab |
 | `purplemux tab send -w WS TAB_ID CONTENT...` | Send input to a tab |
@@ -77,7 +77,7 @@ If a transport failure or server error makes the mutation outcome uncertain, rec
 
 ### External tmux server registration
 
-Use `external-server register` with a display name and known absolute tmux socket path. It returns a stable registration ID with the name, path, and frozen Unix socket identity. `external-server list` discovers the current sessions, windows, and panes on every call; additions appear and deletions disappear without changing the registration. Every discovered resource remains unowned by PurpleMux. Registration rejects the PurpleMux-owned `purple` socket. Operations against a registered server recheck that identity and fail closed if the socket disappears or the path is replaced. `external-server unregister ID` deletes only the registration, even if the server is unavailable; it never sends tmux commands or kills sessions, windows, or panes.
+Use `external-server register` with a display name and known absolute tmux socket path. It returns a stable registration ID with the name, path, and frozen Unix socket identity. `external-server list` discovers the current sessions, windows, and panes on every call; additions appear and deletions disappear without changing the registration. Every discovered resource remains unowned by PurpleMux. Registration rejects the PurpleMux-owned `purple` socket. Operations against a registered server recheck that identity and fail closed if the socket disappears or the path is replaced. `external-server unregister ID` deletes the registration even if the server is unavailable. It closes active PurpleMux connections and removes their internal shadow sessions, but never kills the original external server or any discovered session, window, or pane.
 
 The authenticated browser URL is `/external-server`. It shows the same dynamic inventory and opens an exact selected session/window through the normal interactive terminal surface, including input, paste, resize, reconnect, and Terminal Copy. Closing or detaching the UI never kills external tmux resources, and target drift closes the connection instead of following another window. There is no interactive `/external-target/<id>` URL. External Reviews remain the separate fixed-window, read-only feature at `/ext-review` and `/ext-review/<id>`.
 
@@ -114,7 +114,7 @@ The external server lifecycle API accepts the same CLI token or authenticated br
 |---|---|
 | `POST /api/cli/external-servers` | Body: `{"socketPath":"/absolute/known/tmux/socket","name":"dev-server"}`. Returns the stored `id`, `name`, `socketPath`, and `socketIdentity`; invalid or unavailable sockets return 400. |
 | `GET /api/cli/external-servers` | `{"servers":[...]}` returns persisted registrations with fresh sessions, windows, panes, and availability. All resources remain unowned by PurpleMux. |
-| `DELETE /api/cli/external-servers/<serverId>` | `{"deleted":true}` on success; missing registrations return 404. Registration-only deletion. |
+| `DELETE /api/cli/external-servers/<serverId>` | `{"deleted":true}` on success; missing registrations return 404. Closes active PurpleMux connections and removes their internal shadows without touching original/discovered external resources. |
 
 ### `tab create` panel types
 

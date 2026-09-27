@@ -83,7 +83,7 @@ export const createExternalSessionWindow = (
   return server ? createTmuxExternalSessionWindow(server, session) : undefined;
 });
 
-/** Registration-only deletion: this function never invokes tmux. */
+/** Close active connections and their internal shadows without touching discovered external resources. */
 export const unregisterExternalServer = (id: string): Promise<boolean> => withLock(async () => {
   const servers = await read();
   const remaining = servers.filter((server) => server.id !== id);

@@ -82,10 +82,11 @@ POST /api/cli/external-servers/<serverId>/workspaces/<$sessionId>/tabs
   socket identity drift; the operation never creates a session or writes Workspace state.
 
 DELETE /api/cli/external-servers/<serverId>
-  Removes only the registration, including when the server is unavailable.
+  Removes the registration, including when the server is unavailable.
   HTTP 200: { "deleted": true }; HTTP 404: { "error": "External server not found" }.
   CLI equivalent: purplemux external-server unregister SERVER_ID
-  Never sends tmux commands or kills external sessions, windows, or panes.
+  Closes active PurpleMux connections and removes their internal shadow sessions. Never kills
+  the original external server or any discovered session, window, or pane.
 
 The stable id identifies the registration. Every tmux operation rechecks the frozen
 socket identity and fails closed if the path is missing or has been replaced.

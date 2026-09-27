@@ -1,8 +1,9 @@
 // @vitest-environment jsdom
 import { createElement } from 'react';
-import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, renderHook, screen } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ExternalTerminalConnection } from '@/components/features/workspace/terminal-surface';
+import useTerminalSurface from '@/hooks/use-terminal-surface';
 
 const mocks = vi.hoisted(() => ({
   connect: vi.fn(),
@@ -70,6 +71,40 @@ beforeEach(() => vi.clearAllMocks());
 afterEach(cleanup);
 
 describe('shared terminal surface', () => {
+  it('applies target policies, modifiers, and mobile input through shared orchestration', () => {
+    const { result } = renderHook(() => useTerminalSurface());
+
+    act(() => result.current.connectTarget(
+      { kind: 'managed', sessionName: 'managed-session' },
+      {
+        initialSize: ({ cols, rows }) => ({ cols: cols - 10, rows: rows + 10 }),
+        focus: 'terminal',
+      },
+    ));
+    expect(mocks.connect).toHaveBeenCalledWith(
+      { kind: 'managed', sessionName: 'managed-session' },
+      90,
+      40,
+    );
+    expect(mocks.focus).toHaveBeenCalledOnce();
+
+    act(() => result.current.modifierKeys.setCtrlActive(true));
+    const terminalOptions = mocks.terminalOptions.mock.calls.at(-1)?.[0] as {
+      onInput: (data: string) => void;
+    };
+    act(() => terminalOptions.onInput('c'));
+    expect(mocks.sendStdin).toHaveBeenCalledWith('\x03');
+    expect(result.current.modifierKeys.ctrlActive).toBe(false);
+
+    act(() => result.current.modifierKeys.setShiftActive(true));
+    act(() => terminalOptions.onInput('a'));
+    expect(mocks.sendStdin).toHaveBeenCalledWith('A');
+    expect(result.current.modifierKeys.shiftActive).toBe(false);
+
+    act(() => result.current.sendMobileInput('mobile input\r'));
+    expect(mocks.sendWebStdin).toHaveBeenCalledWith('mobile input\r');
+  });
+
   it('connects the shared composition to a discovered external window', () => {
     const target = { serverId: 'server-1', sessionId: '$1', windowId: '@2' };
     const view = render(createElement(ExternalTerminalConnection, { target }));

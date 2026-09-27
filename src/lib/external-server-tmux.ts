@@ -1,6 +1,8 @@
 import path from 'path';
 import { ExternalTmuxSocketError, frozenExternalTmuxSocketIdentity } from '@/lib/external-tmux-socket';
 import { execTmux, execTmuxBuffer, externalTmuxTarget, type TmuxTarget } from '@/lib/tmux-target';
+import { EXTERNAL_TERMINAL_SESSION_OPTION,
+  registeredExternalTerminalSessions } from '@/lib/external-terminal-session-registry';
 import type {
   IExternalServer,
   IExternalServerInventory,
@@ -202,7 +204,6 @@ const parseExternalServerInventory = (server: IExternalServer, stdout: string): 
       || !/^@\d+$/.test(windowId) || !/^%\d+$/.test(paneId)) {
       throw new ExternalServerError('Invalid external tmux runtime inventory');
     }
-
     let session = sessions.get(sessionId);
     if (!session) {
       session = { id: sessionId, name: '', sessionCreated, exists: true,
@@ -240,6 +241,35 @@ const readExternalTmuxField = async (backend: TmuxTarget, target: string, field:
   // Decode only after removing tmux's record newline. Invalid filename bytes are
   // represented by U+FFFD without corrupting boundaries for any other resource.
   return stdout.subarray(0, -1).toString('utf8');
+};
+
+const omitRegisteredExternalTerminalSessions = async (
+  inventory: IExternalServerInventory,
+  backend: TmuxTarget,
+  signal?: AbortSignal,
+): Promise<void> => {
+  const hidden = new Set<string>();
+  const registrations = registeredExternalTerminalSessions(inventory.socketIdentity);
+  for (const registration of registrations) {
+    let sessionId = registration.sessionId;
+    if (!sessionId) {
+      try {
+        sessionId = await readExternalTmuxField(
+          backend, `=${registration.sessionName}:`, 'session_id', signal);
+      } catch {
+        continue;
+      }
+    }
+    if (!inventory.sessions.some((session) => session.id === sessionId)) continue;
+    if (!registration.sessionId) {
+      hidden.add(sessionId);
+      continue;
+    }
+    const actual = await readExternalTmuxField(
+      backend, sessionId, EXTERNAL_TERMINAL_SESSION_OPTION, signal);
+    if (actual === registration.marker) hidden.add(sessionId);
+  }
+  inventory.sessions = inventory.sessions.filter((session) => !hidden.has(session.id));
 };
 
 const METADATA_CONCURRENCY = 8;
@@ -341,6 +371,7 @@ export const discoverExternalServer = async (
         ['list-panes', '-a', '-F', INVENTORY_FORMAT],
         { timeout: 5000, maxBuffer: 4 * 1024 * 1024, signal });
       const inventory = parseExternalServerInventory(server, stdout);
+      await omitRegisteredExternalTerminalSessions(inventory, externalServerTmuxTarget(server), signal);
       await populateExternalServerMetadata(inventory, signal);
       await assertExternalServerSocketIdentity(server, signal);
       return inventory;

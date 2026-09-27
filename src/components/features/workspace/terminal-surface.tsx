@@ -1,8 +1,7 @@
-import { useCallback, useEffect, useRef, useState, type ComponentProps, type RefCallback } from 'react';
+import { useEffect, type ComponentProps, type RefCallback } from 'react';
 import useConfigStore from '@/hooks/use-config-store';
 import useIsMobileDevice from '@/hooks/use-is-mobile-device';
 import useTerminalSurface from '@/hooks/use-terminal-surface';
-import { toCtrlChar } from '@/lib/terminal-keys';
 import type { IExternalTerminalTarget } from '@/types/terminal';
 import MobileTerminalToolbar from '@/components/features/mobile/mobile-terminal-toolbar';
 import ConnectionStatus from '@/components/features/workspace/connection-status';
@@ -43,53 +42,30 @@ export function ExternalTerminalConnection({
   const { serverId, sessionId, windowId } = target;
   const keyBarMode = useConfigStore((state) => state.terminalKeyBar);
   const isMobileDevice = useIsMobileDevice();
-  const [ctrlArmed, setCtrlArmed] = useState(false);
-  const [shiftArmed, setShiftArmed] = useState(false);
-  const ctrlArmedRef = useRef(false);
-  const shiftArmedRef = useRef(false);
-
-  useEffect(() => { ctrlArmedRef.current = ctrlArmed; }, [ctrlArmed]);
-  useEffect(() => { shiftArmedRef.current = shiftArmed; }, [shiftArmed]);
-
-  const applyArmedModifier = useCallback((data: string): string => {
-    if (data.length !== 1) return data;
-    if (ctrlArmedRef.current) {
-      setCtrlArmed(false);
-      return toCtrlChar(data) ?? data;
-    }
-    if (shiftArmedRef.current) {
-      setShiftArmed(false);
-      return data.toUpperCase();
-    }
-    return data;
-  }, []);
-
   const {
     status,
     retryCount,
     disconnectReason,
     externalTargetFailure,
-    connect,
+    connectTarget,
     disconnect,
     reconnect,
     sendStdin,
-    sendWebStdin,
+    sendMobileInput,
+    modifierKeys,
     terminalRef,
-    fit,
-    focus,
     isReady,
     theme,
-  } = useTerminalSurface({
-    onInput: (data, send) => send(applyArmedModifier(data)),
-  });
+  } = useTerminalSurface();
 
   useEffect(() => {
     if (!isReady) return;
-    const { cols, rows } = fit();
-    connect({ kind: 'external', serverId, sessionId, windowId }, cols, rows);
-    focus();
+    connectTarget(
+      { kind: 'external', serverId, sessionId, windowId },
+      { initialSize: 'fit', focus: 'terminal' },
+    );
     return disconnect;
-  }, [isReady, serverId, sessionId, windowId, fit, focus, connect, disconnect]);
+  }, [isReady, serverId, sessionId, windowId, connectTarget, disconnect]);
 
   const showKeyBar = !isMobileDevice && keyBarMode === 'always';
   return (
@@ -103,13 +79,10 @@ export function ExternalTerminalConnection({
         containerClassName="min-h-0 flex-1"
         keyBar={showKeyBar ? {
           sendStdin,
-          ctrlActive: ctrlArmed,
-          shiftActive: shiftArmed,
-          setCtrlActive: setCtrlArmed,
-          setShiftActive: setShiftArmed,
+          ...modifierKeys,
         } : undefined}
         mobileToolbar={isMobileDevice && status === 'connected'
-          ? { sendStdin: sendWebStdin, terminalConnected: true }
+          ? { sendStdin: sendMobileInput, terminalConnected: true }
           : undefined}
       />
       {externalTargetFailure && (
