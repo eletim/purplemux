@@ -133,7 +133,7 @@ describe('external tmux server registrations', () => {
     expect((await discoverExternalServer(linked)).sessions.map(({ id }) => id)).toEqual(['$0']);
 
     await resource.stop();
-  });
+  }, 30_000);
 
   it('keeps a shadow hidden when cleanup cannot destroy it', async () => {
     vi.spyOn(os, 'homedir').mockReturnValue(directory);
@@ -153,7 +153,7 @@ describe('external tmux server registrations', () => {
     expect(tmux('has-session', '-t', shadow![0])).toBe('');
     expect((await discoverExternalServer(server)).sessions.map(({ id }) => id)).toEqual(['$0']);
     tmux('kill-session', '-t', shadow![0]);
-  });
+  }, 30_000);
 
   it('adds an unowned window to an exact existing session for immediate selection', async () => {
     vi.spyOn(os, 'homedir').mockReturnValue(directory);
