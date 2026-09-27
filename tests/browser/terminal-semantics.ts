@@ -17,6 +17,7 @@ const password = 'browser-terminal-test';
 interface ITmuxPane {
   selector: string[];
   target: string;
+  env?: NodeJS.ProcessEnv;
 }
 
 const findChrome = async (): Promise<string> => {
@@ -66,7 +67,9 @@ const waitForServer = async (origin: string, child: ChildProcess): Promise<void>
 };
 
 const tmux = async (pane: ITmuxPane, ...args: string[]): Promise<string> => {
-  const { stdout } = await execFileAsync('tmux', [...pane.selector, ...args]);
+  const { stdout } = await execFileAsync(
+    'tmux', [...pane.selector, ...args], { encoding: 'utf8', env: pane.env },
+  );
   return stdout;
 };
 
@@ -144,8 +147,13 @@ const typeCommand = async (page: Page, command: string): Promise<void> => {
 
 const copySentinelWithDrag = async (page: Page, pane: ITmuxPane): Promise<string> => {
   const sentinel = 'COPY_BROWSER_SENTINEL';
-  await typeCommand(page,
-    `for i in $(seq 1 80); do echo COPY_BROWSER_FILL; done; for i in 1 2 3 4 5; do echo ${sentinel}; done`);
+  const command = `yes COPY_BROWSER_FILL | head -80 && yes ${sentinel} | head -5`;
+  const inCopyMode = (await tmux(
+    pane, 'display-message', '-p', '-t', pane.target, '#{pane_in_mode}',
+  )).trim() === '1';
+  if (inCopyMode) await tmux(pane, 'send-keys', '-t', pane.target, '-X', 'cancel');
+  await tmux(pane, 'send-keys', '-l', '-t', pane.target, command);
+  await tmux(pane, 'send-keys', '-t', pane.target, 'Enter');
   await waitForCaptureCount(pane, sentinel, 5);
   await page.evaluate(() => navigator.clipboard.writeText(''));
 
@@ -186,12 +194,12 @@ const main = async () => {
     selector: ['-S', socket],
     target: 'browser-terminal:0.0',
   };
+  const managedTmuxEnv = { ...process.env, TMUX_TMPDIR: temporary };
   const probe = path.join(temporary, 'input-probe.py');
   const port = await freePort();
   const origin = `http://localhost:${port}`;
   let server: ChildProcess | undefined;
   let browser: Awaited<ReturnType<typeof chromium.launch>> | undefined;
-  let managedSession: string | undefined;
   let serverLog = '';
 
   try {
@@ -227,16 +235,19 @@ print("PROBE_" + label + ":" + data.hex(), flush=True)
       'exec bash --noprofile --norc',
     ]);
 
+    const serverEnv: NodeJS.ProcessEnv = {
+      ...process.env,
+      HOME: temporary,
+      INIT_PASSWORD: password,
+      PORT: String(port),
+      HOST: '127.0.0.1',
+      TMUX_TMPDIR: temporary,
+      __PMUX_APP_DIR: root,
+    };
+    delete serverEnv.__PMUX_PRISTINE_ENV;
     server = spawn(process.execPath, [path.join(root, 'node_modules/tsx/dist/cli.mjs'), 'server.ts'], {
       cwd: root,
-      env: {
-        ...process.env,
-        HOME: temporary,
-        INIT_PASSWORD: password,
-        PORT: String(port),
-        HOST: '127.0.0.1',
-        __PMUX_APP_DIR: root,
-      },
+      env: serverEnv,
       stdio: ['ignore', 'pipe', 'pipe'],
     });
     server.stdout?.on('data', (chunk) => { serverLog += chunk; });
@@ -370,8 +381,8 @@ print("PROBE_" + label + ":" + data.hex(), flush=True)
     const managedPane: ITmuxPane = {
       selector: ['-L', 'purple'],
       target: managedTab.sessionName,
+      env: managedTmuxEnv,
     };
-    managedSession = managedTab.sessionName;
     const managedPage = await context.newPage();
     let managedOutputReady!: () => void;
     const firstManagedOutput = new Promise<void>((resolve) => { managedOutputReady = resolve; });
@@ -382,12 +393,13 @@ print("PROBE_" + label + ":" + data.hex(), flush=True)
         });
       }
     });
-    await managedPage.goto(`${origin}/?workspace=${workspace.id}&tab=${managedTab.id}`);
+    await managedPage.goto(origin);
     await terminalScreen(managedPage).waitFor({ state: 'visible', timeout: 30_000 });
     await Promise.race([
       firstManagedOutput,
       new Promise((_, reject) => setTimeout(() => reject(new Error('Managed terminal output did not connect')), 10_000)),
     ]);
+    await managedPage.waitForTimeout(500);
     const managedCopied = await copySentinelWithDrag(managedPage, managedPane);
     assert.equal(managedCopied, externalCopied,
       'external drag/select/copy behavior must match the managed terminal baseline');
@@ -440,9 +452,7 @@ print("PROBE_" + label + ":" + data.hex(), flush=True)
       await Promise.race([once(server, 'exit'), new Promise((resolve) => setTimeout(resolve, 10_000))]);
       if (server.exitCode === null) server.kill('SIGKILL');
     }
-    if (managedSession) {
-      await execFileAsync('tmux', ['-L', 'purple', 'kill-session', '-t', `=${managedSession}`]).catch(() => {});
-    }
+    await execFileAsync('tmux', ['-L', 'purple', 'kill-server'], { env: managedTmuxEnv }).catch(() => {});
     await execFileAsync('tmux', ['-S', socket, 'kill-server']).catch(() => {});
     await fs.rm(temporary, { recursive: true, force: true });
   }

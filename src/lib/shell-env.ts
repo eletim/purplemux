@@ -10,6 +10,7 @@ const INHERITED_KEYS = new Set([
   'COLORTERM',
   'LANG',
   'TMPDIR',
+  'TMUX_TMPDIR',
   'SSH_AUTH_SOCK',
   'SSH_CONNECTION',
   'SSH_TTY',
