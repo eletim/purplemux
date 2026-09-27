@@ -100,6 +100,28 @@ const waitForCapture = async (pane: ITmuxPane, text: string, timeout = 10_000): 
   throw new Error(`Timed out waiting for terminal output: ${text}\n${contents}`);
 };
 
+const waitForProbePayload = async (
+  pane: ITmuxPane, label: string, timeout = 10_000,
+): Promise<string> => {
+  const marker = `PROBE_${label}:`;
+  const deadline = Date.now() + timeout;
+  let contents = '';
+  while (Date.now() < deadline) {
+    contents = await capture(pane);
+    const line = contents.split('\n')
+      .map((value) => value.trimEnd())
+      .find((value) => value.startsWith(marker));
+    if (line) {
+      const payload = line.slice(marker.length);
+      assert.match(payload, /^(?:[0-9a-f]{2})*$/,
+        `${marker} must contain one complete hexadecimal payload`);
+      return payload;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  throw new Error(`Timed out waiting for terminal probe: ${marker}\n${contents}`);
+};
+
 const waitForTmuxValue = async (pane: ITmuxPane, format: string, expected: string): Promise<void> => {
   const deadline = Date.now() + 10_000;
   while (Date.now() < deadline) {
@@ -289,9 +311,12 @@ fd = sys.stdin.fileno()
 old = termios.tcgetattr(fd)
 tty.setraw(fd)
 mouse = mode.startswith("mouse-")
+bracketed_paste = mode == "paste"
 label = mode.upper().replace("-", "_")
 if mouse:
     os.write(sys.stdout.fileno(), b"\x1b[?1000h\x1b[?1006h" + label.encode() + b"_READY\r\n")
+elif bracketed_paste:
+    os.write(sys.stdout.fileno(), b"\x1b[?2004h" + label.encode() + b"_READY\r\n")
 else:
     os.write(sys.stdout.fileno(), (label + "_READY\r\n").encode())
 data = b""
@@ -301,10 +326,14 @@ while True:
     if not readable:
         break
     data += os.read(fd, 64)
-    if not mouse or data.endswith((b"M", b"m")):
+    if ((mouse and data.endswith((b"M", b"m")))
+            or (bracketed_paste and data.endswith(b"\x1b[201~"))
+            or (not mouse and not bracketed_paste)):
         break
 if mouse:
     os.write(sys.stdout.fileno(), b"\x1b[?1000l\x1b[?1006l")
+elif bracketed_paste:
+    os.write(sys.stdout.fileno(), b"\x1b[?2004l")
 termios.tcsetattr(fd, termios.TCSADRAIN, old)
 print("PROBE_" + label + ":" + data.hex(), flush=True)
 `);
@@ -379,10 +408,8 @@ print("PROBE_" + label + ":" + data.hex(), flush=True)
     await waitForCapture(externalPane, 'KEYBOARD_READY');
     await page.locator('.xterm-helper-textarea').focus();
     await page.keyboard.press('k');
-    assert.match(await waitForCapture(externalPane, 'PROBE_KEYBOARD:'), /PROBE_KEYBOARD:6b/,
+    assert.equal(await waitForProbePayload(externalPane, 'KEYBOARD'), '6b',
       'a real browser key event must reach the external PTY');
-    await typeCommand(page, "printf 'KEYBOARD_OK\\n'");
-    await waitForCaptureCount(externalPane, 'KEYBOARD_OK', 2);
 
     await typeCommand(page, `python3 ${probe} plain`);
     await waitForCapture(externalPane, 'PLAIN_READY');
@@ -391,7 +418,7 @@ print("PROBE_" + label + ":" + data.hex(), flush=True)
     await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
     await page.locator('.xterm-helper-textarea').focus();
     await page.keyboard.type('q');
-    assert.match(await waitForCapture(externalPane, 'PROBE_PLAIN:'), /PROBE_PLAIN:71/,
+    assert.equal(await waitForProbePayload(externalPane, 'PLAIN'), '71',
       'a browser click must not become PTY text when mouse reporting is disabled');
 
     await typeCommand(page, "for i in $(seq 1 80); do printf 'SCROLL_%03d\\n' \"$i\"; done");
@@ -404,44 +431,55 @@ print("PROBE_" + label + ":" + data.hex(), flush=True)
     await page.keyboard.press('q');
     await waitForTmuxValue(externalPane, '#{pane_in_mode}', '0');
     await page.keyboard.press('q');
-    assert.match(await waitForCapture(externalPane, 'PROBE_WHEEL:'), /PROBE_WHEEL:71/,
+    assert.equal(await waitForProbePayload(externalPane, 'WHEEL'), '71',
       'wheel input handled by tmux scrollback must not also become PTY text');
 
     await typeCommand(page, `python3 ${probe} mouse-click`);
     await waitForCapture(externalPane, 'MOUSE_CLICK_READY');
     await page.mouse.click(box.x + box.width / 3, box.y + box.height / 3);
-    assert.match(await waitForCapture(externalPane, 'PROBE_MOUSE_CLICK:'),
-      /PROBE_MOUSE_CLICK:1b5b3c(?:30|31)[0-9a-f]*4d/,
+    const clickReport = Buffer.from(
+      await waitForProbePayload(externalPane, 'MOUSE_CLICK'), 'hex',
+    ).toString('utf8');
+    assert.match(clickReport, /^\x1b\[<[01];\d+;\d+M$/,
       'tmux must forward SGR click reports to a TUI');
 
     await typeCommand(page, `python3 ${probe} mouse-wheel`);
     await waitForCapture(externalPane, 'MOUSE_WHEEL_READY');
     await page.mouse.move(box.x + box.width / 3, box.y + box.height / 3);
     await page.mouse.wheel(0, -100);
-    assert.match(await waitForCapture(externalPane, 'PROBE_MOUSE_WHEEL:'),
-      /PROBE_MOUSE_WHEEL:1b5b3c3634[0-9a-f]*4d/,
+    const wheelReport = Buffer.from(
+      await waitForProbePayload(externalPane, 'MOUSE_WHEEL'), 'hex',
+    ).toString('utf8');
+    assert.match(wheelReport, /^\x1b\[<64;\d+;\d+M$/,
       'tmux must forward SGR wheel reports to a TUI');
 
     const externalCopied = await copySentinelWithDrag(page, externalPane);
 
-    await page.evaluate(() => navigator.clipboard.writeText("printf 'PASTE_OK\\n'"));
+    const pasteText = 'PASTE_BROWSER_SENTINEL';
+    await typeCommand(page, `python3 ${probe} paste`);
+    await waitForCapture(externalPane, 'PASTE_READY');
+    await page.evaluate((text) => navigator.clipboard.writeText(text), pasteText);
     await page.locator('.xterm-helper-textarea').focus();
     await page.keyboard.press(process.platform === 'darwin' ? 'Meta+V' : 'Control+Shift+V');
-    await page.keyboard.press('Enter');
-    await waitForCaptureCount(externalPane, 'PASTE_OK', 2);
+    assert.equal(await waitForProbePayload(externalPane, 'PASTE'),
+      Buffer.from(`\x1b[200~${pasteText}\x1b[201~`).toString('hex'),
+      'browser paste must reach the external PTY exactly once');
 
     await tmux(externalPane, 'send-keys', '-t', externalPane.target, `python3 ${probe} ime`, 'Enter');
     await waitForCapture(externalPane, 'IME_READY');
     await page.locator('.xterm-helper-textarea').evaluate((textarea) => {
+      const input = textarea as HTMLTextAreaElement;
+      const valueBeforeComposition = input.value;
       textarea.dispatchEvent(new CompositionEvent('compositionstart', { data: '', bubbles: true }));
-      (textarea as HTMLTextAreaElement).value = '한글';
+      input.value = `${valueBeforeComposition}한글`;
       textarea.dispatchEvent(new CompositionEvent('compositionupdate', { data: '한글', bubbles: true }));
       textarea.dispatchEvent(new InputEvent('input', {
         data: '한글', inputType: 'insertCompositionText', isComposing: true, bubbles: true,
       }));
       textarea.dispatchEvent(new CompositionEvent('compositionend', { data: '한글', bubbles: true }));
     });
-    assert.match(await waitForCapture(externalPane, 'PROBE_IME:'), /PROBE_IME:ed959ceab880/,
+    assert.equal(await waitForProbePayload(externalPane, 'IME'),
+      Buffer.from('한글').toString('hex'),
       'IME composition must commit its UTF-8 text exactly once');
 
     const workspaceResponse = await context.request.post(`${origin}/api/workspace`, {
