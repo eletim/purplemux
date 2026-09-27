@@ -118,6 +118,37 @@ describe('external tmux server registrations', () => {
     await resource.stop();
   });
 
+  it('removes a marked shadow when the source disappears before linking', async () => {
+    vi.spyOn(os, 'homedir').mockReturnValue(directory);
+    vi.resetModules();
+    const store = await import('@/lib/external-server-store');
+    const server = await store.registerExternalServer({ name: 'external', socketPath: socket });
+    tmux('new-session', '-d', '-s', 'bystander', 'sleep 300');
+    const bystanderId = tmux('display-message', '-p', '-t', 'bystander:', '#{session_id}');
+    tmux('set-hook', '-g', 'after-new-session', 'kill-session -t $0');
+
+    await expect(ExternalTerminalClientResource.create(
+      externalServerTmuxTarget(server), '$0', '@0', server.socketIdentity)).rejects.toThrow();
+
+    expect(tmux('list-sessions', '-F', '#{session_id}')).toBe(bystanderId);
+    expect(registeredExternalTerminalSessions(server.socketIdentity)).toEqual([]);
+
+    // Model discovery in a new process after all process-local registrations are lost.
+    const runtime = globalThis as typeof globalThis & {
+      __purplemux_external_terminal_sessions?: unknown;
+    };
+    const registrations = runtime.__purplemux_external_terminal_sessions;
+    delete runtime.__purplemux_external_terminal_sessions;
+    vi.resetModules();
+    try {
+      const restarted = await import('@/lib/external-server-tmux');
+      expect((await restarted.discoverExternalServer(server)).sessions.map(({ id }) => id))
+        .toEqual([bystanderId]);
+    } finally {
+      runtime.__purplemux_external_terminal_sessions = registrations;
+    }
+  });
+
   it('hides a shadow discovered through a hard link to the same socket', async () => {
     const linkedSocket = path.join(directory, 'tmux-linked');
     await fs.link(socket, linkedSocket);

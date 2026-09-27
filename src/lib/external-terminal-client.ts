@@ -84,10 +84,10 @@ export class ExternalTerminalClientResource {
       client = await spawnTmuxPty(backend, [
         '-u', '-C',
         'new-session', '-d', '-s', shadowName, '-x', sourceCols, '-y', sourceRows,
+        ';', 'set-option', '-t', shadowTarget, EXTERNAL_TERMINAL_SESSION_OPTION, marker,
+        ';', 'set-option', '-t', shadowTarget, 'destroy-unattached', 'on',
         ';', 'link-window', '-s', `${sessionId}:${windowId}`, '-t', `${shadowTarget}:1`,
         ';', 'kill-window', '-t', `${shadowTarget}:0`,
-        ';', 'set-option', '-t', shadowTarget, 'destroy-unattached', 'on',
-        ';', 'set-option', '-t', shadowTarget, EXTERNAL_TERMINAL_SESSION_OPTION, marker,
         ';', 'set-option', '-t', shadowTarget, 'status', 'off',
         ';', 'select-window', '-t', `${shadowTarget}:${windowId}`,
         ';', 'attach-session', '-f', 'read-only,no-output',
