@@ -326,10 +326,10 @@ const MobileSurfaceView = ({
     status,
     retryCount,
     disconnectReason,
-    connect,
+    connectTarget,
     reconnect,
     sendStdin,
-    sendWebStdin,
+    sendMobileInput,
     sendResize,
     theme: terminalTheme,
   } = useTerminalSurface({
@@ -390,7 +390,10 @@ const MobileSurfaceView = ({
     });
 
     connectedSessionRef.current = tab.sessionName;
-    connect({ kind: 'managed', sessionName: tab.sessionName });
+    connectTarget(
+      { kind: 'managed', sessionName: tab.sessionName },
+      { initialSize: 'defer' },
+    );
   }, [isReady, activeTabId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
@@ -780,7 +783,7 @@ const MobileSurfaceView = ({
           sessionName={activeTab.sessionName}
           claudeSessionId={claudeSessionId}
           cwd={activeTabCwd}
-          sendStdin={sendWebStdin}
+          sendStdin={sendMobileInput}
           terminalWsConnected={status === 'connected'}
           focusTerminal={focus}
           focusInputRef={focusInputRef}
@@ -800,7 +803,7 @@ const MobileSurfaceView = ({
           wsId={layoutWsId ?? undefined}
           sessionName={activeTab.sessionName}
           cwd={activeTabCwd || activeTab.cwd}
-          sendStdin={sendWebStdin}
+          sendStdin={sendMobileInput}
           terminalWsConnected={status === 'connected'}
           focusTerminal={focus}
           focusInputRef={focusInputRef}
@@ -824,7 +827,7 @@ const MobileSurfaceView = ({
             !usesHiddenTerminal && (!ready || !showTerminal) ? 'opacity-0' : '',
           )}
           mobileToolbar={!isAgentPanel && !isAgentSessionList && status === 'connected'
-            ? { sendStdin: sendWebStdin, terminalConnected: true }
+            ? { sendStdin: sendMobileInput, terminalConnected: true }
             : undefined}
         />
       )}
