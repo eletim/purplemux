@@ -149,6 +149,38 @@ describe('external tmux server registrations', () => {
     }
   });
 
+  it('tracks a shadow by session id when an after-new-session hook renames it', async () => {
+    vi.spyOn(os, 'homedir').mockReturnValue(directory);
+    vi.resetModules();
+    const store = await import('@/lib/external-server-store');
+    const server = await store.registerExternalServer({ name: 'external', socketPath: socket });
+    tmux('set-hook', '-g', 'after-new-session', 'rename-session hook-renamed');
+
+    const resource = await ExternalTerminalClientResource.create(
+      externalServerTmuxTarget(server), '$0', '@0', server.socketIdentity);
+
+    expect(tmux('list-sessions', '-F', '#{session_name}').split('\n'))
+      .toEqual(['external', 'hook-renamed']);
+    expect((await discoverExternalServer(server)).sessions.map(({ id }) => id)).toEqual(['$0']);
+
+    await resource.stop();
+
+    expect(tmux('list-sessions', '-F', '#{session_id}\t#{session_name}')).toBe('$0\texternal');
+    const runtime = globalThis as typeof globalThis & {
+      __purplemux_external_terminal_sessions?: unknown;
+    };
+    const registrations = runtime.__purplemux_external_terminal_sessions;
+    delete runtime.__purplemux_external_terminal_sessions;
+    vi.resetModules();
+    try {
+      const restarted = await import('@/lib/external-server-tmux');
+      expect((await restarted.discoverExternalServer(server)).sessions.map(({ id }) => id))
+        .toEqual(['$0']);
+    } finally {
+      runtime.__purplemux_external_terminal_sessions = registrations;
+    }
+  });
+
   it('hides a shadow discovered through a hard link to the same socket', async () => {
     const linkedSocket = path.join(directory, 'tmux-linked');
     await fs.link(socket, linkedSocket);

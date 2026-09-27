@@ -20,7 +20,6 @@ export class ExternalTerminalClientResource {
   private stopped = false;
   private hasExited = false;
   private sequence = 0;
-  private shadowSessionId = '';
   private windowCols = 0;
   private windowRows = 0;
   private active = false;
@@ -39,6 +38,7 @@ export class ExternalTerminalClientResource {
     private readonly windowId: string,
     private readonly shadowSessionName: string,
     private readonly marker: string,
+    private readonly shadowSessionId: string,
     private readonly registration: IExternalTerminalSessionRegistration,
     private readonly onInvalid?: () => void,
   ) {
@@ -61,9 +61,7 @@ export class ExternalTerminalClientResource {
     const uuid = randomUUID();
     const marker = `v1:${uuid}`;
     const shadowName = `${EXTERNAL_TERMINAL_SESSION_PREFIX}${uuid.replaceAll('-', '')}`;
-    // The random full name is unambiguous. tmux 3.2 cannot resolve its exact-match
-    // '=' form inside the same command queue that creates the session.
-    const shadowTarget = shadowName;
+    const createdMarker = `PMUX_EXTERNAL_CREATED_${uuid.replaceAll('-', '')}`;
     if (backend.kind !== 'external') throw new Error('External terminal client requires an external backend');
     const { stdout: sourceOutput } = await execTmux(backend, [
       'display-message', '-p', '-t', `${sessionId}:${windowId}`,
@@ -80,18 +78,32 @@ export class ExternalTerminalClientResource {
     });
     let resource: ExternalTerminalClientResource | undefined;
     let client: pty.IPty | undefined;
+    let shadowSessionId = '';
     try {
+      const { stdout } = await execTmux(backend, [
+        'new-session', '-d', '-P', '-F', `${createdMarker}:#{session_id}`,
+        '-s', shadowName, '-x', sourceCols, '-y', sourceRows,
+        // These commands intentionally use the new session's queue context. An
+        // after-new-session hook may rename it before either command runs.
+        ';', 'set-option', EXTERNAL_TERMINAL_SESSION_OPTION, marker,
+      ], { timeout: 5000, signal });
+      const createdIds = stdout.trimEnd().split('\n')
+        .filter((line) => line.startsWith(`${createdMarker}:`))
+        .map((line) => line.slice(createdMarker.length + 1));
+      if (createdIds.length !== 1 || !/^\$\d+$/.test(createdIds[0])) {
+        throw new Error('External terminal client identity unavailable');
+      }
+      [shadowSessionId] = createdIds;
+      bindExternalTerminalSession(registration, shadowSessionId);
       client = await spawnTmuxPty(backend, [
         '-u', '-C',
-        'new-session', '-d', '-s', shadowName, '-x', sourceCols, '-y', sourceRows,
-        ';', 'set-option', '-t', shadowTarget, EXTERNAL_TERMINAL_SESSION_OPTION, marker,
-        ';', 'set-option', '-t', shadowTarget, 'destroy-unattached', 'on',
-        ';', 'link-window', '-s', `${sessionId}:${windowId}`, '-t', `${shadowTarget}:1`,
-        ';', 'kill-window', '-t', `${shadowTarget}:0`,
-        ';', 'set-option', '-t', shadowTarget, 'status', 'off',
-        ';', 'select-window', '-t', `${shadowTarget}:${windowId}`,
+        'set-option', '-t', shadowSessionId, 'destroy-unattached', 'on',
+        ';', 'link-window', '-s', `${sessionId}:${windowId}`, '-t', `${shadowSessionId}:1`,
+        ';', 'kill-window', '-t', `${shadowSessionId}:0`,
+        ';', 'set-option', '-t', shadowSessionId, 'status', 'off',
+        ';', 'select-window', '-t', `${shadowSessionId}:${windowId}`,
         ';', 'attach-session', '-f', 'read-only,no-output',
-        '-t', `${shadowTarget}:${windowId}`,
+        '-t', `${shadowSessionId}:${windowId}`,
       ], {
         name: 'xterm-256color', cols: Number(sourceCols), rows: Number(sourceRows),
         cwd: PRISTINE_ENV.HOME || '/', env: buildShellEnv(),
@@ -99,7 +111,8 @@ export class ExternalTerminalClientResource {
         signal,
         onSpawn: (spawned) => {
           resource = new ExternalTerminalClientResource(
-            backend, spawned, sessionId, windowId, shadowName, marker, registration, onInvalid,
+            backend, spawned, sessionId, windowId, shadowName, marker, shadowSessionId,
+            registration, onInvalid,
           );
         },
       });
@@ -109,8 +122,9 @@ export class ExternalTerminalClientResource {
       try { client?.kill(); } catch { /* Client already exited. */ }
       await resource?.exited;
       await ExternalTerminalClientResource.destroyShadowSession(
-        backend, shadowName, marker, resource?.shadowSessionId || undefined);
-      const destroyed = await ExternalTerminalClientResource.sessionWasDestroyed(backend, shadowName);
+        backend, shadowName, marker, shadowSessionId || undefined);
+      const destroyed = await ExternalTerminalClientResource.sessionWasDestroyed(
+        backend, shadowName, shadowSessionId || undefined);
       if (destroyed) unregisterExternalTerminalSession(registration);
       throw error;
     }
@@ -123,20 +137,18 @@ export class ExternalTerminalClientResource {
 
   private async initialize(signal?: AbortSignal): Promise<void> {
     const { stdout } = await execTmux(this.backend, [
-      'display-message', '-p', '-t', `=${this.shadowSessionName}:${this.windowId}`,
-      `#{session_id}\t#{session_name}\t#{window_id}\t#{window_width}\t#{window_height}`
+      'display-message', '-p', '-t', `${this.shadowSessionId}:${this.windowId}`,
+      `#{session_id}\t#{window_id}\t#{window_width}\t#{window_height}`
         + `\t#{${EXTERNAL_TERMINAL_SESSION_OPTION}}`,
     ], { timeout: 5000, signal });
-    const [sessionId, sessionName, windowId, cols, rows, marker] = stdout.trimEnd().split('\t');
-    if (!/^\$\d+$/.test(sessionId) || sessionName !== this.shadowSessionName
-      || windowId !== this.windowId || !/^\d+$/.test(cols) || !/^\d+$/.test(rows)
+    const [sessionId, windowId, cols, rows, marker] = stdout.trimEnd().split('\t');
+    if (sessionId !== this.shadowSessionId || windowId !== this.windowId
+      || !/^\d+$/.test(cols) || !/^\d+$/.test(rows)
       || Number(cols) < 1 || Number(rows) < 1 || marker !== this.marker) {
       throw new Error('External terminal client identity changed');
     }
-    this.shadowSessionId = sessionId;
     this.windowCols = Number(cols);
     this.windowRows = Number(rows);
-    bindExternalTerminalSession(this.registration, sessionId);
     this.drainProtocol();
     if (!await this.check([], signal)) throw new Error('External terminal client unavailable');
     this.active = true;
@@ -155,9 +167,13 @@ export class ExternalTerminalClientResource {
     if (firstFailure && this.active && !this.stopped) this.onInvalid?.();
   }
 
-  private static async sessionWasDestroyed(backend: TmuxTarget, sessionName: string): Promise<boolean> {
+  private static async sessionWasDestroyed(
+    backend: TmuxTarget,
+    sessionName: string,
+    sessionId?: string,
+  ): Promise<boolean> {
     try {
-      await execTmux(backend, ['has-session', '-t', `=${sessionName}`], { timeout: 5000 });
+      await execTmux(backend, ['has-session', '-t', sessionId ?? `=${sessionName}`], { timeout: 5000 });
       return false;
     } catch {
       try {
@@ -179,7 +195,8 @@ export class ExternalTerminalClientResource {
     const nameAndMarkerMatch = `#{&&:#{==:#{session_name},${sessionName}},`
       + `#{==:#{${EXTERNAL_TERMINAL_SESSION_OPTION}},${marker}}}`;
     const identityMatches = sessionId
-      ? `#{&&:#{==:#{session_id},${sessionId}},${nameAndMarkerMatch}}`
+      ? `#{&&:#{==:#{session_id},${sessionId}},`
+        + `#{==:#{${EXTERNAL_TERMINAL_SESSION_OPTION}},${marker}}}`
       : nameAndMarkerMatch;
     try {
       // Keep verification and deletion in one tmux command queue so a changed
@@ -230,14 +247,13 @@ export class ExternalTerminalClientResource {
       'display-message', '-p', '-t', `${this.sourceSessionId}:${this.windowId}`,
       '#{session_id}\t#{window_id}',
       ';', 'display-message', '-p', '-t', `${this.shadowSessionId}:${this.windowId}`,
-      `#{session_id}\t#{session_name}\t#{window_id}\t#{${EXTERNAL_TERMINAL_SESSION_OPTION}}`,
+      `#{session_id}\t#{window_id}\t#{${EXTERNAL_TERMINAL_SESSION_OPTION}}`,
     ], { timeout: 5000, signal }).then(({ stdout }) => {
       const [source, shadow, extra] = stdout.trimEnd().split('\n');
       const [sourceId, sourceWindow] = (source ?? '').split('\t');
-      const [shadowId, shadowName, shadowWindow, marker] = (shadow ?? '').split('\t');
+      const [shadowId, shadowWindow, marker] = (shadow ?? '').split('\t');
       return extra === undefined && sourceId === this.sourceSessionId && sourceWindow === this.windowId
-        && shadowId === this.shadowSessionId && shadowName === this.shadowSessionName
-        && shadowWindow === this.windowId && marker === this.marker;
+        && shadowId === this.shadowSessionId && shadowWindow === this.windowId && marker === this.marker;
     }).catch(() => false);
   }
 
@@ -320,7 +336,9 @@ export class ExternalTerminalClientResource {
       await ExternalTerminalClientResource.destroyShadowSession(
         this.backend, this.shadowSessionName, this.marker, this.shadowSessionId || undefined);
       if (await ExternalTerminalClientResource.sessionWasDestroyed(
-        this.backend, this.shadowSessionName)) unregisterExternalTerminalSession(this.registration);
+        this.backend, this.shadowSessionName, this.shadowSessionId || undefined)) {
+        unregisterExternalTerminalSession(this.registration);
+      }
     });
     return this.stopPromise;
   }

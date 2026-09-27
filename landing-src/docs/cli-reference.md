@@ -53,7 +53,7 @@ All subcommands require a running server. They read the port from `~/.purplemux/
 | `purplemux workspace delete -w WS --if-empty` | Conditionally delete an empty workspace |
 | `purplemux external-server register --socket PATH --name NAME` | Register an external tmux server |
 | `purplemux external-server list` | List external server registrations |
-| `purplemux external-server unregister ID` | Remove a registration without changing tmux resources |
+| `purplemux external-server unregister ID` | Remove a registration and internal shadow sessions while preserving original/discovered external tmux resources |
 | `purplemux tab list [-w WS]` | List tabs (optionally scoped to a workspace) |
 | `purplemux tab create -w WS [-n NAME] [-t TYPE]` | Create a new tab |
 | `purplemux tab send -w WS TAB_ID CONTENT...` | Send input to a tab |
