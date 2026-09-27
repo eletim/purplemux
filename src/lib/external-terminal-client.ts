@@ -24,7 +24,8 @@ export class ExternalTerminalClientResource {
   private windowCols = 0;
   private windowRows = 0;
   private active = false;
-  private identityTimer: ReturnType<typeof setInterval> | null = null;
+  private readonly identityAbort = new AbortController();
+  private identityWatchdog: Promise<void> | null = null;
   private readonly ownedClientNames = new Set<string>();
   private readonly clientsSeenOutsideShadow = new Set<string>();
   private readonly exited: Promise<void>;
@@ -137,16 +138,13 @@ export class ExternalTerminalClientResource {
     this.drainProtocol();
     if (!await this.check([], signal)) throw new Error('External terminal client unavailable');
     this.active = true;
-    this.identityTimer = setInterval(() => {
-      void this.inspectIdentity().then((safe) => {
-        if (!safe) this.fail();
-      });
-    }, 250);
+    this.identityWatchdog = this.watchIdentity();
   }
 
   private fail(): void {
     const firstFailure = !this.unsafe;
     this.unsafe = true;
+    this.identityAbort.abort();
     if (this.pending) {
       clearTimeout(this.pending.timer);
       this.pending.resolve(false);
@@ -219,6 +217,34 @@ export class ExternalTerminalClientResource {
     }).catch(() => false);
   }
 
+  private waitForIdentityPoll(): Promise<boolean> {
+    const signal = this.identityAbort.signal;
+    if (signal.aborted) return Promise.resolve(false);
+    return new Promise((resolve) => {
+      const onAbort = () => {
+        clearTimeout(timer);
+        resolve(false);
+      };
+      const timer = setTimeout(() => {
+        signal.removeEventListener('abort', onAbort);
+        resolve(true);
+      }, 250);
+      signal.addEventListener('abort', onAbort, { once: true });
+    });
+  }
+
+  private async watchIdentity(): Promise<void> {
+    const signal = this.identityAbort.signal;
+    while (!this.stopped && !this.unsafe && await this.waitForIdentityPoll()) {
+      const safe = await this.inspectIdentity(signal);
+      if (signal.aborted || this.stopped || this.unsafe) return;
+      if (!safe) {
+        this.fail();
+        return;
+      }
+    }
+  }
+
   private clientsOnTarget(pids: number[], signal?: AbortSignal): Promise<boolean> {
     return execTmux(this.backend, ['list-clients', '-F',
       '#{client_pid}\t#{client_name}\t#{session_id}\t#{window_id}'], { timeout: 5000, signal }).then(async ({ stdout }) => {
@@ -257,10 +283,7 @@ export class ExternalTerminalClientResource {
   stop(): Promise<void> {
     if (this.stopPromise) return this.stopPromise;
     this.stopped = true;
-    if (this.identityTimer) {
-      clearInterval(this.identityTimer);
-      this.identityTimer = null;
-    }
+    this.identityAbort.abort();
     this.fail();
     const detach = this.shadowSessionId
       ? execTmux(this.backend, ['detach-client', '-s', this.shadowSessionId], { timeout: 5000 }).then(() => {})
@@ -269,7 +292,7 @@ export class ExternalTerminalClientResource {
     if (!this.hasExited) {
       try { this.client.kill(); } catch { /* Client already exited. */ }
     }
-    this.stopPromise = Promise.all([this.exited, detach]).then(async () => {
+    this.stopPromise = Promise.all([this.exited, detach, this.identityWatchdog]).then(async () => {
       if (await ExternalTerminalClientResource.sessionWasDestroyed(
         this.backend, this.shadowSessionName)) unregisterExternalTerminalSession(this.registration);
     });

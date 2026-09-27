@@ -135,6 +135,48 @@ describe('external tmux server registrations', () => {
     await resource.stop();
   }, 30_000);
 
+  it('serializes slow identity probes and aborts the active probe during shutdown', async () => {
+    vi.spyOn(os, 'homedir').mockReturnValue(directory);
+    vi.resetModules();
+    const store = await import('@/lib/external-server-store');
+    const server = await store.registerExternalServer({ name: 'external', socketPath: socket });
+    const stableBackend = externalServerTmuxTarget(server);
+    if (stableBackend.kind !== 'external') throw new Error('expected external backend');
+    let slow = false;
+    let activeProbes = 0;
+    let peakProbes = 0;
+    let abortedProbes = 0;
+    let probeStarted!: () => void;
+    const firstProbe = new Promise<void>((resolve) => { probeStarted = resolve; });
+    const backend = externalTmuxTarget(socket, async (signal) => {
+      await stableBackend.validate(signal);
+      if (!slow || !signal) return;
+      activeProbes += 1;
+      peakProbes = Math.max(peakProbes, activeProbes);
+      probeStarted();
+      await new Promise<void>((_resolve, reject) => {
+        const onAbort = () => {
+          activeProbes -= 1;
+          abortedProbes += 1;
+          reject(signal.reason);
+        };
+        signal.addEventListener('abort', onAbort, { once: true });
+      });
+    });
+    const resource = await ExternalTerminalClientResource.create(
+      backend, '$0', '@0', server.socketIdentity);
+
+    slow = true;
+    await firstProbe;
+    await new Promise((resolve) => setTimeout(resolve, 750));
+    expect(activeProbes).toBe(1);
+    expect(peakProbes).toBe(1);
+
+    await resource.stop();
+    expect(activeProbes).toBe(0);
+    expect(abortedProbes).toBe(1);
+  });
+
   it('keeps a shadow hidden when cleanup cannot destroy it', async () => {
     vi.spyOn(os, 'homedir').mockReturnValue(directory);
     vi.resetModules();
