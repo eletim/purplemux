@@ -214,7 +214,7 @@ const typeCommand = async (page: Page, command: string): Promise<void> => {
 
 const copySentinelWithDrag = async (page: Page, pane: ITmuxPane): Promise<string> => {
   const sentinel = 'COPY_BROWSER_SENTINEL';
-  const command = `yes COPY_BROWSER_FILL | head -80 && yes ${sentinel} | head -5`;
+  const command = `yes ${sentinel} | head -80`;
   const inCopyMode = (await tmux(
     pane, 'display-message', '-p', '-t', pane.target, '#{pane_in_mode}',
   )).trim() === '1';
@@ -248,10 +248,11 @@ const copySentinelWithDrag = async (page: Page, pane: ITmuxPane): Promise<string
     if (copied.includes(sentinel)) break;
     await new Promise((resolve) => setTimeout(resolve, 100));
   }
-  const copiedSentinels = copied.split(/\r?\n/).filter((line) => line === sentinel);
-  assert(copiedSentinels.length > 0,
+  const normalizedCopied = copied.replace(/\r\n?/g, '\n').trimEnd();
+  const copiedSentinels = normalizedCopied.split('\n').filter((line) => line === sentinel);
+  assert(copiedSentinels.length > 1,
     `tmux drag selection must reach the browser clipboard, received ${JSON.stringify(copied)}`);
-  return copiedSentinels[0];
+  return normalizedCopied;
 };
 
 const main = async () => {
