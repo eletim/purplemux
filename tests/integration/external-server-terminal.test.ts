@@ -288,6 +288,27 @@ describe('shared terminal path for discovered external windows', () => {
     expect(connected.output()).not.toContain('SECOND_WINDOW');
   });
 
+  it('permanently rejects display-client session drift even after it returns', async () => {
+    const connected = await connect();
+    await vi.waitFor(() => expect(connected.output()).toContain('FIRST_WINDOW'));
+    const displayClient = tmux('list-clients', '-F',
+      '#{client_flags}\t#{client_tty}\t#{session_id}')
+      .split('\n').find((line) => !line.includes('no-output'))?.split('\t');
+    expect(displayClient).toHaveLength(3);
+    const [, clientTty, shadowSessionId] = displayClient!;
+    tmux('new-session', '-d', '-s', 'secret', '-x', '90', '-y', '30',
+      "printf 'TRANSIENT_SECRET\\n'; exec bash --noprofile --norc");
+
+    // Keep the Node event loop blocked until the client is back on its approved
+    // target, reproducing drift that a final placement snapshot cannot detect.
+    tmux('switch-client', '-c', clientTty, '-t', 'secret',
+      ';', 'run-shell', 'sleep 0.05',
+      ';', 'switch-client', '-c', clientTty, '-t', `${shadowSessionId}:@0`);
+
+    await vi.waitFor(() => expect(connected.closed()?.code).toBe(1008));
+    expect(connected.output()).not.toContain('TRANSIENT_SECRET');
+  });
+
   it('rejects a client moved to another session linked to the authorized window', async () => {
     const connected = await connect();
     await vi.waitFor(() => expect(connected.output()).toContain('FIRST_WINDOW'));

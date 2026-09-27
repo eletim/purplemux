@@ -6,9 +6,16 @@ import { execTmux, spawnTmuxPty, validateTmuxTarget, type TmuxTarget } from '@/l
 
 export const EXTERNAL_TERMINAL_SESSION_OPTION = '@purplemux_internal_external_client';
 const EXTERNAL_TERMINAL_SESSION_PREFIX = '__purplemux_external_client_';
-const markerPattern = /^v1:[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 
-export const isExternalTerminalSessionMarker = (value: string): boolean => markerPattern.test(value);
+const globalStore = globalThis as unknown as {
+  __purplemux_external_terminal_sessions?: Map<string, Map<string, string>>;
+};
+const registeredSessions = globalStore.__purplemux_external_terminal_sessions ??= new Map();
+
+export const registeredExternalTerminalSessionMarker = (
+  socketPath: string,
+  sessionId: string,
+): string | undefined => registeredSessions.get(socketPath)?.get(sessionId);
 
 /**
  * A private grouped session gives PurpleMux its own current-window state. The
@@ -25,6 +32,9 @@ export class ExternalTerminalClientResource {
   private windowCols = 0;
   private windowRows = 0;
   private active = false;
+  private registered = false;
+  private readonly ownedClientNames = new Set<string>();
+  private readonly clientsSeenOutsideShadow = new Set<string>();
   private readonly exited: Promise<void>;
   private stopPromise: Promise<void> | null = null;
   private pending: { marker: string; resolve: (safe: boolean) => void; timer: ReturnType<typeof setTimeout> } | null = null;
@@ -86,6 +96,7 @@ export class ExternalTerminalClientResource {
       return resource!;
     } catch (error) {
       try { client?.kill(); } catch { /* Client already exited. */ }
+      resource?.unregister();
       // If setup stopped between new-session and attach-session, applying this
       // option to the still-unattached private session removes it without a kill.
       await execTmux(backend, [
@@ -115,6 +126,7 @@ export class ExternalTerminalClientResource {
     this.shadowSessionId = sessionId;
     this.windowCols = Number(cols);
     this.windowRows = Number(rows);
+    this.register();
     this.drainProtocol();
     if (!await this.check([], signal)) throw new Error('External terminal client unavailable');
     this.active = true;
@@ -131,6 +143,23 @@ export class ExternalTerminalClientResource {
     if (firstFailure && this.active && !this.stopped) this.onInvalid?.();
   }
 
+  private register(): void {
+    if (this.backend.kind !== 'external') throw new Error('External terminal client requires an external backend');
+    const sessions = registeredSessions.get(this.backend.socketPath) ?? new Map<string, string>();
+    if (sessions.has(this.shadowSessionId)) throw new Error('External terminal client session is already registered');
+    sessions.set(this.shadowSessionId, this.marker);
+    registeredSessions.set(this.backend.socketPath, sessions);
+    this.registered = true;
+  }
+
+  private unregister(): void {
+    if (!this.registered || this.backend.kind !== 'external') return;
+    const sessions = registeredSessions.get(this.backend.socketPath);
+    if (sessions?.get(this.shadowSessionId) === this.marker) sessions.delete(this.shadowSessionId);
+    if (sessions?.size === 0) registeredSessions.delete(this.backend.socketPath);
+    this.registered = false;
+  }
+
   private receive(data: string): void {
     this.buffer += data;
     if (this.buffer.length > 65536) return this.fail();
@@ -145,6 +174,14 @@ export class ExternalTerminalClientResource {
       this.buffer = this.buffer.slice(end + 1);
       if (line.startsWith(`%session-window-changed ${this.shadowSessionId} `)
         && line !== `%session-window-changed ${this.shadowSessionId} ${this.windowId}`) this.fail();
+      const clientSession = line.match(/^%client-session-changed (.+) (\$\d+) /);
+      if (clientSession) {
+        const [, clientName, sessionId] = clientSession;
+        if (sessionId !== this.shadowSessionId) this.clientsSeenOutsideShadow.add(clientName);
+        if (this.ownedClientNames.has(clientName) && sessionId !== this.shadowSessionId) this.fail();
+      }
+      const detachedClient = line.match(/^%client-detached (.+)$/)?.[1];
+      if (detachedClient && this.ownedClientNames.has(detachedClient)) this.fail();
       if (line === `%window-close ${this.windowId}`
         || line === `%session-closed ${this.sourceSessionId}`
         || line === `%session-closed ${this.shadowSessionId}`) this.fail();
@@ -176,11 +213,19 @@ export class ExternalTerminalClientResource {
 
   private clientsOnTarget(pids: number[], signal?: AbortSignal): Promise<boolean> {
     return execTmux(this.backend, ['list-clients', '-F',
-      '#{client_pid}\t#{session_id}\t#{window_id}'], { timeout: 5000, signal }).then(async ({ stdout }) => {
+      '#{client_pid}\t#{client_name}\t#{session_id}\t#{window_id}'], { timeout: 5000, signal }).then(async ({ stdout }) => {
       await validateTmuxTarget(this.backend, signal);
-      const clients = new Set(stdout.trim().split('\n'));
-      return [this.pid, ...pids].every((pid) =>
-        clients.has(`${pid}\t${this.shadowSessionId}\t${this.windowId}`));
+      const clients = new Map(stdout.trim().split('\n').map((line) => {
+        const [pid, name, sessionId, windowId] = line.split('\t');
+        return [pid, { name, sessionId, windowId }];
+      }));
+      return [this.pid, ...pids].every((pid) => {
+        const client = clients.get(String(pid));
+        if (!client || client.sessionId !== this.shadowSessionId || client.windowId !== this.windowId
+          || this.clientsSeenOutsideShadow.has(client.name)) return false;
+        this.ownedClientNames.add(client.name);
+        return true;
+      });
     }).catch(() => false);
   }
 
@@ -212,7 +257,7 @@ export class ExternalTerminalClientResource {
     if (!this.hasExited) {
       try { this.client.kill(); } catch { /* Client already exited. */ }
     }
-    this.stopPromise = Promise.all([this.exited, detach]).then(() => {});
+    this.stopPromise = Promise.all([this.exited, detach]).then(() => {}).finally(() => this.unregister());
     return this.stopPromise;
   }
 }

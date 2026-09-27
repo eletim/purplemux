@@ -68,6 +68,22 @@ describe('external tmux server registrations', () => {
     expect(tmux('list-windows', '-t', 'external', '-F', '#{window_id}').split('\n')).toHaveLength(2);
   });
 
+  it('does not trust or delimit inventory with user-provided internal marker options', async () => {
+    vi.spyOn(os, 'homedir').mockReturnValue(directory);
+    vi.resetModules();
+    const store = await import('@/lib/external-server-store');
+    const server = await store.registerExternalServer({ name: 'external', socketPath: socket });
+
+    tmux('set-option', '-t', '$0', '@purplemux_internal_external_client', 'user\tvalue\nnext');
+    let inventory = await discoverExternalServer(server);
+    expect(inventory.sessions.map(({ id }) => id)).toEqual(['$0']);
+
+    tmux('set-option', '-t', '$0', '@purplemux_internal_external_client',
+      'v1:12345678-1234-4123-8123-123456789abc');
+    inventory = await discoverExternalServer(server);
+    expect(inventory.sessions.map(({ id }) => id)).toEqual(['$0']);
+  });
+
   it('adds an unowned window to an exact existing session for immediate selection', async () => {
     vi.spyOn(os, 'homedir').mockReturnValue(directory);
     vi.resetModules();

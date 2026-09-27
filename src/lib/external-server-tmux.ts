@@ -2,7 +2,7 @@ import path from 'path';
 import { ExternalTmuxSocketError, frozenExternalTmuxSocketIdentity } from '@/lib/external-tmux-socket';
 import { execTmux, execTmuxBuffer, externalTmuxTarget, type TmuxTarget } from '@/lib/tmux-target';
 import { EXTERNAL_TERMINAL_SESSION_OPTION,
-  isExternalTerminalSessionMarker } from '@/lib/external-terminal-client';
+  registeredExternalTerminalSessionMarker } from '@/lib/external-terminal-client';
 import type {
   IExternalServer,
   IExternalServerInventory,
@@ -175,8 +175,7 @@ export const freezeExternalServer = async (
 // Keep the enumerated fields ASCII-only so this works on tmux 2.9 and cannot be
 // confused by delimiters in names or paths. Free-form fields are fetched below.
 const INVENTORY_FORMAT = [
-  '#{session_id}', '#{session_created}', '#{session_attached}', `#{${EXTERNAL_TERMINAL_SESSION_OPTION}}`,
-  '#{window_id}', '#{window_index}',
+  '#{session_id}', '#{session_created}', '#{session_attached}', '#{window_id}', '#{window_index}',
   '#{window_active}', '#{pane_id}', '#{pane_index}', '#{pane_active}',
   '#{pane_pid}', '#{pane_dead}',
 ].join('\t');
@@ -198,15 +197,13 @@ const parseExternalServerInventory = (server: IExternalServer, stdout: string): 
   const sessions = new Map<string, IExternalTmuxSession>();
   for (const line of stdout.trim() ? stdout.trimEnd().split('\n') : []) {
     const fields = line.split('\t');
-    if (fields.length !== 12) throw new ExternalServerError('Invalid external tmux runtime inventory');
-    const [sessionId, sessionCreated, sessionAttached, internalClientMarker, windowId, windowIndex,
-      windowActive, paneId, paneIndex, paneActive, panePid, paneDead] = fields;
+    if (fields.length !== 11) throw new ExternalServerError('Invalid external tmux runtime inventory');
+    const [sessionId, sessionCreated, sessionAttached, windowId, windowIndex, windowActive,
+      paneId, paneIndex, paneActive, panePid, paneDead] = fields;
     if (!/^\$\d+$/.test(sessionId) || !/^\d+$/.test(sessionCreated)
       || !/^@\d+$/.test(windowId) || !/^%\d+$/.test(paneId)) {
       throw new ExternalServerError('Invalid external tmux runtime inventory');
     }
-    if (isExternalTerminalSessionMarker(internalClientMarker)) continue;
-
     let session = sessions.get(sessionId);
     if (!session) {
       session = { id: sessionId, name: '', sessionCreated, exists: true,
@@ -244,6 +241,25 @@ const readExternalTmuxField = async (backend: TmuxTarget, target: string, field:
   // Decode only after removing tmux's record newline. Invalid filename bytes are
   // represented by U+FFFD without corrupting boundaries for any other resource.
   return stdout.subarray(0, -1).toString('utf8');
+};
+
+const omitRegisteredExternalTerminalSessions = async (
+  inventory: IExternalServerInventory,
+  backend: TmuxTarget,
+  signal?: AbortSignal,
+): Promise<void> => {
+  const visible: IExternalTmuxSession[] = [];
+  for (const session of inventory.sessions) {
+    const expected = registeredExternalTerminalSessionMarker(inventory.socketPath, session.id);
+    if (!expected) {
+      visible.push(session);
+      continue;
+    }
+    const actual = await readExternalTmuxField(
+      backend, session.id, EXTERNAL_TERMINAL_SESSION_OPTION, signal);
+    if (actual !== expected) visible.push(session);
+  }
+  inventory.sessions = visible;
 };
 
 const METADATA_CONCURRENCY = 8;
@@ -345,6 +361,7 @@ export const discoverExternalServer = async (
         ['list-panes', '-a', '-F', INVENTORY_FORMAT],
         { timeout: 5000, maxBuffer: 4 * 1024 * 1024, signal });
       const inventory = parseExternalServerInventory(server, stdout);
+      await omitRegisteredExternalTerminalSessions(inventory, externalServerTmuxTarget(server), signal);
       await populateExternalServerMetadata(inventory, signal);
       await assertExternalServerSocketIdentity(server, signal);
       return inventory;

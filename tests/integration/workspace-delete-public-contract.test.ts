@@ -326,8 +326,8 @@ exec ${quote(realTmux)} "$@"
     const rapidTty = tmux('list-clients', '-F', '#{client_flags}\t#{client_tty}')
       .split('\n').find((line) => !line.includes('no-output'))?.split('\t')[1] ?? '';
     expect(rapidTty).toBeTruthy();
-    tmux('switch-client', '-c', rapidTty, '-t', '$0:@1');
-    tmux('switch-client', '-c', rapidTty, '-t', '$0:@0');
+    tmux('switch-client', '-c', rapidTty, '-t', '$0:@1',
+      ';', 'switch-client', '-c', rapidTty, '-t', '$0:@0');
     tmux('send-keys', '-t', '$0:@0', '-l', 'AFTER_WINDOW_SWITCH');
     await waitFor(() => expect(rapid.code()).toBe(1008));
     expect(rapid.output()).not.toContain('HIDDEN_SECRET');
