@@ -293,9 +293,12 @@ exec ${quote(realTmux)} "$@"
     external.ws.send(encodeStdin('\x02n'));
     await waitFor(() => expect(tmux('list-clients', '-F', '#{window_id}').split('\n').every((id) => id === '@0')).toBe(true));
     expect(external.output()).not.toContain('HIDDEN_SECRET');
+    const originalExternalSize = tmux(
+      'display-message', '-p', '-t', '$0:@0', '#{pane_width}:#{pane_height}');
     external.ws.send(encodeResize(100, 40));
-    // Read-only attach reserves one row for tmux's hidden client status layout.
-    await waitFor(() => expect(tmux('display-message', '-p', '-t', '$0:@0', '#{pane_width}:#{pane_height}')).toBe('100:39'));
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    expect(tmux('display-message', '-p', '-t', '$0:@0', '#{pane_width}:#{pane_height}'))
+      .toBe(originalExternalSize);
     expect(external.ws.readyState).toBe(WebSocket.OPEN);
     external.ws.close(1000);
     await waitFor(() => expect(external.code()).toBe(1000));

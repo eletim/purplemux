@@ -1,6 +1,8 @@
 import path from 'path';
 import { ExternalTmuxSocketError, frozenExternalTmuxSocketIdentity } from '@/lib/external-tmux-socket';
 import { execTmux, execTmuxBuffer, externalTmuxTarget, type TmuxTarget } from '@/lib/tmux-target';
+import { EXTERNAL_TERMINAL_SESSION_OPTION,
+  isExternalTerminalSessionMarker } from '@/lib/external-terminal-client';
 import type {
   IExternalServer,
   IExternalServerInventory,
@@ -173,7 +175,8 @@ export const freezeExternalServer = async (
 // Keep the enumerated fields ASCII-only so this works on tmux 2.9 and cannot be
 // confused by delimiters in names or paths. Free-form fields are fetched below.
 const INVENTORY_FORMAT = [
-  '#{session_id}', '#{session_created}', '#{session_attached}', '#{window_id}', '#{window_index}',
+  '#{session_id}', '#{session_created}', '#{session_attached}', `#{${EXTERNAL_TERMINAL_SESSION_OPTION}}`,
+  '#{window_id}', '#{window_index}',
   '#{window_active}', '#{pane_id}', '#{pane_index}', '#{pane_active}',
   '#{pane_pid}', '#{pane_dead}',
 ].join('\t');
@@ -195,13 +198,14 @@ const parseExternalServerInventory = (server: IExternalServer, stdout: string): 
   const sessions = new Map<string, IExternalTmuxSession>();
   for (const line of stdout.trim() ? stdout.trimEnd().split('\n') : []) {
     const fields = line.split('\t');
-    if (fields.length !== 11) throw new ExternalServerError('Invalid external tmux runtime inventory');
-    const [sessionId, sessionCreated, sessionAttached, windowId, windowIndex, windowActive,
-      paneId, paneIndex, paneActive, panePid, paneDead] = fields;
+    if (fields.length !== 12) throw new ExternalServerError('Invalid external tmux runtime inventory');
+    const [sessionId, sessionCreated, sessionAttached, internalClientMarker, windowId, windowIndex,
+      windowActive, paneId, paneIndex, paneActive, panePid, paneDead] = fields;
     if (!/^\$\d+$/.test(sessionId) || !/^\d+$/.test(sessionCreated)
       || !/^@\d+$/.test(windowId) || !/^%\d+$/.test(paneId)) {
       throw new ExternalServerError('Invalid external tmux runtime inventory');
     }
+    if (isExternalTerminalSessionMarker(internalClientMarker)) continue;
 
     let session = sessions.get(sessionId);
     if (!session) {

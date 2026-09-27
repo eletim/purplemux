@@ -14,7 +14,7 @@ import { createExternalSessionWindow, discoverExternalServer } from '@/lib/exter
 
 const server = { id: 'server', name: 'dev', socketPath: '/known/socket', socketIdentity: '1:2:3' };
 const inventoryLine = (sessionId = '$0', sessionCreated = '1750000000', windowId = '@0') =>
-  `${sessionId}\t${sessionCreated}\t0\t${windowId}\t0\t1\t%0\t0\t1\t123\t0\n`;
+  `${sessionId}\t${sessionCreated}\t0\t\t${windowId}\t0\t1\t%0\t0\t1\t123\t0\n`;
 
 describe('external tmux runtime decoding', () => {
   beforeEach(() => {
@@ -179,10 +179,22 @@ describe('external tmux runtime decoding', () => {
     }] }] });
   });
 
+  it('omits internal external-terminal sessions from public discovery', async () => {
+    mocks.exec.mockResolvedValueOnce({
+      stdout: inventoryLine()
+        + '$1\t1750000001\t2\tv1:12345678-1234-4123-8123-123456789abc\t@0\t0\t1\t%0\t0\t1\t123\t0\n',
+      stderr: '',
+    });
+
+    const inventory = await discoverExternalServer(server);
+
+    expect(inventory.sessions.map((session) => session.id)).toEqual(['$0']);
+  });
+
   it('retries a live snapshot when a resource disappears during metadata lookup', async () => {
-    const stale = '$0\t1750000000\t0\t@0\t0\t1\t%0\t0\t0\t123\t0\n'
-      + '$0\t1750000000\t0\t@0\t0\t1\t%1\t1\t1\t124\t0\n';
-    const survivor = '$0\t1750000000\t0\t@0\t0\t1\t%1\t0\t1\t124\t0\n';
+    const stale = '$0\t1750000000\t0\t\t@0\t0\t1\t%0\t0\t0\t123\t0\n'
+      + '$0\t1750000000\t0\t\t@0\t0\t1\t%1\t1\t1\t124\t0\n';
+    const survivor = '$0\t1750000000\t0\t\t@0\t0\t1\t%1\t0\t1\t124\t0\n';
     mocks.exec.mockReset()
       .mockResolvedValueOnce({ stdout: stale, stderr: '' })
       .mockResolvedValueOnce({ stdout: '456\n', stderr: '' })
@@ -206,7 +218,7 @@ describe('external tmux runtime decoding', () => {
 
   it('bounds concurrent metadata commands for large inventories', async () => {
     mocks.exec.mockResolvedValue({ stdout: Array.from({ length: 20 }, (_, pane) =>
-      `$0\t1750000000\t0\t@0\t0\t1\t%${pane}\t${pane}\t${pane === 0 ? 1 : 0}\t${100 + pane}\t0`).join('\n') + '\n', stderr: '' });
+      `$0\t1750000000\t0\t\t@0\t0\t1\t%${pane}\t${pane}\t${pane === 0 ? 1 : 0}\t${100 + pane}\t0`).join('\n') + '\n', stderr: '' });
     let active = 0;
     let maximum = 0;
     mocks.execBuffer.mockImplementation(async (_target, args: string[]) => {

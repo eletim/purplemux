@@ -144,10 +144,11 @@ describe('shared terminal path for discovered external windows', () => {
     await vi.waitFor(() => expect(first.output()).toContain('WEB_INPUT'));
     expect(tmux('display-message', '-p', '-t', '$0:@0', '#{pane_in_mode}')).toBe('0');
 
+    const originalSize = tmux('display-message', '-p', '-t', '$0:@0', '#{pane_width}:#{pane_height}');
     first.ws.send(encodeResize(100, 40));
-    await vi.waitFor(() => expect(
-      tmux('display-message', '-p', '-t', '$0:@0', '#{pane_width}:#{pane_height}'),
-    ).toBe('100:39'));
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    expect(tmux('display-message', '-p', '-t', '$0:@0', '#{pane_width}:#{pane_height}'))
+      .toBe(originalSize);
 
     first.ws.send(encodeWebStdin(
       "for n in {1..45}; do printf 'LIVE_HISTORY_%03d\\n' \"$n\"; sleep 0.01; done\r",
@@ -168,6 +169,38 @@ describe('shared terminal path for discovered external windows', () => {
     await vi.waitFor(() => expect(second.output()).toContain('SECOND_WINDOW'));
     expect(second.output()).not.toContain('FIRST_WINDOW');
   }, 30_000);
+
+  it('hides and cleans its client session while isolating selection and geometry', async () => {
+    tmux('select-window', '-t', '$0:@0');
+    const originalSize = tmux('display-message', '-p', '-t', '$0:@1', '#{pane_width}:#{pane_height}');
+
+    const connected = await connect('$0', '@1');
+    await vi.waitFor(() => expect(connected.output()).toContain('SECOND_WINDOW'));
+
+    expect(tmux('display-message', '-p', '-t', '$0', '#{window_id}')).toBe('@0');
+    const sessions = tmux('list-sessions', '-F',
+      '#{session_id}\t#{session_name}\t#{@purplemux_internal_external_client}').split('\n');
+    expect(sessions).toHaveLength(2);
+    expect(sessions.find((line) => line.startsWith('$0\t'))).toBe('$0\texternal');
+    expect(sessions.some((line) => /\tv1:[0-9a-f-]+$/.test(line))).toBe(true);
+
+    const store = await import('@/lib/external-server-store');
+    const externalTmux = await import('@/lib/external-server-tmux');
+    const registration = await store.getExternalServer(registrationId);
+    expect(registration).toBeTruthy();
+    const inventory = await externalTmux.discoverExternalServer(registration!);
+    expect(inventory.sessions.map((session) => session.id)).toEqual(['$0']);
+
+    connected.ws.send(encodeResize(140, 50));
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    expect(tmux('display-message', '-p', '-t', '$0:@1', '#{pane_width}:#{pane_height}'))
+      .toBe(originalSize);
+
+    connected.ws.close(1000);
+    await vi.waitFor(() => expect(connected.closed()?.code).toBe(1000));
+    await vi.waitFor(() => expect(tmux('list-sessions', '-F', '#{session_id}')).toBe('$0'));
+    expect(tmux('display-message', '-p', '-t', '$0:@1', '#{window_id}')).toBe('@1');
+  });
 
   it('preserves output produced while history and live attachment are initialized', async () => {
     tmux('send-keys', '-t', '$0:@0',
@@ -224,6 +257,7 @@ describe('shared terminal path for discovered external windows', () => {
     const wrongWindow = await connect('$0', '@9');
     await vi.waitFor(() => expect(wrongWindow.closed()?.code).toBe(1011));
     expect(wrongWindow.output()).toBe('');
+    await vi.waitFor(() => expect(tmux('list-sessions', '-F', '#{session_id}')).toBe('$0'));
 
     tmux('kill-server');
     await vi.waitFor(() => {
@@ -288,6 +322,18 @@ describe('shared terminal path for discovered external windows', () => {
     await vi.waitFor(() => expect(connected.closed()?.code).toBe(1008));
     expect(connected.output()).not.toContain('SECOND_WINDOW');
     expect(tmux('display-message', '-p', '-t', '$0:@1', '#{window_id}')).toBe('@1');
+  });
+
+  it('drops its hidden session when the original session disappears', async () => {
+    const connected = await connect();
+    await vi.waitFor(() => expect(connected.output()).toContain('FIRST_WINDOW'));
+
+    tmux('kill-session', '-t', '$0');
+
+    await vi.waitFor(() => expect(connected.closed()?.code).toBe(1008));
+    await vi.waitFor(() => {
+      expect(() => tmux('list-sessions')).toThrow();
+    });
   });
 
   it('disconnects registration-backed terminals without killing external resources', async () => {
