@@ -8,6 +8,7 @@ export interface IAgentResumeCommandOptions {
 }
 
 export interface IAgentLaunchCommandOptions {
+  launch?: { settingsPath: string; sessionId: string; model: string; effort: string };
   workspaceId?: string;
 }
 

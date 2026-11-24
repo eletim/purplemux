@@ -29,3 +29,8 @@ describe('buildClaudeFlags', () => {
     );
   });
 });
+it('uses dedicated settings and quoted launch-only model/effort/session while preserving flags',async()=>{
+ mocks.getDangerouslySkipPermissions.mockResolvedValue(true);
+ const flags=await buildClaudeFlags('ws-1',{settingsPath:"/tmp/new tab/settings.json",sessionId:'11111111-1111-4111-8111-111111111111',model:'claude-opus-5',effort:'high'});
+ expect(flags).toContain("--model 'claude-opus-5' --effort 'high'");expect(flags).toContain("--settings '/tmp/new tab/settings.json'");expect(flags).toContain('--dangerously-skip-permissions');expect(flags).toContain('--append-system-prompt-file');
+});

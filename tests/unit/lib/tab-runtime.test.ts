@@ -1,3 +1,4 @@
+import * as launchProfile from '@/lib/launch-profile';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { createTabRuntime, type ITabRuntimeDependencies } from '@/lib/tab-runtime';
 import type { IAgentProvider } from '@/lib/providers';
@@ -237,4 +238,23 @@ describe('createTabRuntime', () => {
       .rejects.toEqual(expect.objectContaining({ status: 404 }));
     expect(missingPane.addTabToPane).not.toHaveBeenCalled();
   });
+});
+
+it('profile launch binds session before send; failed applied receipt rolls back without retry',async()=>{
+ const profile={version:1 as const,provider:'claude' as const,model:'claude-sonnet-5',effort:'high' as const};
+ const provider=makeProvider('claude-code');const {dependencies}=makeDependencies(provider);
+ vi.spyOn(launchProfile,'checkLaunchProfileSupport').mockResolvedValue();
+ vi.spyOn(launchProfile,'prepareLaunchProfile').mockResolvedValue({settingsPath:'/private/settings.json',receipt:{profile,sessionId:'11111111-1111-4111-8111-111111111111',workspaceId:'ws-1',tabId:'tab-1',sessionName:'pmux-ws-1-pane-1-tab-1',appliedAt:null}});
+ vi.spyOn(launchProfile,'markLaunchApplied').mockRejectedValue(new Error('disk failure'));
+ await expect(createTabRuntime({workspaceId:'ws-1',panelType:'claude-code',launchProfile:profile},dependencies)).rejects.toThrow('disk failure');
+ expect(dependencies.sendKeys).toHaveBeenCalledOnce();expect(dependencies.removeTabFromPane).toHaveBeenCalledOnce();
+ expect(provider.buildLaunchCommand).toHaveBeenLastCalledWith({workspaceId:'ws-1',launch:{settingsPath:'/private/settings.json',sessionId:'11111111-1111-4111-8111-111111111111',model:profile.model,effort:'high'}});
+ vi.restoreAllMocks();
+});
+it('unsupported CLI or non-Claude/resume profile fails before resource creation',async()=>{
+ const profile={version:1,provider:'claude',model:'claude-opus-5',effort:'high'};
+ const {dependencies}=makeDependencies(makeProvider('claude-code'));
+ vi.spyOn(launchProfile,'checkLaunchProfileSupport').mockRejectedValue(new Error('unsupported CLI'));
+ for(const opts of [{panelType:'claude-code'},{panelType:'codex-cli'},{panelType:'claude-code',resumeSessionId:'existing'}])await expect(createTabRuntime({workspaceId:'ws-1',launchProfile:profile,...opts},dependencies)).rejects.toThrow();
+ expect(dependencies.addTabToPane).not.toHaveBeenCalled();vi.restoreAllMocks();
 });
