@@ -88,8 +88,8 @@ export const claudeProvider: IAgentProvider = {
 
   buildResumeCommand: async (sessionId, { workspaceId }) =>
     withLaunchEnvironment(await buildClaudeResumeCommand(sessionId, workspaceId)),
-  buildLaunchCommand: async ({ workspaceId }) => {
-    const flags = await buildClaudeFlags(workspaceId);
+  buildLaunchCommand: async ({ workspaceId, launch }) => {
+    const flags = await buildClaudeFlags(workspaceId, launch);
     return withLaunchEnvironment(`claude ${flags}`);
   },
 

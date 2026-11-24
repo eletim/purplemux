@@ -1,3 +1,4 @@
+import { readLaunchEvidence } from '@/lib/launch-profile';
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { verifyCliToken } from '@/lib/cli-token';
 import { findTab } from '@/lib/cli-utils';
@@ -49,6 +50,7 @@ const handler = async (req: NextApiRequest, res: NextApiResponse) => {
   const agentSessionId = runtimeStatus.agentSessionId ?? null;
   return res.status(200).json({
     ...runtimeStatus,
+    launchEvidence: await readLaunchEvidence(workspaceId, tabId, found.tab.sessionName),
     tabId,
     workspaceId,
     panelType,

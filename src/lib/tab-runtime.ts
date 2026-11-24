@@ -1,3 +1,4 @@
+import { parseLaunchProfile, checkLaunchProfileSupport, prepareLaunchProfile, markLaunchApplied } from '@/lib/launch-profile';
 import { checkAgentAvailabilityForPanelType, toAgentAvailabilityError } from '@/lib/agent-availability';
 import { getLayout, addTabToPane, removeTabFromPane, runWithExistingTab, updateTabAgentSessionId } from '@/lib/layout-store';
 import { findPane, getFirstPaneId } from '@/lib/layout-tree';
@@ -46,6 +47,7 @@ export interface ICreateTabRuntimeOptions {
   cwd?: string;
   panelType?: unknown;
   resumeSessionId?: string;
+  launchProfile?: unknown;
 }
 
 export interface ICreateTabRuntimeResult {
@@ -193,6 +195,14 @@ export const createTabRuntime = async (
   }
 
   const panelType = resolvePanelType(options.panelType);
+  let profile;
+  if (options.launchProfile !== undefined) {
+    try {
+      profile = parseLaunchProfile(options.launchProfile);
+      if (panelType !== 'claude-code' || options.resumeSessionId) throw new Error('launchProfile requires a fresh Claude tab');
+      await checkLaunchProfileSupport();
+    } catch (e) { throw new TabRuntimeError(400, { error: (e as Error).message }); }
+  }
   const layout = await dependencies.getLayout(options.workspaceId);
   const paneId = options.paneId ?? getFirstPaneId(layout.root);
   const pane = findPane(layout.root, paneId);
@@ -210,7 +220,7 @@ export const createTabRuntime = async (
   const provider = availability.provider;
 
   // Build provider-specific commands before creating any tmux/layout resources.
-  const launchCommand = await buildAgentLaunchCommand(
+  let launchCommand = await buildAgentLaunchCommand(
     provider,
     workspace.id,
     options.resumeSessionId,
@@ -229,8 +239,13 @@ export const createTabRuntime = async (
 
   const statusManager = dependencies.getStatusManager();
   try {
+    let prepared;
+    if (profile && provider) {
+      prepared = await prepareLaunchProfile(profile, { workspaceId: workspace.id, tabId: tab.id, sessionName: tab.sessionName });
+      launchCommand = await provider.buildLaunchCommand({ workspaceId: workspace.id, launch: { settingsPath: prepared.settingsPath, sessionId: prepared.receipt.sessionId, model: profile.model, effort: profile.effort } });
+    }
     if (provider) {
-      const sessionId = options.resumeSessionId ?? null;
+      const sessionId = prepared?.receipt.sessionId ?? options.resumeSessionId ?? null;
       provider.writeSessionId(tab, sessionId);
       await dependencies.updateTabAgentSessionId(
         tab.sessionName,
@@ -246,6 +261,7 @@ export const createTabRuntime = async (
 
     if (provider && launchCommand && tabPresent) {
       await dependencies.sendKeys(tab.sessionName, launchCommand);
+      if (prepared) await markLaunchApplied(prepared.receipt);
       statusManager.markAgentLaunch(tab.id);
     }
 

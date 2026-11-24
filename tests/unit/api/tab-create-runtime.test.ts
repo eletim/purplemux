@@ -100,6 +100,7 @@ describe('tab create API entry points', () => {
       name: 'CLI agent',
       cwd: '/cli/cwd',
       panelType: 'codex-cli',
+      launchProfile: undefined,
     });
     expect(res.statusCode).toBe(201);
     expect(res.body).toEqual(expect.objectContaining({ tabId: 'tab-1', paneId: 'pane-1' }));

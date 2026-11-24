@@ -289,7 +289,9 @@ const cmdTabCreate = async (args) => {
   const name = flagValue(args, '--name') || flagValue(args, '-n');
   const panelType = flagValue(args, '--type') || flagValue(args, '-t');
   if (!wsId) die('--workspace is required');
+  const profileText = flagValue(args, '--launch-profile');
   const { body } = await api('POST', '/api/cli/tabs', {
+    ...(profileText ? { launchProfile: JSON.parse(profileText) } : {}),
     workspaceId: wsId,
     ...(name ? { name } : {}),
     ...(panelType ? { panelType } : {}),
@@ -505,7 +507,8 @@ Commands:
   external-server unregister ID            Remove registration and internal shadow sessions;
                                            preserve original/discovered external tmux resources
   tab list [-w WS]                         List tabs (optionally scoped to workspace)
-  tab create -w WS [-n NAME] [-t TYPE]     Create a tab in workspace (type: terminal | claude-code | codex-cli | agent-sessions | web-browser | diff)
+  tab capabilities                       Show versioned launch-profile support
+  tab create -w WS [-n NAME] [-t TYPE] [--launch-profile JSON]     Create a tab in workspace (type: terminal | claude-code | codex-cli | agent-sessions | web-browser | diff)
   tab send -w WS TAB_ID CONTENT...         Send input to a tab
   tab interrupt -w WS TAB_ID               Interrupt the foreground agent
   tab status -w WS TAB_ID                  Tab status
@@ -558,6 +561,7 @@ const main = async () => {
     case 'tab':
       switch (sub) {
         case 'list': return cmdTabList(rest);
+        case 'capabilities': { requireEnv(); const {body}=await api('GET', '/api/cli/tabs?capabilities=1'); return out(body); }
         case 'create': return cmdTabCreate(rest);
         case 'send': return cmdTabSend(rest);
         case 'interrupt': return cmdTabInterrupt(rest);

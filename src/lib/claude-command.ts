@@ -9,9 +9,10 @@ export const isValidSessionId = (id: unknown): id is string =>
 
 const shellSingleQuote = (value: string): string => `'${value.replace(/'/g, `'\\''`)}'`;
 
-export const buildClaudeFlags = async (workspaceId?: string): Promise<string> => {
+export const buildClaudeFlags = async (workspaceId?: string, launch?: { settingsPath: string; sessionId: string; model: string; effort: string }): Promise<string> => {
   const skipPerms = await getDangerouslySkipPermissions();
-  const parts = [`--settings ${shellSingleQuote(HOOK_SETTINGS_PATH)}`];
+  const parts = [`--settings ${shellSingleQuote(launch?.settingsPath ?? HOOK_SETTINGS_PATH)}`];
+  if (launch) parts.push(`--session-id ${shellSingleQuote(launch.sessionId)} --model ${shellSingleQuote(launch.model)} --effort ${shellSingleQuote(launch.effort)}`);
   if (workspaceId) {
     parts.push(`--append-system-prompt-file ${shellSingleQuote(getClaudePromptPath(workspaceId))}`);
   }

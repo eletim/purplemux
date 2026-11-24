@@ -1,3 +1,4 @@
+import { launchProfileCapability, readLaunchEvidence } from '@/lib/launch-profile';
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { verifyCliToken } from '@/lib/cli-token';
 import { getLayout } from '@/lib/layout-store';
@@ -15,6 +16,7 @@ const handler = async (req: NextApiRequest, res: NextApiResponse) => {
     return res.status(403).json({ error: 'Forbidden' });
   }
 
+  if (req.method === 'GET' && req.query.capabilities === '1') return res.status(200).json({ launchProfile: launchProfileCapability });
   if (req.method === 'GET') {
     const wsId = typeof req.query.workspaceId === 'string' ? req.query.workspaceId : undefined;
     const tabs: Array<{
@@ -52,7 +54,8 @@ const handler = async (req: NextApiRequest, res: NextApiResponse) => {
   }
 
   if (req.method === 'POST') {
-    const { workspaceId, name, panelType } = req.body as {
+    const { workspaceId, name, panelType, launchProfile } = req.body as {
+      launchProfile?: unknown;
       workspaceId?: string;
       name?: string;
       panelType?: string;
@@ -78,8 +81,10 @@ const handler = async (req: NextApiRequest, res: NextApiResponse) => {
         name,
         cwd: ws.directories[0],
         panelType: resolvedType,
+        launchProfile,
       });
       return res.status(201).json({
+        launchEvidence: await readLaunchEvidence(workspaceId, tab.id, tab.sessionName),
         tabId: tab.id,
         workspaceId,
         paneId,
