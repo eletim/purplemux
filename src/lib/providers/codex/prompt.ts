@@ -1,4 +1,4 @@
-import fs from 'fs/promises';
+import { ensureWorkspacePromptFile } from '@/lib/workspace-prompt-file';
 import path from 'path';
 import { resolveLayoutDir } from '@/lib/layout-store';
 import type { IWorkspace } from '@/types/terminal';
@@ -68,14 +68,5 @@ purplemux api-guide
 };
 
 export const writeCodexPromptFile = async (ws: IWorkspace): Promise<void> => {
-  const filePath = getCodexPromptPath(ws.id);
-  await fs.mkdir(path.dirname(filePath), { recursive: true });
-  const body = buildBody(ws);
-  try {
-    const existing = await fs.readFile(filePath, 'utf-8');
-    if (existing === body) return;
-  } catch {
-    // missing — write below
-  }
-  await fs.writeFile(filePath, body, 'utf-8');
+  await ensureWorkspacePromptFile(getCodexPromptPath(ws.id), buildBody(ws), ws.id);
 };
