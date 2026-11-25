@@ -63,6 +63,18 @@ describe('Codex child session identity', () => {
     } finally { await fs.rm(f.sessionsRoot, { recursive: true, force: true }); }
   });
 
+  it('fails closed for unavailable native files and accepts a later root hook once its header exists', async () => {
+    const f = await fixture();
+    try {
+      const transcript = path.join(f.sessionsRoot, '2026', '11', '25', 'rollout-root.jsonl');
+      expect(await codexHookIdentityRejection({ hook_event_name: 'SessionStart', source: 'startup', session_id: 'root', transcript_path: transcript })).toBe('session-origin-unavailable');
+      await f.write('root', { source: 'cli', agent_path: '/root' }, 1);
+      expect(await codexHookIdentityRejection({ hook_event_name: 'UserPromptSubmit', session_id: 'root', transcript_path: transcript })).toBeNull();
+      // A path on a different host/filesystem is not proof of a local root.
+      expect(await codexHookIdentityRejection({ hook_event_name: 'Stop', session_id: 'remote-root', transcript_path: '/unshared-remote-host/rollout-root.jsonl' })).toBe('session-origin-unavailable');
+    } finally { await fs.rm(f.sessionsRoot, { recursive: true, force: true }); }
+  });
+
   it('HTTP hook rejects child metadata before tab mutation, session broadcast or work-state event', async () => {
     const f = await fixture(); const emitted = vi.spyOn(codexHookEvents, 'emit');
     try {
