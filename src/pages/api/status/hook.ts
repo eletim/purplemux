@@ -4,7 +4,7 @@ import { getStatusManager } from '@/lib/status-manager';
 import { createLogger } from '@/lib/logger';
 import { isRequestAllowed } from '@/lib/access-filter';
 import { translateClaudeHookEvent } from '@/lib/providers/claude/hook-handler';
-import { processCodexHookPayload, shouldEmitCodexHookEvent } from '@/lib/providers/codex/hook-handler';
+import { processCodexHookPayload, shouldEmitCodexHookEvent, codexHookIdentityRejection } from '@/lib/providers/codex/hook-handler';
 import { codexHookEvents } from '@/lib/providers/codex/hook-events';
 
 const log = createLogger('hooks');
@@ -29,7 +29,7 @@ const handleClaudeHook = (req: NextApiRequest, res: NextApiResponse) => {
   return res.status(204).end();
 };
 
-const handleCodexHook = (req: NextApiRequest, res: NextApiResponse) => {
+const handleCodexHook = async (req: NextApiRequest, res: NextApiResponse) => {
   const tmuxSession = req.query.tmuxSession;
   if (typeof tmuxSession !== 'string' || !tmuxSession) {
     log.warn({ event: req.body?.hook_event_name }, 'codex hook missing tmuxSession');
@@ -40,6 +40,11 @@ const handleCodexHook = (req: NextApiRequest, res: NextApiResponse) => {
     { tmuxSession, event: payload.hook_event_name, source: payload.source },
     `codex ${payload.hook_event_name ?? 'unknown'}`,
   );
+  const rejected = await codexHookIdentityRejection(payload);
+  if (rejected) {
+    log.debug({ tmuxSession, event: payload.hook_event_name, reason: rejected }, 'codex hook skipped');
+    return res.status(204).end();
+  }
   const statusManager = getStatusManager();
   const { result, translation } = processCodexHookPayload(payload);
   const applied = translation.meta

@@ -1,3 +1,5 @@
+import { isCodexSubagent } from './session-origin';
+import { readCodexSessionMeta, findCodexSessionById } from './session-detection';
 import {
   isCodexSessionSource,
   parseCodexPermissionRequest,
@@ -11,7 +13,7 @@ const SUMMARY_LIMIT = 80;
 
 export interface IHandleCodexHookResult {
   ok: boolean;
-  reason?: 'unknown-event';
+  reason?: 'unknown-event' | 'subagent';
 }
 
 /**
@@ -21,6 +23,7 @@ export interface IHandleCodexHookResult {
 export const processCodexHookPayload = (
   payload: ICodexHookPayload,
 ): { result: IHandleCodexHookResult; translation: IAgentHookTranslation } => {
+  if (isCodexSubagent(payload)) return { result: { ok: false, reason: 'subagent' }, translation: {} };
   const meta: NonNullable<IAgentHookTranslation['meta']> = {
     sessionId: payload.session_id ?? null,
   };
@@ -72,4 +75,17 @@ export const shouldEmitCodexHookEvent = (
     return source === 'clear' || cliState === 'inactive' || cliState === 'unknown';
   }
   return true;
+};
+
+// Child threads inherit the parent's tmux hook destination. Their native header,
+// not cwd/mtime or forked_from alone, distinguishes them from CLI roots/resumes.
+export const codexHookIdentityRejection = async (payload: ICodexHookPayload): Promise<string | null> => {
+  if (isCodexSubagent(payload)) return 'subagent';
+  if (!payload.session_id) return 'missing-session-id';
+  const meta = payload.transcript_path
+    ? await readCodexSessionMeta(payload.transcript_path)
+    : payload.session_id ? await findCodexSessionById(payload.session_id) : null;
+  if (!meta) return 'session-origin-unavailable';
+  if (meta.sessionId !== payload.session_id) return 'session-mismatch';
+  return meta?.isSubagent ? 'subagent' : null;
 };
