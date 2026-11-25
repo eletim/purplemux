@@ -5,6 +5,7 @@ import os from 'os';
 import readline from 'readline';
 import type { ISessionInfo } from '@/types/timeline';
 import type { IAgentSessionDetectionOptions, IAgentSessionWatchOptions, ISessionWatcher } from '@/lib/providers/types';
+import { isCodexSubagent } from './session-origin';
 import { codexHookEvents } from '@/lib/providers/codex/hook-events';
 import { runCodexPreflight } from '@/lib/providers/codex/preflight';
 import {
@@ -43,6 +44,7 @@ interface ICodexSessionMeta {
   cwd: string | null;
   startedAt: number | null;
   mtimeMs: number | null;
+  isSubagent?: boolean;
 }
 
 type TCodexDetectedSessionMeta = Omit<ICodexSessionMeta, 'jsonlPath'> & {
@@ -77,17 +79,19 @@ const readFirstLine = async (jsonlPath: string): Promise<string | null> => {
   }
 };
 
-const readCodexSessionMeta = async (jsonlPath: string): Promise<ICodexSessionMeta | null> => {
-  const firstLine = await readFirstLine(jsonlPath);
-  if (!firstLine) return null;
-
+export const readCodexSessionMeta = async (jsonlPath: string): Promise<ICodexSessionMeta | null> => {
   try {
+    const firstLine = await readFirstLine(jsonlPath);
+    if (!firstLine) return null;
     const parsed = JSON.parse(firstLine) as {
       type?: string;
       timestamp?: string;
       payload?: {
         id?: string;
         cwd?: string;
+        source?: unknown;
+        thread_source?: unknown;
+        agent_path?: unknown;
         timestamp?: string;
       };
     };
@@ -101,6 +105,7 @@ const readCodexSessionMeta = async (jsonlPath: string): Promise<ICodexSessionMet
       cwd: parsed.payload.cwd ?? null,
       startedAt: startedAt !== null && Number.isFinite(startedAt) ? startedAt : null,
       mtimeMs: null,
+      isSubagent: isCodexSubagent(parsed.payload),
     };
   } catch {
     return null;
@@ -153,7 +158,7 @@ export const findLatestCodexSessionForCwd = async (
 
   for (const candidate of candidates) {
     const meta = await readCodexSessionMeta(candidate.jsonlPath);
-    if (meta?.cwd === cwd) return { ...meta, mtimeMs: candidate.mtimeMs };
+    if (meta?.cwd === cwd && !meta.isSubagent) return { ...meta, mtimeMs: candidate.mtimeMs };
   }
 
   return null;

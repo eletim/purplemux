@@ -23,7 +23,9 @@ export interface ICodexHookPayload {
   session_id?: string;
   transcript_path?: string | null;
   cwd?: string | null;
-  source?: string;
+  source?: unknown;
+  thread_source?: unknown;
+  agent_path?: unknown;
   prompt?: string | null;
   call_id?: string;
   tool_name?: string;
