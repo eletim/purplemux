@@ -27,3 +27,16 @@ not substitutes. Local and SSH CLI paths receive the same refusal/capability.
 CLI options are parsed only before TAB_ID. All subsequent arguments are literal
 content, including --require-empty-codex, -w, and --workspace. Put -w WS before
 TAB_ID. The new guard flag in a message never enables the guard or disappears.
+
+2026-11-27: 対象一回のfresh initial launch
+画面guardのcapability0は維持する。新API /api/cli/tabs/initial とCLI
+`tab initial-launch JSON` / `tab initial-status OPERATION_ID` は新しいlocal Linux
+Codex TUIだけを初回argvで起動する。稼働composer/send-keysは使わない。
+JSONはoperationId(UUID),workspaceId,tabId(tab-relay-UUID),runId(UUID),body,
+contractHash(固定ai-village-instructionsブロックのSHA256)。本文はUTF-8 64KB以下。
+固定契約ブロックが唯一で一致し、実際のdeveloper_instructions引数とも一致する場合だけ起動。
+専用ledgerをfsyncしてから作成。一度の操作は結果照会のみで、unknownを再実行しない。
+新tab作成途中の障害でも、起動済みかもしれないTUIを自動kill/rollbackしない。
+status receiptはpane PID/startTicksを再読取する。sessionと本文の受付は呼出元の村が別途照合。
+旧tab/draftへは触らない。これはdraftの永続exportや同時手入力の原子排除の保証ではない。
+本番利用には村側の正式run/許可/台帳との結合と運用許可が必要。通常tab create/sendは従来通り。

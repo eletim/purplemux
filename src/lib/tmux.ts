@@ -61,10 +61,11 @@ export const createSession = async (
   cols: number,
   rows: number,
   cwd?: string,
+  initialCommand?: string,
 ): Promise<void> => {
   // tmux 서버 global env cache를 우회하기 위해 `env -i $SHELL -l`을 명령으로 직접 넘긴다.
   // execFile의 env 옵션은 tmux 서버가 이미 떠있는 경우 무시되므로 의존하지 않는다.
-  const shellCmd = buildShellLaunchCommand();
+  const shellCmd = buildShellLaunchCommand() + (initialCommand ? ` -c ${"'" + initialCommand.replace(/'/g, "'\\''") + "'"}` : '');
   await execTmux(
     managedTmuxTarget,
     [

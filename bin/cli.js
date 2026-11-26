@@ -515,6 +515,8 @@ Commands:
                                            preserve original/discovered external tmux resources
   tab list [-w WS]                         List tabs (optionally scoped to workspace)
   tab capabilities                       Show versioned launch-profile support
+  tab initial-launch JSON                Launch one reserved fresh Codex TUI (no composer input)
+  tab initial-status OPERATION_ID        Query a launch; unknown is never replayed
   tab create -w WS [-n NAME] [-t TYPE] [--launch-profile JSON]     Create a tab in workspace (type: terminal | claude-code | codex-cli | agent-sessions | web-browser | diff)
   tab send -w WS [--require-empty-codex] TAB_ID CONTENT...  Submit; optional read-only empty composer guard
   tab interrupt -w WS TAB_ID               Interrupt the foreground agent
@@ -568,7 +570,9 @@ const main = async () => {
     case 'tab':
       switch (sub) {
         case 'list': return cmdTabList(rest);
-        case 'capabilities': { requireEnv(); const {body}=await api('GET', '/api/cli/tabs?capabilities=1'); if(body.guardedCodexInput?.version===1)body.guardedCodexInput.client=1; return out(body); }
+        case 'capabilities': { requireEnv(); const {body}=await api('GET', '/api/cli/tabs?capabilities=1'); if(body.initialCodexLaunch?.version===1)body.initialCodexLaunch.client=1; if(body.guardedCodexInput?.version===1)body.guardedCodexInput.client=1; return out(body); }
+        case 'initial-launch': { requireEnv(); const {body}=await api('POST', '/api/cli/tabs/initial', JSON.parse(rest[0])); return out(body); }
+        case 'initial-status': { requireEnv(); const {body}=await api('GET', '/api/cli/tabs/initial?operationId='+encodeURIComponent(rest[0])); return out(body); }
         case 'create': return cmdTabCreate(rest);
         case 'send': return cmdTabSend(rest);
         case 'interrupt': return cmdTabInterrupt(rest);
