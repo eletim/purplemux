@@ -61,10 +61,11 @@ export const createSession = async (
   cols: number,
   rows: number,
   cwd?: string,
+  initialCommand?: string,
 ): Promise<void> => {
   // tmux 서버 global env cache를 우회하기 위해 `env -i $SHELL -l`을 명령으로 직접 넘긴다.
   // execFile의 env 옵션은 tmux 서버가 이미 떠있는 경우 무시되므로 의존하지 않는다.
-  const shellCmd = buildShellLaunchCommand();
+  const shellCmd = buildShellLaunchCommand() + (initialCommand ? ` -c ${"'" + initialCommand.replace(/'/g, "'\\''") + "'"}` : '');
   await execTmux(
     managedTmuxTarget,
     [
@@ -711,3 +712,14 @@ export const getLastCommand = async (sessionName: string): Promise<string | null
     return null;
   }
 };
+
+/** Screen text (even with a stable cursor) cannot prove composer emptiness.
+ * A literal placeholder draft followed by Home has the same plain capture.
+ * Do not inspect colors as a substitute for structural editor state. Until a
+ * provider-backed empty-and-submit contract exists, guarded sends fail closed.
+ * No tmux command, draft mutation, or submission is performed here.
+ */
+export const emptyCodexComposer = async (_sessionName: string): Promise<boolean> => false;
+
+/** Retained to reject legacy screen observations explicitly. */
+export const isEmptyCodexComposer = (_observation: string): boolean => false;

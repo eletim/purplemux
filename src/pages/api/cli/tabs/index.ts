@@ -16,7 +16,7 @@ const handler = async (req: NextApiRequest, res: NextApiResponse) => {
     return res.status(403).json({ error: 'Forbidden' });
   }
 
-  if (req.method === 'GET' && req.query.capabilities === '1') return res.status(200).json({ launchProfile: launchProfileCapability });
+  if (req.method === 'GET' && req.query.capabilities === '1') return res.status(200).json({ launchProfile: launchProfileCapability, initialCodexLaunch: { version: 1, platform: 'linux' }, guardedCodexInput: { version: 0, readOnlyEmptyCheck: false, reason: 'composer-state-unverifiable' } });
   if (req.method === 'GET') {
     const wsId = typeof req.query.workspaceId === 'string' ? req.query.workspaceId : undefined;
     const tabs: Array<{

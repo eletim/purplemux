@@ -434,7 +434,7 @@ export const deletePane = async (
   }
 };
 
-export const addTabToPane = async (wsId: string, paneId: string, name?: string, cwd?: string, panelType?: string): Promise<ITab | null> =>
+export const addTabToPane = async (wsId: string, paneId: string, name?: string, cwd?: string, panelType?: string, initial?: { tabId: string; command: string }): Promise<ITab | null> =>
   withLock(async () => {
     const filePath = resolveLayoutFile(wsId);
     const layout = await readLayoutFile(filePath);
@@ -444,12 +444,14 @@ export const addTabToPane = async (wsId: string, paneId: string, name?: string, 
     if (!pane) return null;
 
     const isWebBrowser = panelType === 'web-browser';
-    const tabId = generateTabId();
+    const tabId = initial?.tabId ?? generateTabId();
+    if (collectPanes(layout.root).some(p => p.tabs.some(t => t.id === tabId))) throw new Error("Initial tab already exists");
     const sessionName = workspaceSessionName(wsId, paneId, tabId);
     let sessionCreated = false;
     try {
       if (!isWebBrowser) {
-        await createSession(sessionName, 80, 24, cwd);
+        if (initial) await createSession(sessionName, 80, 24, cwd, initial.command);
+        else await createSession(sessionName, 80, 24, cwd);
         sessionCreated = true;
       }
 
@@ -466,7 +468,7 @@ export const addTabToPane = async (wsId: string, paneId: string, name?: string, 
 
       return tab;
     } catch (error) {
-      if (sessionCreated) {
+      if (sessionCreated && !initial) {
         await killSession(sessionName).catch((cleanupError) => {
           log.error({ err: cleanupError, sessionName }, 'failed to clean up tab session after create error');
         });

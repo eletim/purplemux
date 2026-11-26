@@ -307,16 +307,23 @@ const resolveWsForTab = (args) => {
 
 const cmdTabSend = async (args) => {
   requireEnv();
-  const rest = stripFlags(args, ['--workspace', '-w']);
+  // Options stop at TAB_ID. Everything after it is literal message content.
+  let i = 0, guarded = false, wsId;
+  while (i < args.length) {
+    if (args[i] === '--require-empty-codex') { guarded = true; i++; }
+    else if (args[i] === '--workspace' || args[i] === '-w') { wsId = args[i + 1]; i += 2; }
+    else break;
+  }
+  const rest = args.slice(i);
   const tabId = rest[0];
   const content = rest.slice(1).join(' ');
   if (!tabId) die('tab ID is required');
   if (!content) die('content is required');
-  const wsId = resolveWsForTab(args);
+  if (!wsId) die('--workspace is required before tab ID');
   const { body } = await api(
     'POST',
     `/api/cli/tabs/${tabId}/send?workspaceId=${encodeURIComponent(wsId)}`,
-    { content },
+    { content, ...(guarded ? { requireEmptyCodex: true } : {}) },
   );
   out(body);
 };
@@ -508,8 +515,10 @@ Commands:
                                            preserve original/discovered external tmux resources
   tab list [-w WS]                         List tabs (optionally scoped to workspace)
   tab capabilities                       Show versioned launch-profile support
+  tab initial-launch JSON                Launch one reserved fresh Codex TUI (no composer input)
+  tab initial-status OPERATION_ID        Query a launch; unknown is never replayed
   tab create -w WS [-n NAME] [-t TYPE] [--launch-profile JSON]     Create a tab in workspace (type: terminal | claude-code | codex-cli | agent-sessions | web-browser | diff)
-  tab send -w WS TAB_ID CONTENT...         Send input to a tab
+  tab send -w WS [--require-empty-codex] TAB_ID CONTENT...  Submit; optional read-only empty composer guard
   tab interrupt -w WS TAB_ID               Interrupt the foreground agent
   tab status -w WS TAB_ID                  Tab status
   tab result -w WS TAB_ID                  Read the latest completed structured agent response
@@ -561,7 +570,9 @@ const main = async () => {
     case 'tab':
       switch (sub) {
         case 'list': return cmdTabList(rest);
-        case 'capabilities': { requireEnv(); const {body}=await api('GET', '/api/cli/tabs?capabilities=1'); return out(body); }
+        case 'capabilities': { requireEnv(); const {body}=await api('GET', '/api/cli/tabs?capabilities=1'); if(body.initialCodexLaunch?.version===1)body.initialCodexLaunch.client=1; if(body.guardedCodexInput?.version===1)body.guardedCodexInput.client=1; return out(body); }
+        case 'initial-launch': { requireEnv(); const {body}=await api('POST', '/api/cli/tabs/initial', JSON.parse(rest[0])); return out(body); }
+        case 'initial-status': { requireEnv(); const {body}=await api('GET', '/api/cli/tabs/initial?operationId='+encodeURIComponent(rest[0])); return out(body); }
         case 'create': return cmdTabCreate(rest);
         case 'send': return cmdTabSend(rest);
         case 'interrupt': return cmdTabInterrupt(rest);

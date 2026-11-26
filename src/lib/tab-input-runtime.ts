@@ -1,5 +1,5 @@
 import { findTab } from '@/lib/tab-location';
-import { hasSession, sendKeySequence, sendLiteralText } from '@/lib/tmux';
+import { emptyCodexComposer, hasSession, sendKeySequence, sendLiteralText } from '@/lib/tmux';
 
 const SUBMIT_DELAY_MS = 250;
 const BRACKETED_PASTE_START = '\x1b[200~';
@@ -34,9 +34,11 @@ export interface ITabInputRuntimeOptions {
 
 export interface ISubmitTabInputOptions extends ITabInputRuntimeOptions {
   content: string;
+  requireEmptyCodex?: boolean;
 }
 
 export interface ITabInputRuntimeDependencies {
+  emptyCodexComposer: typeof emptyCodexComposer;
   findTab: typeof findTab;
   hasSession: typeof hasSession;
   sendLiteralText: typeof sendLiteralText;
@@ -46,6 +48,7 @@ export interface ITabInputRuntimeDependencies {
 
 const defaultDependencies: ITabInputRuntimeDependencies = {
   findTab,
+  emptyCodexComposer,
   hasSession,
   sendLiteralText,
   sendKeySequence,
@@ -101,6 +104,13 @@ export const submitTabInput = async (
     ? `${BRACKETED_PASTE_START}${options.content}${BRACKETED_PASTE_END}`
     : options.content;
   await withSessionInputLock(sessionName, async () => {
+    if (options.requireEmptyCodex) {
+      const found = await dependencies.findTab(options.workspaceId, options.tabId);
+      if (found?.tab.panelType !== 'codex-cli' || found.tab.sessionName !== sessionName ||
+          !(await dependencies.emptyCodexComposer(sessionName))) {
+        throw new TabInputRuntimeError(409, 'codex-composer-not-proven-empty');
+      }
+    }
     await dependencies.sendLiteralText(sessionName, content);
     await dependencies.delay(SUBMIT_DELAY_MS);
     await dependencies.sendKeySequence(sessionName, ['Enter']);
