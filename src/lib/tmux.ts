@@ -4,7 +4,7 @@ import { promisify } from 'util';
 import path from 'path';
 import { nanoid } from 'nanoid';
 import { PRISTINE_ENV } from '@/lib/pristine-env';
-import { buildShellLaunchCommand } from '@/lib/shell-env';
+import { buildShellLaunchCommand, buildInitialShellLaunchCommand } from '@/lib/shell-env';
 import { createLogger } from '@/lib/logger';
 import { isLinux } from '@/lib/platform';
 import { getProcessArgs } from '@/lib/process-utils';
@@ -65,7 +65,7 @@ export const createSession = async (
 ): Promise<void> => {
   // tmux 서버 global env cache를 우회하기 위해 `env -i $SHELL -l`을 명령으로 직접 넘긴다.
   // execFile의 env 옵션은 tmux 서버가 이미 떠있는 경우 무시되므로 의존하지 않는다.
-  const shellCmd = buildShellLaunchCommand() + (initialCommand ? ` -c ${"'" + initialCommand.replace(/'/g, "'\\''") + "'"}` : '');
+  const shellCmd = initialCommand ? buildInitialShellLaunchCommand(initialCommand) : buildShellLaunchCommand();
   await execTmux(
     managedTmuxTarget,
     [
