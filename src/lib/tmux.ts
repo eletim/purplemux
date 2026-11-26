@@ -712,26 +712,13 @@ export const getLastCommand = async (sessionName: string): Promise<string | null
   }
 };
 
-/** Read-only known Codex composer observation. Never clears or submits a draft. */
-export const emptyCodexComposer = async (sessionName: string): Promise<boolean> => {
-  try {
-    const { stdout } = await execTmux(managedTmuxTarget,
-      ['display-message', '-p', '-t', sessionName, '#{cursor_x},#{cursor_y}', ';',
-       'capture-pane', '-p', '-t', sessionName, ';',
-       'display-message', '-p', '-t', sessionName, '#{cursor_x},#{cursor_y}'],
-      { timeout: CMD_TIMEOUT });
-    return isEmptyCodexComposer(stdout);
-  } catch { return false; }
-};
+/** Screen text (even with a stable cursor) cannot prove composer emptiness.
+ * A literal placeholder draft followed by Home has the same plain capture.
+ * Do not inspect colors as a substitute for structural editor state. Until a
+ * provider-backed empty-and-submit contract exists, guarded sends fail closed.
+ * No tmux command, draft mutation, or submission is performed here.
+ */
+export const emptyCodexComposer = async (_sessionName: string): Promise<boolean> => false;
 
-export const isEmptyCodexComposer = (observation: string): boolean => {
-  const rows = observation.trimEnd().split('\n');
-  const before = rows.shift(), after = rows.pop();
-  if (!before || before !== after || !/^2,\d+$/.test(before)) return false;
-  const y = Number(before.split(',')[1]);
-  // Unknown placeholders/layouts fail closed. Cursor must be at the start, not
-  // after a draft which happens to quote the placeholder. All nearby rows blank.
-  return rows[y]?.trimEnd() === '› Ask Codex to do anything'
-    && rows[y - 1]?.trim() === '' && rows[y + 1]?.trim() === ''
-    && rows.slice(y + 2).some(row => row.includes('? for shortcuts'));
-};
+/** Retained to reject legacy screen observations explicitly. */
+export const isEmptyCodexComposer = (_observation: string): boolean => false;

@@ -1,3 +1,4 @@
+import { emptyCodexComposer } from '@/lib/tmux';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   interruptTab,
@@ -144,6 +145,11 @@ describe('tab input runtime', () => {
 });
 
 describe('guarded Codex composer', () => {
+  it('production guard refuses even a nominally idle Codex runtime without writes', async () => {
+    const deps = makeDependencies(); deps.emptyCodexComposer = emptyCodexComposer;
+    await expect(submitTabInput({workspaceId:'ws-1',tabId:'tab-1',content:'relay',requireEmptyCodex:true},deps)).rejects.toMatchObject({status:409});
+    expect(deps.sendLiteralText).not.toHaveBeenCalled(); expect(deps.sendKeySequence).not.toHaveBeenCalled();
+  });
   it('retains a nonempty or unknown composer without writing any keys', async () => {
     const deps = makeDependencies();deps.emptyCodexComposer = vi.fn(async () => false);
     await expect(submitTabInput({workspaceId:'ws-1',tabId:'tab-1',content:'relay',requireEmptyCodex:true},deps)).rejects.toMatchObject({status:409});

@@ -1,18 +1,25 @@
-Optional guarded submit for recovery clients
+Guarded submit: unavailable pending structural composer proof
 
 CLI: tab send -w WS --require-empty-codex TAB CONTENT
 HTTP: existing /api/cli/tabs/:id/send body adds requireEmptyCodex:true.
-Capability guardedCodexInput.version=1 is from server; client=1 is added only by supporting CLI.
+These opt-in calls refuse with 409 without writing text or keys. Normal unguarded
+UI/CLI behavior is unchanged. No draft is cleared and there is no fallback.
+Server advertises guardedCodexInput.version=0, readOnlyEmptyCheck=false,
+reason=composer-state-unverifiable. Supporting CLI adds client=1 only for version=1; it does
+not upgrade server version. Village PR177 requires server version=1 and therefore
+stops before creating a recovery run, and again before dispatch. Do not deploy
+this pair as a working live recovery solution.
 
-The existing session input lock now optionally observes the Codex composer before writing.
-Known empty screen: cursor x=2, unchanged cursor coordinates around capture, exact
-"› Ask Codex to do anything" placeholder, blank neighboring rows, shortcuts footer.
-Unknown layout, draft/paste, changed cursor, wrong panel, or observation failure rejects
-with 409 and writes no text/key. It never clears drafts or sends a recovery key sequence.
-Normal UI/CLI submit behavior remains unchanged unless explicitly opted in.
+Review found the former v1 screen check unsound: a draft containing literal
+"Ask Codex to do anything" followed by Home has the same plain capture and cursor
+as an empty placeholder. Stable cursor coordinates and nearby blank lines do not
+resolve that ambiguity. Colors/attributes are not a structural emptiness proof;
+this change intentionally does not introduce another visual allow heuristic.
+Even a visual distinction would not atomically exclude external PTY typing.
 
-This is a conservative TUI observation, not a structural editor API. It serializes against
-other submitTabInput callers, not external PTY/direct tmux typing. A user typing concurrently
-or rendering races may still change the input. Consumers must retain exact native receipt
-validation and never automatically resend an unknown operation. Different Codex layouts
-fail closed; there is no automatic fallback or buffer deletion.
+The smallest safe interim correction is to disable this capability. A usable
+replacement needs provider-backed composer state plus atomic conditional submit
+(or a separately reviewed transport which cannot append to an existing draft).
+That mechanism is not implemented here. Recovery remains blocked; human copying
+of the request, draft deletion, relaxed native receipt matching, and retries are
+not substitutes. Local and SSH CLI paths receive the same refusal/capability.

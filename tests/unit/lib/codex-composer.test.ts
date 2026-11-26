@@ -1,7 +1,17 @@
 import {describe,it,expect} from 'vitest';
-import {isEmptyCodexComposer} from '@/lib/tmux';
-describe('empty composer observation',()=>{
+import {isEmptyCodexComposer, emptyCodexComposer} from '@/lib/tmux';
+describe('ambiguous composer observation',()=>{
  const screen='2,2\nold output\n\n› Ask Codex to do anything\n\n  GPT model\n  ? for shortcuts\n2,2\n';
- it('recognizes the observed empty layout',()=>expect(isEmptyCodexComposer(screen)).toBe(true));
- it.each([screen.replace('› Ask Codex to do anything','› old raw input'),screen.replaceAll('2,2','20,2'),screen.replace('shortcuts','unknown'),screen.replace('2,2\nold','3,2\nold'),screen.replace('› Ask Codex to do anything','› [Pasted Content 3 chars]'),''])('closes unknown/draft/moving cursor',s=>expect(isEmptyCodexComposer(s)).toBe(false));
+ it.each([
+  ['empty placeholder or literal placeholder draft plus Home',screen],
+  ['ordinary draft',screen.replace('› Ask Codex to do anything','› old raw input')],
+  ['multiline draft',screen.replace('\n\n  GPT','\nsecond draft line\n  GPT')],
+  ['cursor at end',screen.replaceAll('2,2','26,2')],
+  ['moving cursor',screen.replace('2,2\nold','3,2\nold')],
+  ['colored placeholder',screen.replace('Ask Codex to do anything','\x1b[2mAsk Codex to do anything\x1b[0m')],
+  ['unknown',''],
+ ])('refuses %s',(_label,s)=>expect(isEmptyCodexComposer(s)).toBe(false));
+ it('refuses structural emptiness claims without touching a runtime',async()=>{
+  expect(await emptyCodexComposer('nonexistent-fixture-session')).toBe(false);
+ });
 });

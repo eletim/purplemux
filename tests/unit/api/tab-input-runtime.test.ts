@@ -13,6 +13,8 @@ vi.mock('@/lib/tab-input-runtime', async (importOriginal) => ({
   interruptTab: mocks.interruptTab,
 }));
 
+import cliTabsHandler from '@/pages/api/cli/tabs';
+
 import uiSubmitHandler, { config as uiSubmitConfig } from '@/pages/api/tabs/[tabId]/submit';
 import uiInterruptHandler from '@/pages/api/tabs/[tabId]/interrupt';
 import cliSendHandler from '@/pages/api/cli/tabs/[tabId]/send';
@@ -47,6 +49,12 @@ const request = (body?: unknown) => ({
 }) as unknown as NextApiRequest;
 
 describe('tab input API entry points', () => {
+  it('does not advertise visual composer checks as a usable guarded capability', async () => {
+    const res = makeResponse();
+    await cliTabsHandler({method:'GET',query:{capabilities:'1'}} as unknown as NextApiRequest, res);
+    expect(res.body).toMatchObject({guardedCodexInput:{version:0,readOnlyEmptyCheck:false,reason:'composer-state-unverifiable'}});
+    expect(mocks.submitTabInput).not.toHaveBeenCalled();
+  });
   beforeEach(() => vi.clearAllMocks());
 
   it('preserves the former terminal WebSocket payload ceiling for Browser submit', () => {
