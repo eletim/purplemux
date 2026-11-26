@@ -307,13 +307,19 @@ const resolveWsForTab = (args) => {
 
 const cmdTabSend = async (args) => {
   requireEnv();
-  const guarded = args.includes('--require-empty-codex');
-  const rest = stripFlags(args.filter(a => a !== '--require-empty-codex'), ['--workspace', '-w']);
+  // Options stop at TAB_ID. Everything after it is literal message content.
+  let i = 0, guarded = false, wsId;
+  while (i < args.length) {
+    if (args[i] === '--require-empty-codex') { guarded = true; i++; }
+    else if (args[i] === '--workspace' || args[i] === '-w') { wsId = args[i + 1]; i += 2; }
+    else break;
+  }
+  const rest = args.slice(i);
   const tabId = rest[0];
   const content = rest.slice(1).join(' ');
   if (!tabId) die('tab ID is required');
   if (!content) die('content is required');
-  const wsId = resolveWsForTab(args);
+  if (!wsId) die('--workspace is required before tab ID');
   const { body } = await api(
     'POST',
     `/api/cli/tabs/${tabId}/send?workspaceId=${encodeURIComponent(wsId)}`,

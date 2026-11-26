@@ -13,3 +13,17 @@ test.each([0,1])('CLI preserves server capability version %s without upgrading i
   expect(seen[0]).toEqual({content:'unchanged body',requireEmptyCodex:true});expect(JSON.parse(cap.stdout).guardedCodexInput).toEqual(version===1?{version,client:1}:{version});
  }finally{await new Promise<void>(r=>server.close(()=>r()));}
 });
+
+test.each([
+ {prefix:[],body:['--require-empty-codex']},
+ {prefix:[],body:['before','--require-empty-codex','after']},
+ {prefix:[],body:['--workspace','literal','-w','literal2','--require-empty-codex']},
+ {prefix:['--require-empty-codex'],body:['before','--require-empty-codex','after']},
+])('CLI preserves literal body $body with prefix $prefix',async({prefix,body})=>{
+ const seen:unknown[]=[];
+ const server=createServer(async(req,res)=>{let text='';for await(const chunk of req)text+=chunk;seen.push(JSON.parse(text));res.end('{}');});
+ await new Promise<void>(r=>server.listen(0,'127.0.0.1',r));const address=server.address();if(!address||typeof address==='string')throw Error('port');
+ try{await promisify(execFile)(process.execPath,[resolve('bin/cli.js'),'tab','send','-w','fixture',...prefix,'tab-fixture',...body],{env:{...process.env,PMUX_PORT:String(address.port),PMUX_TOKEN:'fixture'}});
+ expect(seen).toEqual([{content:body.join(' '),...(prefix.length?{requireEmptyCodex:true}:{})}]);
+ }finally{await new Promise<void>(r=>server.close(()=>r()));}
+});

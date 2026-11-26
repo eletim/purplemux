@@ -23,3 +23,7 @@ replacement needs provider-backed composer state plus atomic conditional submit
 That mechanism is not implemented here. Recovery remains blocked; human copying
 of the request, draft deletion, relaxed native receipt matching, and retries are
 not substitutes. Local and SSH CLI paths receive the same refusal/capability.
+
+CLI options are parsed only before TAB_ID. All subsequent arguments are literal
+content, including --require-empty-codex, -w, and --workspace. Put -w WS before
+TAB_ID. The new guard flag in a message never enables the guard or disappears.
