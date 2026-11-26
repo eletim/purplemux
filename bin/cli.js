@@ -307,7 +307,8 @@ const resolveWsForTab = (args) => {
 
 const cmdTabSend = async (args) => {
   requireEnv();
-  const rest = stripFlags(args, ['--workspace', '-w']);
+  const guarded = args.includes('--require-empty-codex');
+  const rest = stripFlags(args.filter(a => a !== '--require-empty-codex'), ['--workspace', '-w']);
   const tabId = rest[0];
   const content = rest.slice(1).join(' ');
   if (!tabId) die('tab ID is required');
@@ -316,7 +317,7 @@ const cmdTabSend = async (args) => {
   const { body } = await api(
     'POST',
     `/api/cli/tabs/${tabId}/send?workspaceId=${encodeURIComponent(wsId)}`,
-    { content },
+    { content, ...(guarded ? { requireEmptyCodex: true } : {}) },
   );
   out(body);
 };
@@ -509,7 +510,7 @@ Commands:
   tab list [-w WS]                         List tabs (optionally scoped to workspace)
   tab capabilities                       Show versioned launch-profile support
   tab create -w WS [-n NAME] [-t TYPE] [--launch-profile JSON]     Create a tab in workspace (type: terminal | claude-code | codex-cli | agent-sessions | web-browser | diff)
-  tab send -w WS TAB_ID CONTENT...         Send input to a tab
+  tab send -w WS [--require-empty-codex] TAB_ID CONTENT...  Submit; optional read-only empty composer guard
   tab interrupt -w WS TAB_ID               Interrupt the foreground agent
   tab status -w WS TAB_ID                  Tab status
   tab result -w WS TAB_ID                  Read the latest completed structured agent response
@@ -561,7 +562,7 @@ const main = async () => {
     case 'tab':
       switch (sub) {
         case 'list': return cmdTabList(rest);
-        case 'capabilities': { requireEnv(); const {body}=await api('GET', '/api/cli/tabs?capabilities=1'); return out(body); }
+        case 'capabilities': { requireEnv(); const {body}=await api('GET', '/api/cli/tabs?capabilities=1'); if(body.guardedCodexInput?.version===1)body.guardedCodexInput.client=1; return out(body); }
         case 'create': return cmdTabCreate(rest);
         case 'send': return cmdTabSend(rest);
         case 'interrupt': return cmdTabInterrupt(rest);

@@ -84,3 +84,9 @@ describe('tab input API entry points', () => {
     expect(res.body).toEqual({ status: 'interrupted' });
   });
 });
+
+ it('passes a boolean guard and rejects invalid guard before submit',async()=>{
+  mocks.submitTabInput.mockClear();const res=makeResponse();await cliSendHandler(request({content:'relay',requireEmptyCodex:true}),res);
+  expect(mocks.submitTabInput).toHaveBeenCalledWith({workspaceId:'ws-1',tabId:'tab-1',content:'relay',requireEmptyCodex:true});
+  mocks.submitTabInput.mockClear();const bad=makeResponse();await cliSendHandler(request({content:'relay',requireEmptyCodex:'yes'}),bad);expect(bad.statusCode).toBe(400);expect(mocks.submitTabInput).not.toHaveBeenCalled();
+ });

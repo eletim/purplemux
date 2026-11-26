@@ -20,8 +20,11 @@ const handler = async (req: NextApiRequest, res: NextApiResponse) => {
     return res.status(400).json({ error: 'workspaceId is required' });
   }
 
+  if (req.body?.requireEmptyCodex !== undefined && typeof req.body.requireEmptyCodex !== 'boolean') {
+    return res.status(400).json({ error: 'requireEmptyCodex must be boolean' });
+  }
   try {
-    await submitTabInput({ workspaceId, tabId, content: req.body?.content });
+    await submitTabInput({ workspaceId, tabId, content: req.body?.content, requireEmptyCodex: req.body?.requireEmptyCodex });
     return res.status(200).json({ status: 'sent' });
   } catch (error) {
     if (error instanceof TabInputRuntimeError) {

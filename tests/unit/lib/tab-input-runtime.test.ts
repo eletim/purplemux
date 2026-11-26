@@ -142,3 +142,16 @@ describe('tab input runtime', () => {
     expect(dead.sendKeySequence).not.toHaveBeenCalled();
   });
 });
+
+describe('guarded Codex composer', () => {
+  it('retains a nonempty or unknown composer without writing any keys', async () => {
+    const deps = makeDependencies();deps.emptyCodexComposer = vi.fn(async () => false);
+    await expect(submitTabInput({workspaceId:'ws-1',tabId:'tab-1',content:'relay',requireEmptyCodex:true},deps)).rejects.toMatchObject({status:409});
+    expect(deps.sendLiteralText).not.toHaveBeenCalled();expect(deps.sendKeySequence).not.toHaveBeenCalled();
+  });
+  it('checks inside the submit lock and only then writes', async () => {
+    const events:string[]=[];const deps=makeDependencies(events);deps.emptyCodexComposer=vi.fn(async()=>{events.push('check');return true;});
+    await submitTabInput({workspaceId:'ws-1',tabId:'tab-1',content:'relay',requireEmptyCodex:true},deps);
+    expect(events).toEqual(['check','text:relay',`delay:${SUBMIT_DELAY_MS}`,'keys:Enter']);
+  });
+});

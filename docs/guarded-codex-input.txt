@@ -1,0 +1,18 @@
+Optional guarded submit for recovery clients
+
+CLI: tab send -w WS --require-empty-codex TAB CONTENT
+HTTP: existing /api/cli/tabs/:id/send body adds requireEmptyCodex:true.
+Capability guardedCodexInput.version=1 is from server; client=1 is added only by supporting CLI.
+
+The existing session input lock now optionally observes the Codex composer before writing.
+Known empty screen: cursor x=2, unchanged cursor coordinates around capture, exact
+"› Ask Codex to do anything" placeholder, blank neighboring rows, shortcuts footer.
+Unknown layout, draft/paste, changed cursor, wrong panel, or observation failure rejects
+with 409 and writes no text/key. It never clears drafts or sends a recovery key sequence.
+Normal UI/CLI submit behavior remains unchanged unless explicitly opted in.
+
+This is a conservative TUI observation, not a structural editor API. It serializes against
+other submitTabInput callers, not external PTY/direct tmux typing. A user typing concurrently
+or rendering races may still change the input. Consumers must retain exact native receipt
+validation and never automatically resend an unknown operation. Different Codex layouts
+fail closed; there is no automatic fallback or buffer deletion.
