@@ -68,3 +68,11 @@ export const buildShellLaunchCommand = (): string => {
   const tmuxVars = 'TMUX="$TMUX" TMUX_PANE="$TMUX_PANE"';
   return `env -i ${tmuxVars} ${envArgs} ${shQuote(defaultShell())} -l`;
 };
+
+// Initial argv launches must not depend on login rc PATH or run user shell startup code.
+// Ordinary interactive tabs retain buildShellLaunchCommand above.
+export const buildInitialShellLaunchCommand = (command: string): string => {
+  const env = { ...collectShellEnv(), PATH: LOGIN_SHELL_BASE_PATH };
+  const args = Object.entries(env).map(([k,v]) => `${k}=${shQuote(v)}`).join(' ');
+  return `/usr/bin/env -i TMUX="$TMUX" TMUX_PANE="$TMUX_PANE" ${args} /bin/bash --noprofile --norc -c ${shQuote(command)}`;
+};

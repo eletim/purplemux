@@ -22,7 +22,7 @@ it('durable intent precedes creation, concurrent duplicate/query/restart never l
 it('launch failure and partially persisted intent remain unknown without replay',async()=>{
  const dir=await root(),x=input();let starts=0;const start=async()=>{starts++;throw Error('unknown');};
  try{
-  await expect(launchInitialCodex(x,{root:dir,start})).rejects.toThrow('unknown');
+  await expect(launchInitialCodex(x,{root:dir,start})).rejects.toThrow('Initial launch failed');
   expect((await launchInitialCodex(x,{root:dir,start})).state).toBe('unknown');expect(starts).toBe(1);
   const y=input();await fs.mkdir(path.join(dir,y.operationId));expect((await launchInitialCodex(y,{root:dir,start})).state).toBe('unknown');expect(starts).toBe(1);
  }finally{await fs.rm(dir,{recursive:true,force:true});}
